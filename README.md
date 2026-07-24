@@ -21,14 +21,14 @@ checksum, and installs it as `~/.local/bin/pwc`:
 
 ```bash
 pwc_repo=https://raw.githubusercontent.com/huggingface/pwc-cli/main
-curl -LsSf "$pwc_repo/standalone_cli/install.py" | python3 - --version 0.1.0
+curl -LsSf "$pwc_repo/standalone_cli/install.py" | python3
 ```
 
-Make sure `~/.local/bin` is on your `PATH`:
+The installer selects the latest release by default. Pass `--version VERSION`
+after `python3 -` to explicitly pin a release. It also reports whether
+`~/.local/bin` is on `PATH` and prints a persistent shell instruction when
+needed.
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
 
 Prebuilt releases support:
 
@@ -47,17 +47,21 @@ Python 3.10 or newer is required for source installations.
 With [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/huggingface/pwc-cli.git
-cd pwc-cli
-uv tool install ./standalone_cli
+uv tool install 'git+https://github.com/huggingface/pwc-cli.git#subdirectory=standalone_cli'
 ```
 
 Or with [`pipx`](https://pipx.pypa.io/):
 
 ```bash
+pipx install 'git+https://github.com/huggingface/pwc-cli.git#subdirectory=standalone_cli'
+```
+
+To work from a clone instead:
+
+```bash
 git clone https://github.com/huggingface/pwc-cli.git
 cd pwc-cli
-pipx install ./standalone_cli
+uv tool install ./standalone_cli
 ```
 
 Confirm the installation:
