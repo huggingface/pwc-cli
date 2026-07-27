@@ -134,6 +134,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _install_atomically(artifact: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".pwc-install-", dir=destination.parent
+    )
+    os.close(file_descriptor)
+    temporary = Path(temporary_name)
+    try:
+        shutil.copy2(artifact, temporary)
+        temporary.chmod(
+            temporary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        )
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def report_path(bin_directory: Path, path_value: str | None = None) -> None:
     path_value = os.environ.get("PATH", "") if path_value is None else path_value
     expanded_bin = bin_directory.expanduser().resolve()
@@ -196,14 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             if _sha256(target) != checksum:
                 raise SystemExit("artifact checksum verification failed")
             destination = args.prefix / "bin" / "pwc"
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, destination)
-            destination.chmod(
-                destination.stat().st_mode
-                | stat.S_IXUSR
-                | stat.S_IXGRP
-                | stat.S_IXOTH
-            )
+            _install_atomically(target, destination)
     except NetworkError as error:
         _print_network_error(error)
         return 3

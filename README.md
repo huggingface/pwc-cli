@@ -109,9 +109,10 @@ Browse benchmarks:
 
 ```bash
 pwc benchmark list --search ImageNet
-pwc benchmark list --task image-classification
+pwc benchmark list --task OCR
 pwc benchmark list --task image-classification --include-descendants
 pwc benchmark list --min-eval-count 10 --order-by paper_count --order-dir desc
+pwc benchmark --name "SWE-Bench Pro"
 ```
 
 ## Command reference
@@ -126,7 +127,8 @@ pwc benchmark list --min-eval-count 10 --order-by paper_count --order-dir desc
 | `pwc paper trending` | List trending papers |
 | `pwc paper related PAPER` | Find related papers |
 | `pwc paper lineage list PAPER` | List a paper's predecessors and successors |
-| `pwc benchmark list` | List and filter benchmarks |
+| `pwc benchmark list` | List and filter benchmarks, ranked by task trends when `--task` is used |
+| `pwc benchmark --name NAME` | Show a benchmark's top models, papers, scores, and publication dates |
 | `pwc version` | Show the CLI and API contract versions |
 
 Run `pwc --help`, `pwc COMMAND --help`, or
