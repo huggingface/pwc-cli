@@ -3,9 +3,9 @@
 A fast, read-only command-line client for exploring the public
 [Papers with Code](https://paperswithcode.co) catalog.
 
-Use `pwc` to search papers, read paper metadata and Markdown, discover recent,
+Use `pwc` to search papers, browse benchmarks and find state-of-the-art (SOTA), read paper metadata and Markdown, discover recent,
 trending, and related work, inspect paper lineage, explore tasks, methods, and
-conferences, and browse benchmarks. Public reads are anonymous: no account, API
+conferences. Public reads are anonymous: no account, API
 token, or Python environment is required.
 
 ```bash
