@@ -137,6 +137,7 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     fields = (
         ("id", payload.get("arxiv_id") or payload.get("id")),
         ("title", payload.get("title")),
+        ("abstract", payload.get("abstract")),
         ("published", payload.get("published")),
         ("authors", ", ".join(payload.get("authors") or [])),
         ("conference", payload.get("conference_name") or payload.get("conference")),
@@ -546,7 +547,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     paper = commands.add_parser("paper", help="inspect papers")
     paper_commands = paper.add_subparsers(dest="paper_command", required=True)
-    info = paper_commands.add_parser("info", help="show concise paper metadata")
+    info = paper_commands.add_parser(
+        "info", help="show paper metadata including abstract"
+    )
     info.add_argument("paper", help="ArXiv ID or external-paper numeric ID")
     info.add_argument("--include-resources", action="store_true")
     _json(info)

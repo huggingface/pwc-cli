@@ -22,8 +22,8 @@ filtering, joining, or schema-dependent processing is useful.
 
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
-- `pwc paper info PAPER` — Show concise metadata for an arXiv ID or numeric
-  external-paper ID. `[--include-resources --json]`
+- `pwc paper info PAPER` — Show metadata, including the abstract, for an arXiv
+  ID or numeric external-paper ID. `[--include-resources --json]`
 - `pwc paper read PAPER` — Print stored paper Markdown for a modern arXiv ID.
   `[--json]`
 - `pwc paper list` — List and filter the paper catalog.

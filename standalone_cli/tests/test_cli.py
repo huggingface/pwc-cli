@@ -317,6 +317,40 @@ def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
     )
 
 
+def test_paper_info_includes_abstract_in_compact_output(monkeypatch):
+    payload = {
+        "arxiv_id": "2501.01234",
+        "title": "A Paper",
+        "abstract": "First line.\nSecond line.",
+        "published": "2025-01-03",
+        "authors": ["Ada Researcher", "Grace Scientist"],
+        "citation_count": 42,
+        "url_abs": "https://paperswithcode.co/paper/2501.01234",
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, _path, _params):
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["paper", "info", "2501.01234"]) == 0
+
+    assert output.getvalue() == (
+        "id: 2501.01234\n"
+        "title: A Paper\n"
+        "abstract: First line.\\nSecond line.\n"
+        "published: 2025-01-03\n"
+        "authors: Ada Researcher, Grace Scientist\n"
+        "citations: 42\n"
+        "url: https://paperswithcode.co/paper/2501.01234\n"
+    )
+
+
 def test_json_schema_and_errors_use_stable_streams(monkeypatch):
     class Client:
         def __init__(self):
