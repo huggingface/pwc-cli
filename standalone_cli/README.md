@@ -7,6 +7,7 @@ Public reads are anonymous: no login or token is required.
 uv tool install ./standalone_cli
 pwc search "small vision language models" --limit 10
 pwc paper info 2501.01234
+pwc paper info 2501.01234 --include-resources
 pwc paper read 2501.01234
 pwc task list --area Vision
 pwc method list --area Audio

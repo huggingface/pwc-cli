@@ -23,7 +23,9 @@ filtering, joining, or schema-dependent processing is useful.
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
 - `pwc paper info PAPER` — Show metadata, including the abstract, for an arXiv
-  ID or numeric external-paper ID. `[--include-resources --json]`
+  ID or numeric external-paper ID. `--include-resources` adds repeated
+  repository, project-page, and Hugging Face artifact URL lines.
+  `[--include-resources --json]`
 - `pwc paper read PAPER` — Print stored paper Markdown for a modern arXiv ID.
   `[--json]`
 - `pwc paper list` — List and filter the paper catalog.
@@ -71,8 +73,8 @@ filtering, joining, or schema-dependent processing is useful.
 1. Start with `pwc search` for a topic or a known paper. Use the default hybrid
    mode first; use keyword mode for exact terminology and semantic mode for
    conceptual matches.
-2. Inspect promising results with `pwc paper info`. Add
-   `--include-resources --json` when linked artifacts matter.
+2. Inspect promising results with `pwc paper info`. Add `--include-resources`
+   when linked repositories, project pages, or Hugging Face artifacts matter.
 3. Read primary evidence with `pwc paper read`. Do not treat search snippets or
    titles as sufficient support for detailed claims.
 4. Expand the literature with `pwc paper related` and use
@@ -95,8 +97,8 @@ filtering, joining, or schema-dependent processing is useful.
   `--area Vision`, `--area Audio`, or `--area General`. Area matching is
   case-insensitive; numeric area IDs are also accepted.
 - Use `pwc conference list --year YEAR` for a specific conference edition year.
-- Use `--include-resources --json` when repositories, project pages, or
-  Hugging Face artifacts matter; compact output omits the resource arrays.
+- Use `--include-resources` for linked repositories, project pages, and Hugging
+  Face artifacts. Add `--json` when their structured metadata also matters.
 - Use `--all-versions` only when individual arXiv versions are relevant.
 - Use `--is-open true` to restrict benchmark results to open models.
 - Paginate when stderr reports more results. Do not silently treat the first

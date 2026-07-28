@@ -153,6 +153,19 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     for label, value in fields:
         if value not in (None, "", []):
             print(f"{label}: {_clean(value)}")
+    if args.include_resources:
+        resource_fields = (
+            ("repository", "repositories"),
+            ("project_page", "project_pages"),
+            ("hf_model", "hf_models"),
+            ("hf_dataset", "hf_datasets"),
+            ("hf_space", "hf_spaces"),
+        )
+        for label, field in resource_fields:
+            for resource in payload.get(field) or []:
+                url = resource.get("url") if isinstance(resource, dict) else resource
+                if url:
+                    print(f"{label}: {_clean(url)}")
     return 0
 
 

@@ -85,7 +85,7 @@ Inspect or read a paper:
 
 ```bash
 pwc paper info 1706.03762
-pwc paper info 1706.03762 --include-resources
+pwc paper info 1706.03762 --include-resources  # linked GitHub, project, and HF URLs
 pwc paper read 1706.03762
 ```
 
@@ -132,7 +132,7 @@ pwc conference list --year 2025
 | Command | Description |
 | --- | --- |
 | `pwc search QUERY` | Search for papers by title, topic, author, or arXiv ID |
-| `pwc paper info PAPER` | Show paper metadata, including its abstract |
+| `pwc paper info PAPER` | Show paper metadata and abstract; optionally include linked GitHub, project, and HF URLs |
 | `pwc paper read PAPER` | Print the stored paper Markdown |
 | `pwc paper list` | List and filter papers |
 | `pwc paper recent` | List recently published papers |

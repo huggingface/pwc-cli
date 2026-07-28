@@ -550,6 +550,51 @@ def test_paper_info_includes_abstract_in_compact_output(monkeypatch):
     )
 
 
+def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
+    calls = []
+    payload = {
+        "arxiv_id": "2501.01234",
+        "title": "A Paper",
+        "repositories": [
+            {"url": "https://github.com/example/official", "is_official": True},
+            {"url": "https://github.com/example/implementation", "is_official": False},
+        ],
+        "project_pages": [{"url": "https://example.org/project"}],
+        "hf_models": ["https://huggingface.co/example/model"],
+        "hf_datasets": ["https://huggingface.co/datasets/example/data"],
+        "hf_spaces": ["https://huggingface.co/spaces/example/demo"],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert (
+            main(["paper", "info", "2501.01234", "--include-resources"]) == 0
+        )
+
+    assert calls == [
+        ("papers/2501.01234", {"include_resources": True}),
+    ]
+    assert output.getvalue() == (
+        "id: 2501.01234\n"
+        "title: A Paper\n"
+        "repository: https://github.com/example/official\n"
+        "repository: https://github.com/example/implementation\n"
+        "project_page: https://example.org/project\n"
+        "hf_model: https://huggingface.co/example/model\n"
+        "hf_dataset: https://huggingface.co/datasets/example/data\n"
+        "hf_space: https://huggingface.co/spaces/example/demo\n"
+    )
+
+
 def test_json_schema_and_errors_use_stable_streams(monkeypatch):
     class Client:
         def __init__(self):
