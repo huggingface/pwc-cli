@@ -166,6 +166,7 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
         "results": [
             {
                 "id": "2",
+                "slug": "recent-ocr",
                 "name": "Recent OCR",
                 "recent_paper_count": 4,
                 "all_time_paper_count": 5,
@@ -176,6 +177,7 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
             },
             {
                 "id": "1",
+                "slug": "classic-ocr",
                 "name": "Classic OCR",
                 "recent_paper_count": 1,
                 "all_time_paper_count": 20,
@@ -203,12 +205,12 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
     assert calls[0][1]["min_recent_papers"] == 0
     assert output.getvalue().splitlines() == [
-        "id\tname\trecent_papers\ttrend_score\tbest_model\tpaper_title\tcode",
+        "id\tslug\tname\trecent_papers\ttrend_score\tbest_model\tpaper_title\tcode",
         (
-            "2\tRecent OCR\t4\t1.3333\tReader 2\tRecent OCR Paper"
+            "2\trecent-ocr\tRecent OCR\t4\t1.3333\tReader 2\tRecent OCR Paper"
             "\thttps://github.com/example/reader-2"
         ),
-        "1\tClassic OCR\t1\t0.3333\tReader 1\tClassic OCR Paper\t",
+        "1\tclassic-ocr\tClassic OCR\t1\t0.3333\tReader 1\tClassic OCR Paper\t",
     ]
 
 
@@ -717,7 +719,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.2\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.3\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

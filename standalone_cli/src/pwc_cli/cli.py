@@ -696,6 +696,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
             _print_table(
                 (
                     "id",
+                    "slug",
                     "name",
                     "recent_papers",
                     "trend_score",
@@ -706,6 +707,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                 [
                     (
                         item.get("id"),
+                        item.get("slug"),
                         item.get("name"),
                         item.get("recent_paper_count"),
                         item.get("trend_score"),
@@ -715,7 +717,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     )
                     for item in rows
                 ],
-                right_align=(2, 3),
+                right_align=(3, 4),
             )
 
         return _emit_page(payload, args, render_trends)

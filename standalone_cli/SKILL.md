@@ -71,8 +71,9 @@ than silently selecting a paper.
   the default order is task-specific trending activity. Without filters,
   interactive output groups top benchmarks under visible tasks by area;
   `--group-by-area` forces Markdown and `--flat` forces the dataset table.
-  Grouped rows include the name, full name when distinct, slug, and ID; pass
-  the slug to `pwc benchmark --name SLUG` for leaderboard details.
+  Rows include the benchmark name, slug, and ID (plus the full name when
+  distinct in grouped output); pass the slug or ID to
+  `pwc benchmark --name IDENTIFIER` for leaderboard details.
   `[--page 1-100 --page-size 1-100 --search TEXT --task TASK --area NAME_OR_ID
   --benchmarks-per-task 1-10 --group-by-area|--flat
   --include-descendants --min-eval-count INTEGER --is-open true|false
