@@ -22,8 +22,9 @@ exact title. Title matching is case-insensitive and rejects ambiguity.
 
 Task lists and benchmark lists render grouped Markdown in a terminal. Use
 `--flat` for paginated tables or `--group-by-area` to force Markdown when
-piping. Other list and search output uses aligned columns in a terminal and
-lossless TSV when captured.
+piping. Grouped benchmarks include their name, full name when distinct, slug,
+and ID; inspect one with `pwc benchmark --name SLUG`. Other list and search
+output uses aligned columns in a terminal and lossless TSV when captured.
 
 `pipx install ./standalone_cli` is also supported. `PWC_API_URL` selects a
 compatible versioned API origin; it defaults to

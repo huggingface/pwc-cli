@@ -230,6 +230,7 @@ def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
                                 "id": "20",
                                 "name": "ImageNet [1K]",
                                 "slug": "imagenet",
+                                "full_name": "ImageNet Large Scale Visual Recognition",
                                 "evaluation_count": 1234,
                                 "featured_rank": 1,
                             }
@@ -275,10 +276,12 @@ def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
     assert output.getvalue() == (
         "# Area: Vision\n"
         "\n"
+        "Inspect a benchmark with `pwc benchmark --name SLUG`.\n"
+        "\n"
         "## Image Classification (`image-classification`)\n"
         "\n"
-        "- [ImageNet \\[1K\\]](https://paperswithcode.co/benchmark/imagenet)"
-        " — 1,234 evaluations\n"
+        "- ImageNet [1K] — full name: ImageNet Large Scale Visual Recognition; "
+        "slug: `imagenet`; ID: `20`; 1,234 evaluations\n"
     )
 
 

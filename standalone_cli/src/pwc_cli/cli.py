@@ -820,28 +820,29 @@ def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
         if area_index:
             print()
         print(f"# Area: {_clean(area.get('name') or 'Uncategorized')}")
+        print("\nInspect a benchmark with `pwc benchmark --name SLUG`.")
         for task in area.get("tasks") or []:
             task_name = _clean(task.get("name") or task.get("slug") or "Unnamed task")
             task_slug = _clean(task.get("slug"))
             slug_text = f" (`{task_slug}`)" if task_slug else ""
             print(f"\n## {task_name}{slug_text}\n")
             for benchmark in task.get("benchmarks") or []:
-                name = (
-                    str(benchmark.get("name") or benchmark.get("slug") or "Benchmark")
-                    .replace("\\", "\\\\")
-                    .replace("[", "\\[")
-                    .replace("]", "\\]")
+                name = _clean(
+                    benchmark.get("name") or benchmark.get("slug") or "Benchmark"
                 )
-                slug = quote(
-                    str(benchmark.get("slug") or benchmark.get("id") or ""),
-                    safe="",
-                )
+                full_name = _clean(benchmark.get("full_name"))
+                slug = _clean(benchmark.get("slug"))
+                benchmark_id = _clean(benchmark.get("id"))
+                identifiers = []
+                if full_name and full_name != name:
+                    identifiers.append(f"full name: {full_name}")
+                if slug:
+                    identifiers.append(f"slug: `{slug}`")
+                identifiers.append(f"ID: `{benchmark_id}`")
                 count = int(benchmark.get("evaluation_count") or 0)
                 noun = "evaluation" if count == 1 else "evaluations"
-                print(
-                    f"- [{name}](https://paperswithcode.co/benchmark/{slug})"
-                    f" — {count:,} {noun}"
-                )
+                details = "; ".join(identifiers)
+                print(f"- {name} — {details}; {count:,} {noun}")
     return 0
 
 
