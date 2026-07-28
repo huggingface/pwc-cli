@@ -1,6 +1,6 @@
 ---
 name: pwc-cli
-description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, and browsing benchmark leaderboards through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or the `pwc-cli`. Prefer this skill for grounded AI/ML research even when the user does not explicitly ask for a CLI command."
+description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, and benchmark leaderboards through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or the `pwc-cli`. Prefer this skill for grounded AI/ML research even when the user does not explicitly ask for a CLI command."
 ---
 
 Install:
@@ -41,6 +41,19 @@ filtering, joining, or schema-dependent processing is useful.
   for an arXiv or external-paper ID. `[--limit 1-20 --json]`
 - `pwc paper lineage list PAPER` — List a paper's predecessors and successors.
   `[--json]`
+- `pwc task list` — List research tasks, optionally filtering by a
+  case-insensitive exact area name such as Vision, Audio, or General.
+  `[--page 1-100 --page-size 1-100 --area NAME_OR_ID --level INTEGER
+  --visible-only --order-by name|created_at|level|paper_count
+  --order-dir asc|desc --json]`
+- `pwc method list` — List research methods, optionally filtering by area or
+  introduction year.
+  `[--page 1-100 --page-size 1-500 --area NAME_OR_ID
+  --introduced-year YEAR
+  --order-by name|full_name|introduced_year|created_at|paper_count
+  --order-dir asc|desc --json]`
+- `pwc conference list` — List conferences with imported papers.
+  `[--year YEAR --json]`
 - `pwc benchmark list` — Find and rank benchmarks. When `--task` is supplied,
   the default order is task-specific trending activity; otherwise it is name.
   `[--page 1-100 --page-size 1-100 --search TEXT --task TASK
@@ -64,9 +77,11 @@ filtering, joining, or schema-dependent processing is useful.
    titles as sufficient support for detailed claims.
 4. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-5. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
+5. Explore the catalog taxonomy with `pwc task list`, `pwc method list`, and
+   `pwc conference list`; use `--area` or `--year` to narrow broad lists.
+6. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
    `pwc benchmark --name NAME` to inspect a specific leaderboard.
-6. Synthesize only after gathering enough primary evidence. Preserve paper
+7. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
 
 ## Command selection
@@ -76,6 +91,10 @@ filtering, joining, or schema-dependent processing is useful.
   deterministic sorting.
 - Use `pwc paper recent` for recency and `pwc paper trending` for current
   repository activity; these are different signals.
+- Use area names directly with task and method lists, for example
+  `--area Vision`, `--area Audio`, or `--area General`. Area matching is
+  case-insensitive; numeric area IDs are also accepted.
+- Use `pwc conference list --year YEAR` for a specific conference edition year.
 - Use `--include-resources --json` when repositories, project pages, or
   Hugging Face artifacts matter; compact output omits the resource arrays.
 - Use `--all-versions` only when individual arXiv versions are relevant.

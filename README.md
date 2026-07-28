@@ -4,8 +4,9 @@ A fast, read-only command-line client for exploring the public
 [Papers with Code](https://paperswithcode.co) catalog.
 
 Use `pwc` to search papers, read paper metadata and Markdown, discover recent,
-trending, and related work, inspect paper lineage, and browse benchmarks. Public
-reads are anonymous: no account, API token, or Python environment is required.
+trending, and related work, inspect paper lineage, explore tasks, methods, and
+conferences, and browse benchmarks. Public reads are anonymous: no account, API
+token, or Python environment is required.
 
 ```bash
 pwc search "small vision language models" --limit 3
@@ -115,18 +116,32 @@ pwc benchmark list --min-eval-count 10 --order-by paper_count --order-dir desc
 pwc benchmark --name "SWE-Bench Pro"
 ```
 
+Explore the research taxonomy and conferences:
+
+```bash
+pwc task list
+pwc task list --area Vision
+pwc method list --area Audio
+pwc method list --area General --introduced-year 2017
+pwc conference list
+pwc conference list --year 2025
+```
+
 ## Command reference
 
 | Command | Description |
 | --- | --- |
 | `pwc search QUERY` | Search for papers by title, topic, author, or arXiv ID |
-| `pwc paper info PAPER` | Show concise paper metadata |
+| `pwc paper info PAPER` | Show paper metadata, including its abstract |
 | `pwc paper read PAPER` | Print the stored paper Markdown |
 | `pwc paper list` | List and filter papers |
 | `pwc paper recent` | List recently published papers |
 | `pwc paper trending` | List trending papers |
 | `pwc paper related PAPER` | Find related papers |
 | `pwc paper lineage list PAPER` | List a paper's predecessors and successors |
+| `pwc task list` | List tasks and filter them by research area |
+| `pwc method list` | List methods and filter them by research area or introduction year |
+| `pwc conference list` | List conferences and filter them by year |
 | `pwc benchmark list` | List and filter benchmarks, ranked by task trends when `--task` is used |
 | `pwc benchmark --name NAME` | Show a benchmark's top models, papers, scores, and publication dates |
 | `pwc version` | Show the CLI and API contract versions |

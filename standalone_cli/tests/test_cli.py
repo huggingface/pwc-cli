@@ -24,10 +24,13 @@ INSTALLER_SPEC.loader.exec_module(installer)
 
 def test_complete_parser_omits_mutation_and_auth_commands():
     help_text = build_parser().format_help()
-    assert "{search,paper,benchmark,version}" in help_text
+    assert "{search,paper,task,method,conference,benchmark,version}" in help_text
     for command in ("auth", "add-external", "cron", "embedding", "github-issue"):
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
+    assert build_parser().parse_args(["task", "list", "--area", "Vision"]).area
+    assert build_parser().parse_args(["method", "list", "--area", "Audio"]).area
+    assert build_parser().parse_args(["conference", "list", "--year", "2025"]).year
 
 
 def test_installer_downloads_from_this_repository_release_origin():
@@ -196,6 +199,202 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
         "2\tRecent OCR\t4\t1.3333\tReader 2",
         "1\tClassic OCR\t1\t0.3333\tReader 1",
     ]
+
+
+def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
+    calls = []
+    areas = {
+        "count": 2,
+        "results": [{"id": "1", "name": "Vision"}, {"id": "6", "name": "Audio"}],
+    }
+    tasks = {
+        "count": 1,
+        "results": [
+            {
+                "id": "10",
+                "slug": "image-classification",
+                "name": "Image Classification",
+                "area_id": "1",
+                "level": 0,
+                "paper_count": 123,
+            }
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            payload = areas if path == "areas/" else tasks
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert (
+            main(
+                [
+                    "task",
+                    "list",
+                    "--area",
+                    "vision",
+                    "--page-size",
+                    "1",
+                    "--order-by",
+                    "paper_count",
+                    "--order-dir",
+                    "desc",
+                ]
+            )
+            == 0
+        )
+
+    assert calls == [
+        ("areas/", {"page": 1, "page_size": 500, "ordering": "name"}),
+        (
+            "tasks/",
+            {
+                "page": 1,
+                "page_size": 1,
+                "area_id": "1",
+                "level": None,
+                "visible_only": False,
+                "ordering": "-paper_count",
+            },
+        ),
+    ]
+    assert output.getvalue() == (
+        "id\tslug\tname\tarea\tlevel\tpapers\n"
+        "10\timage-classification\tImage Classification\tVision\t0\t123\n"
+    )
+
+
+def test_method_list_accepts_area_id_and_year_filter(monkeypatch):
+    calls = []
+    areas = {
+        "count": 1,
+        "results": [{"id": "6", "name": "Audio"}],
+    }
+    methods = {
+        "count": 1,
+        "results": [
+            {
+                "id": "20",
+                "slug": "wav2vec-2",
+                "name": "wav2vec 2.0",
+                "full_name": "wav2vec 2.0",
+                "area_id": "6",
+                "introduced_year": 2020,
+                "paper_count": 45,
+            }
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            payload = areas if path == "areas/" else methods
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert (
+            main(
+                [
+                    "method",
+                    "list",
+                    "--area",
+                    "6",
+                    "--introduced-year",
+                    "2020",
+                ]
+            )
+            == 0
+        )
+
+    assert calls[1] == (
+        "methods/",
+        {
+            "page": 1,
+            "page_size": 50,
+            "area_id": "6",
+            "introduced_year": 2020,
+            "ordering": "name",
+        },
+    )
+    assert output.getvalue() == (
+        "id\tslug\tname\tfull_name\tarea\tintroduced\tpapers\n"
+        "20\twav2vec-2\twav2vec 2.0\twav2vec 2.0\tAudio\t2020\t45\n"
+    )
+
+
+def test_conference_list_filters_complete_response_by_year(monkeypatch):
+    payload = {
+        "count": 2,
+        "results": [
+            {
+                "slug": "cvpr-2025",
+                "name": "CVPR 2025",
+                "year": 2025,
+                "paper_count": 1834,
+                "location": "Nashville, USA",
+            },
+            {
+                "slug": "cvpr-2026",
+                "name": "CVPR 2026",
+                "year": 2026,
+                "paper_count": 2200,
+                "location": "Denver, USA",
+            },
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert (path, params) == ("conferences/", None)
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["conference", "list", "--year", "2025"]) == 0
+
+    assert output.getvalue() == (
+        "slug\tname\tyear\tpapers\tlocation\n"
+        "cvpr-2025\tCVPR 2025\t2025\t1834\tNashville, USA\n"
+    )
+
+
+def test_unknown_area_lists_valid_choices(monkeypatch):
+    areas = {
+        "count": 2,
+        "results": [{"id": "1", "name": "Vision"}, {"id": "6", "name": "Audio"}],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert path == "areas/"
+            return Response(json.dumps(areas).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    errors = io.StringIO()
+    with redirect_stderr(errors):
+        assert main(["task", "list", "--area", "Robotics"]) == 4
+    assert errors.getvalue() == (
+        "pwc: Area not found: Robotics; available areas: Audio, Vision\n"
+    )
 
 
 def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):

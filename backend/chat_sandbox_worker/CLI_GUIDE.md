@@ -12,6 +12,9 @@ pwc paper recent
 pwc paper trending
 pwc paper related PAPER
 pwc paper lineage list PAPER
+pwc task list --area AREA
+pwc method list --area AREA
+pwc conference list --year YEAR
 pwc benchmark list --task TASK
 pwc benchmark --name "BENCHMARK"
 ```

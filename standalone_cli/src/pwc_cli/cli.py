@@ -39,9 +39,15 @@ def _page_size(value: str) -> int:
     return _bounded(int(value), 1, 100, "--page-size")
 
 
+def _method_page_size(value: str) -> int:
+    return _bounded(int(value), 1, 500, "--page-size")
+
+
 def _clean(value: object) -> str:
+    if value is None:
+        return ""
     return (
-        str(value or "")
+        str(value)
         .replace("\\", "\\\\")
         .replace("\t", "\\t")
         .replace("\r", "")
@@ -240,6 +246,131 @@ def paper_lineage(args: argparse.Namespace, client: Client) -> int:
                 f"\t{_clean(item.get('title'))}"
             )
     return 0
+
+
+def _area_catalog(client: Client) -> list[dict[str, Any]]:
+    payload = client.get(
+        "areas/",
+        {"page": 1, "page_size": 500, "ordering": "name"},
+    ).json()
+    areas, _total = _rows(payload)
+    return areas
+
+
+def _resolve_area(
+    reference: str | None, client: Client
+) -> tuple[str | None, dict[str, str]]:
+    areas = _area_catalog(client)
+    names = {
+        str(item.get("id")): str(item.get("name"))
+        for item in areas
+        if item.get("id") is not None and item.get("name")
+    }
+    if reference is None:
+        return None, names
+
+    target = reference.strip().casefold()
+    for area_id, name in names.items():
+        if target in (area_id.casefold(), name.casefold()):
+            return area_id, names
+
+    available = ", ".join(sorted(names.values(), key=str.casefold))
+    raise ResponseError(f"Area not found: {reference}; available areas: {available}")
+
+
+def _ordering(field: str, direction: str) -> str:
+    return f"-{field}" if direction == "desc" else field
+
+
+def task_list(args: argparse.Namespace, client: Client) -> int:
+    area_id, area_names = _resolve_area(args.area, client)
+    payload = client.get(
+        "tasks/",
+        {
+            "page": args.page,
+            "page_size": args.page_size,
+            "area_id": area_id,
+            "level": args.level,
+            "visible_only": args.visible_only,
+            "ordering": _ordering(args.order_by, args.order_dir),
+        },
+    ).json()
+
+    def render(items: list[dict[str, Any]]) -> None:
+        print("id\tslug\tname\tarea\tlevel\tpapers")
+        for item in items:
+            print(
+                "\t".join(
+                    (
+                        _clean(item.get("id")),
+                        _clean(item.get("slug")),
+                        _clean(item.get("name")),
+                        _clean(area_names.get(str(item.get("area_id")), "")),
+                        _clean(item.get("level")),
+                        _clean(item.get("paper_count")),
+                    )
+                )
+            )
+
+    return _emit_page(payload, args, render)
+
+
+def method_list(args: argparse.Namespace, client: Client) -> int:
+    area_id, area_names = _resolve_area(args.area, client)
+    payload = client.get(
+        "methods/",
+        {
+            "page": args.page,
+            "page_size": args.page_size,
+            "area_id": area_id,
+            "introduced_year": args.introduced_year,
+            "ordering": _ordering(args.order_by, args.order_dir),
+        },
+    ).json()
+
+    def render(items: list[dict[str, Any]]) -> None:
+        print("id\tslug\tname\tfull_name\tarea\tintroduced\tpapers")
+        for item in items:
+            print(
+                "\t".join(
+                    (
+                        _clean(item.get("id")),
+                        _clean(item.get("slug")),
+                        _clean(item.get("name")),
+                        _clean(item.get("full_name")),
+                        _clean(area_names.get(str(item.get("area_id")), "")),
+                        _clean(item.get("introduced_year")),
+                        _clean(item.get("paper_count")),
+                    )
+                )
+            )
+
+    return _emit_page(payload, args, render)
+
+
+def conference_list(args: argparse.Namespace, client: Client) -> int:
+    payload = client.get("conferences/").json()
+    items, _total = _rows(payload)
+    if args.year is not None:
+        items = [item for item in items if item.get("year") == args.year]
+    filtered = {"count": len(items), "results": items}
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        print("slug\tname\tyear\tpapers\tlocation")
+        for item in rows:
+            print(
+                "\t".join(
+                    (
+                        _clean(item.get("slug")),
+                        _clean(item.get("name")),
+                        _clean(item.get("year")),
+                        _clean(item.get("paper_count")),
+                        _clean(item.get("location")),
+                    )
+                )
+            )
+
+    return _emit_page(filtered, args, render)
 
 
 def benchmark_list(args: argparse.Namespace, client: Client) -> int:
@@ -606,6 +737,58 @@ def build_parser() -> argparse.ArgumentParser:
     lineage_list.add_argument("paper", help="ArXiv or external paper ID")
     _json(lineage_list)
     lineage_list.set_defaults(handler=paper_lineage)
+
+    task = commands.add_parser("task", help="list research tasks")
+    task_commands = task.add_subparsers(dest="task_command", required=True)
+    tasks = task_commands.add_parser("list", help="list and filter research tasks")
+    tasks.add_argument("--page", type=_page, default=1)
+    tasks.add_argument("--page-size", type=_page_size, default=50)
+    tasks.add_argument(
+        "--area",
+        help="case-insensitive exact area name (for example Vision) or area ID",
+    )
+    tasks.add_argument("--level", type=int)
+    tasks.add_argument("--visible-only", action="store_true")
+    tasks.add_argument(
+        "--order-by",
+        choices=("name", "created_at", "level", "paper_count"),
+        default="name",
+    )
+    tasks.add_argument("--order-dir", choices=("asc", "desc"), default="asc")
+    _json(tasks)
+    tasks.set_defaults(handler=task_list)
+
+    method = commands.add_parser("method", help="list research methods")
+    method_commands = method.add_subparsers(dest="method_command", required=True)
+    methods = method_commands.add_parser(
+        "list", help="list and filter research methods"
+    )
+    methods.add_argument("--page", type=_page, default=1)
+    methods.add_argument("--page-size", type=_method_page_size, default=50)
+    methods.add_argument(
+        "--area",
+        help="case-insensitive exact area name (for example Audio) or area ID",
+    )
+    methods.add_argument("--introduced-year", type=int)
+    methods.add_argument(
+        "--order-by",
+        choices=("name", "full_name", "introduced_year", "created_at", "paper_count"),
+        default="name",
+    )
+    methods.add_argument("--order-dir", choices=("asc", "desc"), default="asc")
+    _json(methods)
+    methods.set_defaults(handler=method_list)
+
+    conference = commands.add_parser("conference", help="list conferences")
+    conference_commands = conference.add_subparsers(
+        dest="conference_command", required=True
+    )
+    conferences = conference_commands.add_parser(
+        "list", help="list conferences with imported papers"
+    )
+    conferences.add_argument("--year", type=int)
+    _json(conferences)
+    conferences.set_defaults(handler=conference_list)
 
     benchmark = commands.add_parser("benchmark", help="inspect benchmarks")
     benchmark.add_argument(
