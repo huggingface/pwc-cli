@@ -143,7 +143,6 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     fields = (
         ("id", payload.get("arxiv_id") or payload.get("id")),
         ("title", payload.get("title")),
-        ("abstract", payload.get("abstract")),
         ("published", payload.get("published")),
         ("authors", ", ".join(payload.get("authors") or [])),
         ("conference", payload.get("conference_name") or payload.get("conference")),
@@ -153,19 +152,56 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     for label, value in fields:
         if value not in (None, "", []):
             print(f"{label}: {_clean(value)}")
+
+    abstract = payload.get("abstract")
+    if abstract:
+        print("\n## Abstract\n")
+        print(str(abstract).replace("\r", "").strip())
+
     if args.include_resources:
-        resource_fields = (
-            ("repository", "repositories"),
-            ("project_page", "project_pages"),
-            ("hf_model", "hf_models"),
-            ("hf_dataset", "hf_datasets"),
-            ("hf_space", "hf_spaces"),
-        )
-        for label, field in resource_fields:
-            for resource in payload.get(field) or []:
-                url = resource.get("url") if isinstance(resource, dict) else resource
-                if url:
-                    print(f"{label}: {_clean(url)}")
+        for title, field in (
+            ("Repositories", "repositories"),
+            ("Project pages", "project_pages"),
+        ):
+            resources = [
+                resource
+                for resource in payload.get(field) or []
+                if (
+                    resource.get("url")
+                    if isinstance(resource, dict)
+                    else resource
+                )
+            ]
+            resources.sort(
+                key=lambda resource: not (
+                    isinstance(resource, dict) and resource.get("is_official") is True
+                )
+            )
+            if resources:
+                print(f"\n## {title}\n")
+                for resource in resources:
+                    if isinstance(resource, dict):
+                        official = "**Official:** " if resource.get("is_official") else ""
+                        url = resource["url"]
+                    else:
+                        official = ""
+                        url = resource
+                    print(f"- {official}{_clean(url)}")
+
+        artifacts = [
+            (label, url)
+            for label, field in (
+                ("Model", "hf_models"),
+                ("Dataset", "hf_datasets"),
+                ("Space", "hf_spaces"),
+            )
+            for url in payload.get(field) or []
+            if url
+        ]
+        if artifacts:
+            print("\n## Hugging Face artifacts\n")
+            for label, url in artifacts:
+                print(f"- **{label}:** {_clean(url)}")
     return 0
 
 

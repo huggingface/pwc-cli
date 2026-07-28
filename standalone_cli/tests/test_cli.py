@@ -516,7 +516,7 @@ def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
     )
 
 
-def test_paper_info_includes_abstract_in_compact_output(monkeypatch):
+def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
     payload = {
         "arxiv_id": "2501.01234",
         "title": "A Paper",
@@ -542,11 +542,15 @@ def test_paper_info_includes_abstract_in_compact_output(monkeypatch):
     assert output.getvalue() == (
         "id: 2501.01234\n"
         "title: A Paper\n"
-        "abstract: First line.\\nSecond line.\n"
         "published: 2025-01-03\n"
         "authors: Ada Researcher, Grace Scientist\n"
         "citations: 42\n"
         "url: https://paperswithcode.co/paper/2501.01234\n"
+        "\n"
+        "## Abstract\n"
+        "\n"
+        "First line.\n"
+        "Second line.\n"
     )
 
 
@@ -556,10 +560,13 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
         "arxiv_id": "2501.01234",
         "title": "A Paper",
         "repositories": [
-            {"url": "https://github.com/example/official", "is_official": True},
             {"url": "https://github.com/example/implementation", "is_official": False},
+            {"url": "https://github.com/example/official", "is_official": True},
         ],
-        "project_pages": [{"url": "https://example.org/project"}],
+        "project_pages": [
+            {"url": "https://example.org/community", "is_official": False},
+            {"url": "https://example.org/project", "is_official": True},
+        ],
         "hf_models": ["https://huggingface.co/example/model"],
         "hf_datasets": ["https://huggingface.co/datasets/example/data"],
         "hf_spaces": ["https://huggingface.co/spaces/example/demo"],
@@ -586,12 +593,22 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
     assert output.getvalue() == (
         "id: 2501.01234\n"
         "title: A Paper\n"
-        "repository: https://github.com/example/official\n"
-        "repository: https://github.com/example/implementation\n"
-        "project_page: https://example.org/project\n"
-        "hf_model: https://huggingface.co/example/model\n"
-        "hf_dataset: https://huggingface.co/datasets/example/data\n"
-        "hf_space: https://huggingface.co/spaces/example/demo\n"
+        "\n"
+        "## Repositories\n"
+        "\n"
+        "- **Official:** https://github.com/example/official\n"
+        "- https://github.com/example/implementation\n"
+        "\n"
+        "## Project pages\n"
+        "\n"
+        "- **Official:** https://example.org/project\n"
+        "- https://example.org/community\n"
+        "\n"
+        "## Hugging Face artifacts\n"
+        "\n"
+        "- **Model:** https://huggingface.co/example/model\n"
+        "- **Dataset:** https://huggingface.co/datasets/example/data\n"
+        "- **Space:** https://huggingface.co/spaces/example/demo\n"
     )
 
 

@@ -23,8 +23,9 @@ filtering, joining, or schema-dependent processing is useful.
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
 - `pwc paper info PAPER` — Show metadata, including the abstract, for an arXiv
-  ID or numeric external-paper ID. `--include-resources` adds repeated
-  repository, project-page, and Hugging Face artifact URL lines.
+  ID or numeric external-paper ID. `--include-resources` adds Markdown sections
+  for repositories, project pages, and Hugging Face artifacts, with official
+  links marked explicitly.
   `[--include-resources --json]`
 - `pwc paper read PAPER` — Print stored paper Markdown for a modern arXiv ID.
   `[--json]`
@@ -106,8 +107,8 @@ filtering, joining, or schema-dependent processing is useful.
 
 ## Output and limits
 
-- Default list and search output is compact TSV; paper info uses labeled text;
-  benchmark details use Markdown.
+- Default list and search output is compact TSV; paper info uses labeled
+  metadata and Markdown sections; benchmark details use Markdown.
 - `--json` wraps responses as
   `{"schema_version":"v1","data":...}` for stable agent consumption.
 - Stable exit codes are `0` success, `2` invalid usage, `3` network/server
