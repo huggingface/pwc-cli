@@ -275,6 +275,20 @@ def paper_related(args: argparse.Namespace, client: Client) -> int:
     )
 
 
+def _lineage_markdown(item: dict[str, Any]) -> str:
+    reference = item.get("reference")
+    title = (
+        str(item.get("title") or reference or "Unknown paper")
+        .replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+    if not reference:
+        return f"- {title}"
+    url = f"https://paperswithcode.co/paper/{quote(str(reference), safe='.')}"
+    return f"- [{title}]({url}) (`{_clean(reference)}`)"
+
+
 def paper_lineage(args: argparse.Namespace, client: Client) -> int:
     payload = client.get(f"research/papers/{args.paper}/lineage").json()
     if args.json:
@@ -287,13 +301,18 @@ def paper_lineage(args: argparse.Namespace, client: Client) -> int:
         )
         return 0
     paper = payload.get("paper") or {}
-    print(f"paper: {_clean(paper.get('reference'))}\t{_clean(paper.get('title'))}")
-    for relationship in ("predecessors", "successors"):
-        for item in payload.get(relationship) or []:
-            print(
-                f"{relationship[:-1]}: {_clean(item.get('reference'))}"
-                f"\t{_clean(item.get('title'))}"
-            )
+    print("# Paper lineage")
+    for title, items in (
+        ("Paper", [paper] if paper else []),
+        ("Predecessors", payload.get("predecessors") or []),
+        ("Successors", payload.get("successors") or []),
+    ):
+        print(f"\n## {title}\n")
+        if items:
+            for item in items:
+                print(_lineage_markdown(item))
+        else:
+            print("- None")
     return 0
 
 

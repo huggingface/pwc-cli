@@ -138,7 +138,7 @@ pwc conference list --year 2025
 | `pwc paper recent` | List recently published papers |
 | `pwc paper trending` | List trending papers |
 | `pwc paper related PAPER` | Find related papers |
-| `pwc paper lineage list PAPER` | List a paper's predecessors and successors |
+| `pwc paper lineage list PAPER` | Show linked Markdown sections for a paper's predecessors and successors |
 | `pwc task list` | List tasks and filter them by research area |
 | `pwc method list` | List methods and filter them by research area or introduction year |
 | `pwc conference list` | List conferences and filter them by year |

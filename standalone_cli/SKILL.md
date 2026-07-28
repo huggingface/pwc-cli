@@ -42,8 +42,8 @@ filtering, joining, or schema-dependent processing is useful.
   `[--limit 1-100 --max-age-days 1-365 --min-velocity FLOAT --json]`
 - `pwc paper related PAPER` — Find embedding- and taxonomy-ranked related work
   for an arXiv or external-paper ID. `[--limit 1-20 --json]`
-- `pwc paper lineage list PAPER` — List a paper's predecessors and successors.
-  `[--json]`
+- `pwc paper lineage list PAPER` — Render linked Markdown sections for a paper,
+  its predecessors, and its successors. `[--json]`
 - `pwc task list` — List research tasks, optionally filtering by a
   case-insensitive exact area name such as Vision, Audio, or General.
   `[--page 1-100 --page-size 1-100 --area NAME_OR_ID --level INTEGER

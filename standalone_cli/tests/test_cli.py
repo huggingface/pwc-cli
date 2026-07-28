@@ -612,6 +612,53 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
     )
 
 
+def test_paper_lineage_renders_linked_markdown_sections(monkeypatch):
+    payload = {
+        "paper": {
+            "reference": "2307.09288",
+            "title": "Llama 2: Open Foundation and Fine-Tuned Chat Models",
+        },
+        "predecessors": [
+            {
+                "reference": "2302.13971",
+                "title": "LLaMA: Open and Efficient Foundation Language Models",
+            }
+        ],
+        "successors": [],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path):
+            assert path == "research/papers/2307.09288/lineage"
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["paper", "lineage", "list", "2307.09288"]) == 0
+
+    assert output.getvalue() == (
+        "# Paper lineage\n"
+        "\n"
+        "## Paper\n"
+        "\n"
+        "- [Llama 2: Open Foundation and Fine-Tuned Chat Models]"
+        "(https://paperswithcode.co/paper/2307.09288) (`2307.09288`)\n"
+        "\n"
+        "## Predecessors\n"
+        "\n"
+        "- [LLaMA: Open and Efficient Foundation Language Models]"
+        "(https://paperswithcode.co/paper/2302.13971) (`2302.13971`)\n"
+        "\n"
+        "## Successors\n"
+        "\n"
+        "- None\n"
+    )
+
+
 def test_json_schema_and_errors_use_stable_streams(monkeypatch):
     class Client:
         def __init__(self):
