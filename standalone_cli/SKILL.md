@@ -19,21 +19,23 @@ Use compact output for reading and discovery. Add `--json` when programmatic
 filtering, joining, or schema-dependent processing is useful.
 
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
-exact paper title. Quote titles containing spaces. Title matching is
+exact paper title. Papers with Code supports external papers which are not on arXiv,
+hence those papers will have a numeric canonical ID.
+Quote titles containing spaces. Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs rather
 than silently selecting a paper.
 
 ## Commands
 
-- `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID.
+- `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID. This is powered by hybrid/keyword/semantic search using pgvector. Defaults to hybrid.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
 - `pwc paper info PAPER` — Show metadata, including the abstract.
-  `--include-resources` adds Markdown sections for repositories, project pages,
+  `--include-resources` adds Markdown sections for GitHub repositories, project pages,
   and Hugging Face artifacts, with official links marked explicitly.
   `[--include-resources --json]`
 - `pwc paper read PAPER` — Print stored paper Markdown. The resolved paper must
   have a modern arXiv record. `[--json]`
-- `pwc paper list` — List and filter the paper catalog.
+- `pwc paper list` — List and filter the paper catalog in a paginated manner.
   `[--page 1-100 --page-size 1-100 --search TEXT
   --published-after YYYY-MM-DD --published-before YYYY-MM-DD
   --conference TEXT --all-versions
@@ -79,25 +81,26 @@ than silently selecting a paper.
 
 ## Research workflow
 
-1. Start with `pwc search` for a topic or a known paper. Use the default hybrid
-   mode first; use keyword mode for exact terminology and semantic mode for
-   conceptual matches.
-2. Inspect promising results with `pwc paper info`. Add `--include-resources`
-   when linked repositories, project pages, or Hugging Face artifacts matter.
-3. Read primary evidence with `pwc paper read`. Do not treat search snippets or
+1. Use `pwc benchmark list --task TASK` to discover active benchmarks for a given task,
+   then `pwc benchmark --name NAME` to inspect a specific leaderboard.
+2. Use `pwc paper info` to inspect promising results. Add `--include-resources`
+   when linked GitHub repositories, project pages, or Hugging Face artifacts matter.
+3. Use `pwc search` to search more broadly for a topic or a known paper.
+   Use the default hybrid mode first; use keyword mode for exact terminology
+   and semantic mode for conceptual matches.
+4. Go more in-depth with `pwc paper read`. Do not treat search snippets or
    titles as sufficient support for detailed claims.
-4. Expand the literature with `pwc paper related` and use
+5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-5. Explore the catalog taxonomy with `pwc task list --group-by-area`,
+6. Explore the catalog taxonomy with `pwc task list --group-by-area`,
    `pwc method list`, and `pwc conference list`; use `--area` or `--year` to
    narrow broad lists.
-6. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
-   `pwc benchmark --name NAME` to inspect a specific leaderboard.
 7. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
 
 ## Command selection
 
+- Use `pwc benchmark list --task TASK` for finding state-of-the-art (SOTA) for a given task.
 - Use `pwc search` for relevance-ranked discovery.
 - Use `pwc paper list` for structured filters, date windows, conferences, and
   deterministic sorting.
