@@ -374,6 +374,51 @@ def test_conference_list_filters_complete_response_by_year(monkeypatch):
     )
 
 
+def test_conference_list_aligns_columns_in_interactive_terminal(monkeypatch):
+    payload = {
+        "count": 2,
+        "results": [
+            {
+                "slug": "cvpr-2025",
+                "name": "CVPR 2025",
+                "year": 2025,
+                "paper_count": 1834,
+                "location": "Nashville, USA",
+            },
+            {
+                "slug": "neurips-2025",
+                "name": "NeurIPS 2025",
+                "year": 2025,
+                "paper_count": 2763,
+                "location": "San Diego, USA",
+            },
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert (path, params) == ("conferences/", None)
+            return Response(json.dumps(payload).encode(), {})
+
+    class TerminalOutput(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = TerminalOutput()
+    with redirect_stdout(output):
+        assert main(["conference", "list"]) == 0
+
+    assert output.getvalue() == (
+        "slug          name          year  papers  location\n"
+        "cvpr-2025     CVPR 2025     2025    1834  Nashville, USA\n"
+        "neurips-2025  NeurIPS 2025  2025    2763  San Diego, USA\n"
+    )
+
+
 def test_unknown_area_lists_valid_choices(monkeypatch):
     areas = {
         "count": 2,

@@ -157,8 +157,9 @@ Run `pwc --help`, `pwc COMMAND --help`, or
 
 ## Output and scripting
 
-Commands emit compact, deterministic TSV, labeled metadata, or Markdown by
-default. Add `--json` to any data command for machine-readable output:
+List and search commands use aligned columns in an interactive terminal and
+lossless TSV when piped or captured. Detail commands use labeled metadata or
+Markdown. Add `--json` to any data command for machine-readable output:
 
 ```bash
 pwc search "language models" --limit 5 --json

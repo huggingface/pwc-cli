@@ -111,8 +111,10 @@ than silently selecting a paper.
 
 ## Output and limits
 
-- Default list and search output is compact TSV; paper info uses labeled
-  metadata and Markdown sections; benchmark details use Markdown.
+- Interactive list and search output uses aligned text columns. When stdout is
+  piped or captured, the same rows use lossless TSV for agent and script
+  processing. Paper info uses labeled metadata and Markdown sections; benchmark
+  details use Markdown.
 - `--json` wraps responses as
   `{"schema_version":"v1","data":...}` for stable agent consumption.
 - Stable exit codes are `0` success, `2` invalid usage, `3` network/server

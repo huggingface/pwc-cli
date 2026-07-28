@@ -60,6 +60,34 @@ def _clean(value: object) -> str:
     )
 
 
+def _print_table(
+    headers: tuple[str, ...],
+    rows: list[tuple[object, ...]],
+    *,
+    right_align: tuple[int, ...] = (),
+) -> None:
+    rendered = [list(headers)] + [[_clean(value) for value in row] for row in rows]
+    if not sys.stdout.isatty():
+        for row in rendered:
+            print("\t".join(row))
+        return
+
+    widths = [
+        max(len(row[index]) for row in rendered) for index in range(len(headers))
+    ]
+    right = set(right_align)
+    for row in rendered:
+        cells = []
+        for index, value in enumerate(row):
+            if index == len(row) - 1:
+                cells.append(value)
+            elif index in right:
+                cells.append(value.rjust(widths[index]))
+            else:
+                cells.append(value.ljust(widths[index]))
+        print("  ".join(cells))
+
+
 def _rows(payload: Any) -> tuple[list[dict[str, Any]], int | None]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)], None
@@ -142,19 +170,18 @@ def _resolve_paper(reference: str, client: Client) -> str:
 
 
 def _paper_rows(items: list[dict[str, Any]]) -> None:
-    print("id\ttitle\tyear\tcitations")
+    rows = []
     for item in items:
         published = _clean(item.get("published") or item.get("date_published"))
-        print(
-            "\t".join(
-                (
-                    _paper_id(item),
-                    _clean(item.get("title")),
-                    published[:4],
-                    _clean(item.get("citation_count")),
-                )
+        rows.append(
+            (
+                _paper_id(item),
+                item.get("title"),
+                published[:4],
+                item.get("citation_count"),
             )
         )
+    _print_table(("id", "title", "year", "citations"), rows, right_align=(2, 3))
 
 
 def _emit_page(
@@ -435,20 +462,21 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
     ).json()
 
     def render(items: list[dict[str, Any]]) -> None:
-        print("id\tslug\tname\tarea\tlevel\tpapers")
-        for item in items:
-            print(
-                "\t".join(
-                    (
-                        _clean(item.get("id")),
-                        _clean(item.get("slug")),
-                        _clean(item.get("name")),
-                        _clean(area_names.get(str(item.get("area_id")), "")),
-                        _clean(item.get("level")),
-                        _clean(item.get("paper_count")),
-                    )
+        _print_table(
+            ("id", "slug", "name", "area", "level", "papers"),
+            [
+                (
+                    item.get("id"),
+                    item.get("slug"),
+                    item.get("name"),
+                    area_names.get(str(item.get("area_id")), ""),
+                    item.get("level"),
+                    item.get("paper_count"),
                 )
-            )
+                for item in items
+            ],
+            right_align=(4, 5),
+        )
 
     return _emit_page(payload, args, render)
 
@@ -467,21 +495,22 @@ def method_list(args: argparse.Namespace, client: Client) -> int:
     ).json()
 
     def render(items: list[dict[str, Any]]) -> None:
-        print("id\tslug\tname\tfull_name\tarea\tintroduced\tpapers")
-        for item in items:
-            print(
-                "\t".join(
-                    (
-                        _clean(item.get("id")),
-                        _clean(item.get("slug")),
-                        _clean(item.get("name")),
-                        _clean(item.get("full_name")),
-                        _clean(area_names.get(str(item.get("area_id")), "")),
-                        _clean(item.get("introduced_year")),
-                        _clean(item.get("paper_count")),
-                    )
+        _print_table(
+            ("id", "slug", "name", "full_name", "area", "introduced", "papers"),
+            [
+                (
+                    item.get("id"),
+                    item.get("slug"),
+                    item.get("name"),
+                    item.get("full_name"),
+                    area_names.get(str(item.get("area_id")), ""),
+                    item.get("introduced_year"),
+                    item.get("paper_count"),
                 )
-            )
+                for item in items
+            ],
+            right_align=(5, 6),
+        )
 
     return _emit_page(payload, args, render)
 
@@ -494,19 +523,20 @@ def conference_list(args: argparse.Namespace, client: Client) -> int:
     filtered = {"count": len(items), "results": items}
 
     def render(rows: list[dict[str, Any]]) -> None:
-        print("slug\tname\tyear\tpapers\tlocation")
-        for item in rows:
-            print(
-                "\t".join(
-                    (
-                        _clean(item.get("slug")),
-                        _clean(item.get("name")),
-                        _clean(item.get("year")),
-                        _clean(item.get("paper_count")),
-                        _clean(item.get("location")),
-                    )
+        _print_table(
+            ("slug", "name", "year", "papers", "location"),
+            [
+                (
+                    item.get("slug"),
+                    item.get("name"),
+                    item.get("year"),
+                    item.get("paper_count"),
+                    item.get("location"),
                 )
-            )
+                for item in rows
+            ],
+            right_align=(2, 3),
+        )
 
     return _emit_page(filtered, args, render)
 
@@ -551,19 +581,20 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
         }
 
         def render_trends(rows: list[dict[str, Any]]) -> None:
-            print("id\tname\trecent_papers\ttrend_score\tbest_model")
-            for item in rows:
-                print(
-                    "\t".join(
-                        (
-                            _clean(item.get("id")),
-                            _clean(item.get("name")),
-                            _clean(item.get("recent_paper_count")),
-                            _clean(item.get("trend_score")),
-                            _clean(item.get("best_model_name")),
-                        )
+            _print_table(
+                ("id", "name", "recent_papers", "trend_score", "best_model"),
+                [
+                    (
+                        item.get("id"),
+                        item.get("name"),
+                        item.get("recent_paper_count"),
+                        item.get("trend_score"),
+                        item.get("best_model_name"),
                     )
-                )
+                    for item in rows
+                ],
+                right_align=(2, 3),
+            )
 
         return _emit_page(payload, args, render_trends)
 
@@ -585,18 +616,19 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
     ).json()
 
     def render(items: list[dict[str, Any]]) -> None:
-        print("id\tname\tfull_name\tevals")
-        for item in items:
-            print(
-                "\t".join(
-                    (
-                        _clean(item.get("id")),
-                        _clean(item.get("name")),
-                        _clean(item.get("full_name")),
-                        _clean(item.get("paper_count")),
-                    )
+        _print_table(
+            ("id", "name", "full_name", "evals"),
+            [
+                (
+                    item.get("id"),
+                    item.get("name"),
+                    item.get("full_name"),
+                    item.get("paper_count"),
                 )
-            )
+                for item in items
+            ],
+            right_align=(3,),
+        )
 
     return _emit_page(payload, args, render)
 

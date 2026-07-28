@@ -18,6 +18,9 @@ pwc conference list --year 2025
 Every `PAPER` argument accepts an arXiv ID, numeric external-paper ID, or quoted
 exact title. Title matching is case-insensitive and rejects ambiguity.
 
+List and search output uses aligned columns in a terminal and lossless TSV when
+piped or captured.
+
 `pipx install ./standalone_cli` is also supported. `PWC_API_URL` selects a
 compatible versioned API origin; it defaults to
 `https://paperswithcode.co/api/v1`. Run `pwc --help` for the complete read-only
