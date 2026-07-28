@@ -107,16 +107,6 @@ pwc paper list --search "diffusion" --published-after 2025-01-01
 pwc paper list --order-by citation_count --order-dir desc
 ```
 
-Browse benchmarks:
-
-```bash
-pwc benchmark list --search ImageNet
-pwc benchmark list --task OCR
-pwc benchmark list --task image-classification --include-descendants
-pwc benchmark list --min-eval-count 10 --order-by paper_count --order-dir desc
-pwc benchmark --name "SWE-Bench Pro"
-```
-
 Explore the research taxonomy and conferences:
 
 ```bash
@@ -127,6 +117,16 @@ pwc method list --area Audio
 pwc method list --area General --introduced-year 2017
 pwc conference list
 pwc conference list --year 2025
+```
+
+Browse benchmarks:
+
+```bash
+pwc benchmark list --search ImageNet
+pwc benchmark list --task OCR
+pwc benchmark list --task image-classification --include-descendants
+pwc benchmark list --min-eval-count 10 --order-by paper_count --order-dir desc
+pwc benchmark --name "SWE-Bench Pro"
 ```
 
 ## Command reference
