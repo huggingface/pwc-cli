@@ -29,6 +29,9 @@ def test_complete_parser_omits_mutation_and_auth_commands():
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
     assert build_parser().parse_args(["task", "list", "--area", "Vision"]).area
+    assert build_parser().parse_args(
+        ["task", "list", "--group-by-area"]
+    ).group_by_area
     assert build_parser().parse_args(["method", "list", "--area", "Audio"]).area
     assert build_parser().parse_args(["conference", "list", "--year", "2025"]).year
 
@@ -268,6 +271,110 @@ def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
     assert output.getvalue() == (
         "id\tslug\tname\tarea\tlevel\tpapers\n"
         "10\timage-classification\tImage Classification\tVision\t0\t123\n"
+    )
+
+
+def test_task_list_groups_complete_taxonomy_in_interactive_terminal(monkeypatch):
+    payload = {
+        "results": [
+            {
+                "id": "6",
+                "name": "Audio",
+                "tasks": [
+                    {
+                        "id": "259",
+                        "slug": "audio-classification",
+                        "name": "Audio Classification",
+                        "paper_count": 63,
+                    }
+                ],
+            },
+            {
+                "id": "1",
+                "name": "Vision",
+                "tasks": [
+                    {
+                        "id": "13",
+                        "slug": "3d-generation",
+                        "name": "3D generation",
+                        "paper_count": 2389,
+                    },
+                    {
+                        "id": "1",
+                        "slug": "image-classification",
+                        "name": "Image Classification",
+                        "paper_count": 1,
+                    },
+                ],
+            },
+        ]
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert (path, params) == ("areas/with-tasks/", None)
+            return Response(json.dumps(payload).encode(), {})
+
+    class TerminalOutput(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = TerminalOutput()
+    with redirect_stdout(output):
+        assert main(["task", "list"]) == 0
+
+    assert output.getvalue() == (
+        "# Area: Audio\n"
+        "- **Audio Classification** (`audio-classification`) — 63 papers\n"
+        "\n"
+        "# Area: Vision\n"
+        "- **3D generation** (`3d-generation`) — 2,389 papers\n"
+        "- **Image Classification** (`image-classification`) — 1 paper\n"
+    )
+    assert "(`13`)" not in output.getvalue()
+
+
+def test_task_list_can_force_grouped_area_output_when_captured(monkeypatch):
+    payload = {
+        "results": [
+            {"id": "6", "name": "Audio", "tasks": []},
+            {
+                "id": "1",
+                "name": "Vision",
+                "tasks": [
+                    {
+                        "id": "13",
+                        "slug": "3d-generation",
+                        "name": "3D generation",
+                        "paper_count": 2389,
+                    }
+                ],
+            },
+        ]
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert (path, params) == ("areas/with-tasks/", None)
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert (
+            main(["task", "list", "--group-by-area", "--area", "vision"]) == 0
+        )
+
+    assert output.getvalue() == (
+        "# Area: Vision\n"
+        "- **3D generation** (`3d-generation`) — 2,389 papers\n"
     )
 
 

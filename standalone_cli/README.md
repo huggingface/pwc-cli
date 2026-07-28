@@ -11,6 +11,7 @@ pwc paper info 2501.01234 --include-resources
 pwc paper info "Attention Is All You Need"
 pwc paper read 2501.01234
 pwc task list --area Vision
+pwc task list --group-by-area
 pwc method list --area Audio
 pwc conference list --year 2025
 ```

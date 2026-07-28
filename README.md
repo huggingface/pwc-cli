@@ -122,6 +122,7 @@ Explore the research taxonomy and conferences:
 ```bash
 pwc task list
 pwc task list --area Vision
+pwc task list --group-by-area  # force grouped Markdown when piping/capturing
 pwc method list --area Audio
 pwc method list --area General --introduced-year 2017
 pwc conference list
@@ -145,7 +146,7 @@ of silently selecting one paper.
 | `pwc paper trending` | List trending papers |
 | `pwc paper related PAPER` | Find related papers |
 | `pwc paper lineage list PAPER` | Show linked Markdown sections for a paper's predecessors and successors |
-| `pwc task list` | List tasks and filter them by research area |
+| `pwc task list` | Group visible top-level tasks by area in a terminal; support flat pagination and area filters |
 | `pwc method list` | List methods and filter them by research area or introduction year |
 | `pwc conference list` | List conferences and filter them by year |
 | `pwc benchmark list` | List and filter benchmarks, ranked by task trends when `--task` is used |

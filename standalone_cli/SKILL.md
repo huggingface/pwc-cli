@@ -50,8 +50,12 @@ than silently selecting a paper.
   its predecessors, and its successors. `[--json]`
 - `pwc task list` — List research tasks, optionally filtering by a
   case-insensitive exact area name such as Vision, Audio, or General.
+  Interactive output groups visible top-level tasks into Markdown area sections;
+  `--group-by-area` forces that view when output is captured, while `--flat`
+  forces the paginated table.
   `[--page 1-100 --page-size 1-100 --area NAME_OR_ID --level INTEGER
-  --visible-only --order-by name|created_at|level|paper_count
+  --visible-only --group-by-area|--flat
+  --order-by name|created_at|level|paper_count
   --order-dir asc|desc --json]`
 - `pwc method list` — List research methods, optionally filtering by area or
   introduction year.
@@ -84,8 +88,9 @@ than silently selecting a paper.
    titles as sufficient support for detailed claims.
 4. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-5. Explore the catalog taxonomy with `pwc task list`, `pwc method list`, and
-   `pwc conference list`; use `--area` or `--year` to narrow broad lists.
+5. Explore the catalog taxonomy with `pwc task list --group-by-area`,
+   `pwc method list`, and `pwc conference list`; use `--area` or `--year` to
+   narrow broad lists.
 6. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
    `pwc benchmark --name NAME` to inspect a specific leaderboard.
 7. Synthesize only after gathering enough primary evidence. Preserve paper

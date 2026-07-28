@@ -447,7 +447,99 @@ def _ordering(field: str, direction: str) -> str:
     return f"-{field}" if direction == "desc" else field
 
 
+def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
+    if args.page != 1 or args.page_size != 50 or args.level is not None:
+        raise ResponseError(
+            "--group-by-area cannot be combined with pagination or --level; "
+            "use --flat for the complete task endpoint"
+        )
+
+    payload = client.get("areas/with-tasks/").json()
+    areas, _total = _rows(payload)
+    if args.area:
+        available_areas = areas
+        target = args.area.strip().casefold()
+        areas = [
+            area
+            for area in areas
+            if target
+            in (
+                str(area.get("id") or "").casefold(),
+                str(area.get("name") or "").casefold(),
+            )
+        ]
+        if not areas:
+            names = ", ".join(
+                sorted(
+                    (
+                        str(area.get("name"))
+                        for area in available_areas
+                        if area.get("name")
+                    ),
+                    key=str.casefold,
+                )
+            )
+            raise ResponseError(
+                f"Area not found: {args.area}; available areas: {names}"
+            )
+
+    reverse = args.order_dir == "desc"
+
+    def sort_key(item: dict[str, Any]):
+        value = item.get(args.order_by)
+        if isinstance(value, str):
+            value = value.casefold()
+        return value is None, value
+
+    grouped = []
+    for area in areas:
+        tasks = [
+            task for task in area.get("tasks") or [] if isinstance(task, dict)
+        ]
+        tasks.sort(key=sort_key, reverse=reverse)
+        grouped.append({**area, "tasks": tasks})
+    data = {"results": grouped}
+    if args.json:
+        print(
+            json.dumps(
+                {"schema_version": API_CONTRACT_VERSION, "data": data},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    for area_index, area in enumerate(grouped):
+        if area_index:
+            print()
+        print(f"# Area: {_clean(area.get('name'))}")
+        tasks = area["tasks"]
+        if not tasks:
+            print("\n- None")
+            continue
+        for task in tasks:
+            name = _clean(task.get("name") or task.get("slug") or "Unnamed task")
+            slug = _clean(task.get("slug"))
+            count = task.get("paper_count")
+            count_text = f"{int(count):,}" if count is not None else "unknown"
+            noun = "paper" if count == 1 else "papers"
+            slug_text = f" (`{slug}`)" if slug else ""
+            print(f"- **{name}**{slug_text} — {count_text} {noun}")
+    return 0
+
+
 def task_list(args: argparse.Namespace, client: Client) -> int:
+    automatic_grouping = (
+        sys.stdout.isatty()
+        and not args.json
+        and not args.flat
+        and args.page == 1
+        and args.page_size == 50
+        and args.level is None
+    )
+    if args.group_by_area or automatic_grouping:
+        return _task_list_grouped(args, client)
+
     area_id, area_names = _resolve_area(args.area, client)
     payload = client.get(
         "tasks/",
@@ -919,6 +1011,17 @@ def build_parser() -> argparse.ArgumentParser:
     tasks = task_commands.add_parser("list", help="list and filter research tasks")
     tasks.add_argument("--page", type=_page, default=1)
     tasks.add_argument("--page-size", type=_page_size, default=50)
+    task_display = tasks.add_mutually_exclusive_group()
+    task_display.add_argument(
+        "--group-by-area",
+        action="store_true",
+        help="render the complete visible top-level taxonomy as Markdown",
+    )
+    task_display.add_argument(
+        "--flat",
+        action="store_true",
+        help="force the paginated flat table in an interactive terminal",
+    )
     tasks.add_argument(
         "--area",
         help="case-insensitive exact area name (for example Vision) or area ID",
