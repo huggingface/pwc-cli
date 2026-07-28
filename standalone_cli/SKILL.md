@@ -1,27 +1,98 @@
 ---
 name: pwc-cli
-description: Use the standalone read-only Papers With Code CLI for bounded public paper and benchmark research.
+description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, and browsing benchmark leaderboards through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or the `pwc-cli`. Prefer this skill for grounded AI/ML research even when the user does not explicitly ask for a CLI command."
 ---
 
-# Standalone Papers With Code CLI
-
-This public client is anonymous and read-only. Run `pwc --help` or nested help
-for the current bounded flags. Use compact output by default; add `--json` only
-for programmatic filtering, joining, or transformation.
+Install:
 
 ```bash
-pwc search "small vision language models" --limit 10
-pwc paper info 2501.01234 --include-resources
-pwc paper read 2501.01234
-pwc paper list --conference CVPR --page-size 20
-pwc paper recent --limit 10
-pwc paper trending --limit 20
-pwc paper related 2501.01234 --limit 4
-pwc paper lineage list 2501.01234
-pwc benchmark list --task OCR
-pwc benchmark --name "SWE-Bench Pro"
-pwc version
+pwc_repo=https://raw.githubusercontent.com/huggingface/pwc-cli/main
+curl -LsSf "$pwc_repo/standalone_cli/install.py" | python3
 ```
+
+The `pwc` CLI is anonymous and read-only. It queries the public
+[Papers With Code](https://paperswithcode.co) catalog and requires no token.
+Run `pwc --help` or a nested `--help` command when the live parser and this skill
+disagree; the parser is authoritative.
+
+Use compact output for reading and discovery. Add `--json` when programmatic
+filtering, joining, or schema-dependent processing is useful.
+
+## Commands
+
+- `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID.
+  `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
+- `pwc paper info PAPER` — Show concise metadata for an arXiv ID or numeric
+  external-paper ID. `[--include-resources --json]`
+- `pwc paper read PAPER` — Print stored paper Markdown for a modern arXiv ID.
+  `[--json]`
+- `pwc paper list` — List and filter the paper catalog.
+  `[--page 1-100 --page-size 1-100 --search TEXT
+  --published-after YYYY-MM-DD --published-before YYYY-MM-DD
+  --conference TEXT --all-versions
+  --order-by trending|date_published|citation_count
+  --order-dir asc|desc --time today|week|month|all_time
+  --include-resources --json]`
+- `pwc paper recent` — List recently published papers.
+  `[--limit 1-100 --json]`
+- `pwc paper trending` — List papers with recent repository activity.
+  `[--limit 1-100 --max-age-days 1-365 --min-velocity FLOAT --json]`
+- `pwc paper related PAPER` — Find embedding- and taxonomy-ranked related work
+  for an arXiv or external-paper ID. `[--limit 1-20 --json]`
+- `pwc paper lineage list PAPER` — List a paper's predecessors and successors.
+  `[--json]`
+- `pwc benchmark list` — Find and rank benchmarks. When `--task` is supplied,
+  the default order is task-specific trending activity; otherwise it is name.
+  `[--page 1-100 --page-size 1-100 --search TEXT --task TASK
+  --include-descendants --min-eval-count INTEGER --is-open true|false
+  --order-by trending|name|full_name|created_at|paper_count
+  --order-dir asc|desc --json]`
+- `pwc benchmark --name NAME` — Show a benchmark's top models, scores, source
+  papers, publication dates, and open/closed status. `NAME` must exactly match
+  a benchmark name, full name, slug, or ID.
+  `[--limit 1-100 --is-open true|false --json]`
+- `pwc version` — Show the CLI and API contract versions.
+
+## Research workflow
+
+1. Start with `pwc search` for a topic or a known paper. Use the default hybrid
+   mode first; use keyword mode for exact terminology and semantic mode for
+   conceptual matches.
+2. Inspect promising results with `pwc paper info`. Add
+   `--include-resources --json` when linked artifacts matter.
+3. Read primary evidence with `pwc paper read`. Do not treat search snippets or
+   titles as sufficient support for detailed claims.
+4. Expand the literature with `pwc paper related` and use
+   `pwc paper lineage list` when model or method ancestry matters.
+5. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
+   `pwc benchmark --name NAME` to inspect a specific leaderboard.
+6. Synthesize only after gathering enough primary evidence. Preserve paper
+   titles, identifiers, and URLs in the answer so claims remain traceable.
+
+## Command selection
+
+- Use `pwc search` for relevance-ranked discovery.
+- Use `pwc paper list` for structured filters, date windows, conferences, and
+  deterministic sorting.
+- Use `pwc paper recent` for recency and `pwc paper trending` for current
+  repository activity; these are different signals.
+- Use `--include-resources --json` when repositories, project pages, or
+  Hugging Face artifacts matter; compact output omits the resource arrays.
+- Use `--all-versions` only when individual arXiv versions are relevant.
+- Use `--is-open true` to restrict benchmark results to open models.
+- Paginate when stderr reports more results. Do not silently treat the first
+  page as the complete catalog.
+
+## Output and limits
+
+- Default list and search output is compact TSV; paper info uses labeled text;
+  benchmark details use Markdown.
+- `--json` wraps responses as
+  `{"schema_version":"v1","data":...}` for stable agent consumption.
+- Stable exit codes are `0` success, `2` invalid usage, `3` network/server
+  failure, and `4` invalid API response.
+- `PWC_API_URL` may select another compatible v1 endpoint. The default is
+  `https://paperswithcode.co/api/v1`.
 
 The standalone parser contains no authentication, mutation, ingestion,
 publication, image, CRON, embedding, or infrastructure commands. Do not
