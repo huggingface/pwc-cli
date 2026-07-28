@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import date
 from typing import Any, Callable
@@ -13,6 +14,10 @@ from pwc_cli import API_CONTRACT_VERSION, __version__
 from pwc_cli.transport import Client, ResponseError, TransportError
 
 Handler = Callable[[argparse.Namespace, Client], int]
+MODERN_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$", re.IGNORECASE)
+LEGACY_ARXIV_ID = re.compile(
+    r"^[a-z][a-z0-9.-]+/\d{7}(?:v\d+)?$", re.IGNORECASE
+)
 
 
 class Parser(argparse.ArgumentParser):
@@ -75,6 +80,67 @@ def _paper_id(item: dict[str, Any]) -> str:
     return _clean(item.get("arxiv_id") or item.get("id"))
 
 
+def _paper_reference(item: dict[str, Any]) -> str:
+    return str(
+        item.get("arxiv_id")
+        or item.get("route_identifier")
+        or item.get("id")
+        or ""
+    )
+
+
+def _normalize_title(value: object) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _is_paper_identifier(value: str) -> bool:
+    return (
+        value.isdigit()
+        or MODERN_ARXIV_ID.fullmatch(value) is not None
+        or LEGACY_ARXIV_ID.fullmatch(value) is not None
+    )
+
+
+def _resolve_paper(reference: str, client: Client) -> str:
+    candidate = reference.strip()
+    if not candidate:
+        raise ResponseError("Paper reference cannot be empty")
+    if _is_paper_identifier(candidate):
+        return candidate
+
+    payload = client.get(
+        "papers/search",
+        {
+            "q": candidate,
+            "page": 1,
+            "page_size": 20,
+            "mode": "keyword",
+        },
+    ).json()
+    items, _total = _rows(payload)
+    target = _normalize_title(candidate)
+    exact: dict[str, dict[str, Any]] = {}
+    for item in items:
+        resolved = _paper_reference(item)
+        if resolved and _normalize_title(item.get("title")) == target:
+            exact.setdefault(resolved, item)
+    if len(exact) == 1:
+        return next(iter(exact))
+
+    def describe(item: dict[str, Any]) -> str:
+        title = _clean(item.get("title") or "Untitled")
+        resolved = _clean(_paper_reference(item) or "unknown ID")
+        return f"{title} ({resolved})"
+
+    if exact:
+        matches = "; ".join(describe(item) for item in exact.values())
+        raise ResponseError(f"Paper title is ambiguous: {_clean(candidate)}; {matches}")
+
+    suggestions = "; ".join(describe(item) for item in items[:3])
+    suffix = f"; closest results: {suggestions}" if suggestions else ""
+    raise ResponseError(f"Paper title not found: {_clean(candidate)}{suffix}")
+
+
 def _paper_rows(items: list[dict[str, Any]]) -> None:
     print("id\ttitle\tyear\tcitations")
     for item in items:
@@ -128,8 +194,9 @@ def search(args: argparse.Namespace, client: Client) -> int:
 
 
 def paper_info(args: argparse.Namespace, client: Client) -> int:
+    paper = _resolve_paper(args.paper, client)
     payload = client.get(
-        f"papers/{args.paper}", {"include_resources": args.include_resources}
+        f"papers/{paper}", {"include_resources": args.include_resources}
     ).json()
     if args.json:
         print(
@@ -206,14 +273,15 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
 
 
 def paper_read(args: argparse.Namespace, client: Client) -> int:
-    response = client.get(f"research/papers/{args.paper}/read")
+    paper = _resolve_paper(args.paper, client)
+    response = client.get(f"research/papers/{paper}/read")
     markdown = response.body.decode("utf-8", errors="replace")
     if args.json:
         print(
             json.dumps(
                 {
                     "schema_version": API_CONTRACT_VERSION,
-                    "data": {"paper": args.paper, "markdown": markdown},
+                    "data": {"paper": paper, "markdown": markdown},
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -268,8 +336,9 @@ def paper_trending(args: argparse.Namespace, client: Client) -> int:
 
 
 def paper_related(args: argparse.Namespace, client: Client) -> int:
+    paper = _resolve_paper(args.paper, client)
     return _emit_page(
-        client.get(f"papers/{args.paper}/related", {"limit": args.limit}).json(),
+        client.get(f"papers/{paper}/related", {"limit": args.limit}).json(),
         args,
         _paper_rows,
     )
@@ -290,7 +359,8 @@ def _lineage_markdown(item: dict[str, Any]) -> str:
 
 
 def paper_lineage(args: argparse.Namespace, client: Client) -> int:
-    payload = client.get(f"research/papers/{args.paper}/lineage").json()
+    paper_reference = _resolve_paper(args.paper, client)
+    payload = client.get(f"research/papers/{paper_reference}/lineage").json()
     if args.json:
         print(
             json.dumps(
@@ -749,12 +819,14 @@ def build_parser() -> argparse.ArgumentParser:
     info = paper_commands.add_parser(
         "info", help="show paper metadata including abstract"
     )
-    info.add_argument("paper", help="ArXiv ID or external-paper numeric ID")
+    info.add_argument(
+        "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
+    )
     info.add_argument("--include-resources", action="store_true")
     _json(info)
     info.set_defaults(handler=paper_info)
     read = paper_commands.add_parser("read", help="print stored paper Markdown")
-    read.add_argument("paper", help="modern ArXiv ID")
+    read.add_argument("paper", help="modern ArXiv ID or exact paper title")
     _json(read)
     read.set_defaults(handler=paper_read)
     listing = paper_commands.add_parser("list", help="list and filter papers")
@@ -793,7 +865,9 @@ def build_parser() -> argparse.ArgumentParser:
         _json(leaf)
         leaf.set_defaults(handler=handler)
     related = paper_commands.add_parser("related", help="list related papers")
-    related.add_argument("paper", help="ArXiv or external paper ID")
+    related.add_argument(
+        "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
+    )
     related.add_argument("--limit", type=_limit(20), default=4)
     _json(related)
     related.set_defaults(handler=paper_related)
@@ -802,7 +876,9 @@ def build_parser() -> argparse.ArgumentParser:
     lineage_list = lineage_commands.add_parser(
         "list", help="list predecessors and successors"
     )
-    lineage_list.add_argument("paper", help="ArXiv or external paper ID")
+    lineage_list.add_argument(
+        "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
+    )
     _json(lineage_list)
     lineage_list.set_defaults(handler=paper_lineage)
 

@@ -516,6 +516,110 @@ def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
     )
 
 
+def test_all_paper_commands_resolve_exact_titles(monkeypatch):
+    title = "Transformers Are RNNs"
+    resolved = "2006.16236"
+    search_payload = {
+        "count": 1,
+        "results": [{"arxiv_id": resolved, "title": title}],
+    }
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            if path == "papers/search":
+                return Response(json.dumps(search_payload).encode(), {})
+            if path == f"papers/{resolved}":
+                return Response(
+                    json.dumps({"arxiv_id": resolved, "title": title}).encode(), {}
+                )
+            if path == f"research/papers/{resolved}/read":
+                return Response(b"# Paper", {})
+            if path == f"papers/{resolved}/related":
+                return Response(b'{"count":0,"results":[]}', {})
+            if path == f"research/papers/{resolved}/lineage":
+                return Response(
+                    json.dumps(
+                        {
+                            "paper": {"reference": resolved, "title": title},
+                            "predecessors": [],
+                            "successors": [],
+                        }
+                    ).encode(),
+                    {},
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    commands = (
+        (
+            ["paper", "info", title.lower()],
+            (f"papers/{resolved}", {"include_resources": False}),
+        ),
+        (
+            ["paper", "read", title.lower()],
+            (f"research/papers/{resolved}/read", None),
+        ),
+        (
+            ["paper", "related", title.lower()],
+            (f"papers/{resolved}/related", {"limit": 4}),
+        ),
+        (
+            ["paper", "lineage", "list", title.lower()],
+            (f"research/papers/{resolved}/lineage", None),
+        ),
+    )
+
+    for argv, expected_request in commands:
+        calls.clear()
+        with redirect_stdout(io.StringIO()):
+            assert main(argv) == 0
+        assert calls == [
+            (
+                "papers/search",
+                {
+                    "q": title.lower(),
+                    "page": 1,
+                    "page_size": 20,
+                    "mode": "keyword",
+                },
+            ),
+            expected_request,
+        ]
+
+
+def test_ambiguous_paper_title_is_rejected_with_matches(monkeypatch):
+    title = "A Shared Title"
+    payload = {
+        "count": 2,
+        "results": [
+            {"arxiv_id": "2501.00001", "title": title},
+            {"arxiv_id": "2501.00002", "title": title},
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert path == "papers/search"
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    errors = io.StringIO()
+    with redirect_stderr(errors):
+        assert main(["paper", "info", title]) == 4
+    assert errors.getvalue() == (
+        "pwc: Paper title is ambiguous: A Shared Title; "
+        "A Shared Title (2501.00001); A Shared Title (2501.00002)\n"
+    )
+
+
 def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
     payload = {
         "arxiv_id": "2501.01234",

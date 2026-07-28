@@ -18,17 +18,21 @@ disagree; the parser is authoritative.
 Use compact output for reading and discovery. Add `--json` when programmatic
 filtering, joining, or schema-dependent processing is useful.
 
+`PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
+exact paper title. Quote titles containing spaces. Title matching is
+case-insensitive but exact; ambiguous titles fail with their matching IDs rather
+than silently selecting a paper.
+
 ## Commands
 
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
-- `pwc paper info PAPER` — Show metadata, including the abstract, for an arXiv
-  ID or numeric external-paper ID. `--include-resources` adds Markdown sections
-  for repositories, project pages, and Hugging Face artifacts, with official
-  links marked explicitly.
+- `pwc paper info PAPER` — Show metadata, including the abstract.
+  `--include-resources` adds Markdown sections for repositories, project pages,
+  and Hugging Face artifacts, with official links marked explicitly.
   `[--include-resources --json]`
-- `pwc paper read PAPER` — Print stored paper Markdown for a modern arXiv ID.
-  `[--json]`
+- `pwc paper read PAPER` — Print stored paper Markdown. The resolved paper must
+  have a modern arXiv record. `[--json]`
 - `pwc paper list` — List and filter the paper catalog.
   `[--page 1-100 --page-size 1-100 --search TEXT
   --published-after YYYY-MM-DD --published-before YYYY-MM-DD
@@ -40,8 +44,8 @@ filtering, joining, or schema-dependent processing is useful.
   `[--limit 1-100 --json]`
 - `pwc paper trending` — List papers with recent repository activity.
   `[--limit 1-100 --max-age-days 1-365 --min-velocity FLOAT --json]`
-- `pwc paper related PAPER` — Find embedding- and taxonomy-ranked related work
-  for an arXiv or external-paper ID. `[--limit 1-20 --json]`
+- `pwc paper related PAPER` — Find embedding- and taxonomy-ranked related work.
+  `[--limit 1-20 --json]`
 - `pwc paper lineage list PAPER` — Render linked Markdown sections for a paper,
   its predecessors, and its successors. `[--json]`
 - `pwc task list` — List research tasks, optionally filtering by a

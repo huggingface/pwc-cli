@@ -86,6 +86,7 @@ Inspect or read a paper:
 ```bash
 pwc paper info 1706.03762
 pwc paper info 1706.03762 --include-resources  # linked GitHub, project, and HF URLs
+pwc paper info "Attention Is All You Need"
 pwc paper read 1706.03762
 ```
 
@@ -128,6 +129,11 @@ pwc conference list --year 2025
 ```
 
 ## Command reference
+
+Every `PAPER` argument accepts a modern or legacy arXiv ID, a numeric
+external-paper ID, or a quoted exact paper title. Title matching is
+case-insensitive. Ambiguous titles are rejected with the matching IDs instead
+of silently selecting one paper.
 
 | Command | Description |
 | --- | --- |
