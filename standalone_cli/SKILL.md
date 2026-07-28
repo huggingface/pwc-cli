@@ -68,8 +68,11 @@ than silently selecting a paper.
 - `pwc conference list` — List conferences with imported papers.
   `[--year YEAR --json]`
 - `pwc benchmark list` — Find and rank benchmarks. When `--task` is supplied,
-  the default order is task-specific trending activity; otherwise it is name.
-  `[--page 1-100 --page-size 1-100 --search TEXT --task TASK
+  the default order is task-specific trending activity. Without filters,
+  interactive output groups top benchmarks under visible tasks by area;
+  `--group-by-area` forces Markdown and `--flat` forces the dataset table.
+  `[--page 1-100 --page-size 1-100 --search TEXT --task TASK --area NAME_OR_ID
+  --benchmarks-per-task 1-10 --group-by-area|--flat
   --include-descendants --min-eval-count INTEGER --is-open true|false
   --order-by trending|name|full_name|created_at|paper_count
   --order-dir asc|desc --json]`

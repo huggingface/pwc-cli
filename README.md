@@ -122,6 +122,8 @@ pwc conference list --year 2025
 Browse benchmarks:
 
 ```bash
+pwc benchmark list
+pwc benchmark list --group-by-area --area Vision
 pwc benchmark list --search ImageNet
 pwc benchmark list --task OCR
 pwc benchmark list --task image-classification --include-descendants
@@ -149,7 +151,7 @@ of silently selecting one paper.
 | `pwc task list` | Group visible top-level tasks by area in a terminal; support flat pagination and area filters |
 | `pwc method list` | List methods and filter them by research area or introduction year |
 | `pwc conference list` | List conferences and filter them by year |
-| `pwc benchmark list` | List and filter benchmarks, ranked by task trends when `--task` is used |
+| `pwc benchmark list` | Group top benchmarks by area and task; support flat filters and task-trend ranking |
 | `pwc benchmark --name NAME` | Show a benchmark's top models, papers, scores, and publication dates |
 | `pwc version` | Show the CLI and API contract versions |
 
@@ -158,8 +160,10 @@ Run `pwc --help`, `pwc COMMAND --help`, or
 
 ## Output and scripting
 
-List and search commands use aligned columns in an interactive terminal and
-lossless TSV when piped or captured. Detail commands use labeled metadata or
+Task and benchmark lists use grouped Markdown in an interactive terminal;
+`--flat` forces their paginated tables and `--group-by-area` forces Markdown
+when piping. Other list and search commands use aligned columns in a terminal
+and lossless TSV when captured. Detail commands use labeled metadata or
 Markdown. Add `--json` to any data command for machine-readable output:
 
 ```bash

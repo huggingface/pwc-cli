@@ -14,13 +14,16 @@ pwc task list --area Vision
 pwc task list --group-by-area
 pwc method list --area Audio
 pwc conference list --year 2025
+pwc benchmark list
 ```
 
 Every `PAPER` argument accepts an arXiv ID, numeric external-paper ID, or quoted
 exact title. Title matching is case-insensitive and rejects ambiguity.
 
-List and search output uses aligned columns in a terminal and lossless TSV when
-piped or captured.
+Task lists and benchmark lists render grouped Markdown in a terminal. Use
+`--flat` for paginated tables or `--group-by-area` to force Markdown when
+piping. Other list and search output uses aligned columns in a terminal and
+lossless TSV when captured.
 
 `pipx install ./standalone_cli` is also supported. `PWC_API_URL` selects a
 compatible versioned API origin; it defaults to

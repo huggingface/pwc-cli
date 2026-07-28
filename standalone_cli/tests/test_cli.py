@@ -171,6 +171,8 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
                 "all_time_paper_count": 5,
                 "trend_score": 1.3333,
                 "best_model_name": "Reader 2",
+                "best_paper_title": "Recent OCR Paper",
+                "best_code_url": "https://github.com/example/reader-2",
             },
             {
                 "id": "1",
@@ -179,6 +181,8 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
                 "all_time_paper_count": 20,
                 "trend_score": 0.3333,
                 "best_model_name": "Reader 1",
+                "best_paper_title": "Classic OCR Paper",
+                "best_code_url": None,
             },
         ],
     }
@@ -198,10 +202,84 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
 
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
     assert calls[0][1]["min_recent_papers"] == 0
-    assert output.getvalue().splitlines()[1:3] == [
-        "2\tRecent OCR\t4\t1.3333\tReader 2",
-        "1\tClassic OCR\t1\t0.3333\tReader 1",
+    assert output.getvalue().splitlines() == [
+        "id\tname\trecent_papers\ttrend_score\tbest_model\tpaper_title\tcode",
+        (
+            "2\tRecent OCR\t4\t1.3333\tReader 2\tRecent OCR Paper"
+            "\thttps://github.com/example/reader-2"
+        ),
+        "1\tClassic OCR\t1\t0.3333\tReader 1\tClassic OCR Paper\t",
     ]
+
+
+def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
+    calls = []
+    payload = {
+        "results": [
+            {
+                "id": "1",
+                "name": "Vision",
+                "tasks": [
+                    {
+                        "id": "10",
+                        "name": "Image Classification",
+                        "slug": "image-classification",
+                        "paper_count": 100,
+                        "benchmarks": [
+                            {
+                                "id": "20",
+                                "name": "ImageNet [1K]",
+                                "slug": "imagenet",
+                                "evaluation_count": 1234,
+                                "featured_rank": 1,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "list",
+                    "--group-by-area",
+                    "--area",
+                    "Vision",
+                    "--benchmarks-per-task",
+                    "5",
+                ]
+            )
+            == 0
+        )
+
+    assert calls == [
+        (
+            "areas/with-task-benchmarks/",
+            {"benchmarks_per_task": 5, "min_eval_count": 2},
+        )
+    ]
+    assert output.getvalue() == (
+        "# Area: Vision\n"
+        "\n"
+        "## Image Classification (`image-classification`)\n"
+        "\n"
+        "- [ImageNet \\[1K\\]](https://paperswithcode.co/benchmark/imagenet)"
+        " — 1,234 evaluations\n"
+    )
 
 
 def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
