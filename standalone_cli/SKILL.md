@@ -60,7 +60,10 @@ than silently selecting a paper.
   --order-by name|created_at|level|paper_count
   --order-dir asc|desc --json]`
 - `pwc method list` — List research methods, optionally filtering by area or
-  introduction year.
+  introduction year. This subcommand has no `--search` or `--limit` flag; do
+  not infer flags from sibling list commands. To find methods by name or topic,
+  filter the bounded list with
+  `pwc method list --page-size 500 | rg -i -- 'QUERY'`.
   `[--page 1-100 --page-size 1-500 --area NAME_OR_ID
   --introduced-year YEAR
   --order-by name|full_name|introduced_year|created_at|paper_count
