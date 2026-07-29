@@ -17,6 +17,9 @@ disagree; the parser is authoritative.
 
 Use compact output for reading and discovery. Add `--json` when programmatic
 filtering, joining, or schema-dependent processing is useful.
+Use only flags documented for the exact subcommand; do not infer that sibling
+commands share flags. For `pwc paper list`, `pwc task list`, and
+`pwc method list`, use `--page-size`, never `--limit`.
 
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
 exact paper title. Papers with Code supports external papers which are not on arXiv,
