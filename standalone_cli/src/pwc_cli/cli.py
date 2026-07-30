@@ -6,18 +6,22 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Callable
 from datetime import date
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
 from pwc_cli import API_CONTRACT_VERSION, __version__
 from pwc_cli.transport import Client, ResponseError, TransportError
 
 Handler = Callable[[argparse.Namespace, Client], int]
+MAX_METRIC_SCAN_ROWS = 1_000
 MODERN_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$", re.IGNORECASE)
-LEGACY_ARXIV_ID = re.compile(
-    r"^[a-z][a-z0-9.-]+/\d{7}(?:v\d+)?$", re.IGNORECASE
-)
+LEGACY_ARXIV_ID = re.compile(r"^[a-z][a-z0-9.-]+/\d{7}(?:v\d+)?$", re.IGNORECASE)
+
+
+class UsageError(ValueError):
+    """Valid syntax whose option values cannot be applied together."""
 
 
 class Parser(argparse.ArgumentParser):
@@ -52,6 +56,47 @@ def _method_page_size(value: str) -> int:
     return _bounded(int(value), 1, 500, "--page-size")
 
 
+def _metric_names(value: str) -> tuple[str, ...]:
+    names = tuple(name.strip() for name in value.split(",") if name.strip())
+    if not names:
+        raise argparse.ArgumentTypeError("metric list must not be empty")
+    return names
+
+
+def _metric_bound(value: str) -> tuple[str, float]:
+    name, separator, raw_threshold = value.partition("=")
+    if not separator or not name.strip() or not raw_threshold.strip():
+        raise argparse.ArgumentTypeError("expected METRIC=VALUE")
+    try:
+        threshold = float(raw_threshold)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("metric threshold must be numeric") from error
+    return name.strip(), threshold
+
+
+def _metric_sort(value: str) -> tuple[str, str]:
+    name, separator, direction = value.rpartition(":")
+    if not separator:
+        return value.strip(), "desc"
+    if not name.strip() or direction not in {"asc", "desc"}:
+        raise argparse.ArgumentTypeError("expected METRIC[:asc|desc]")
+    return name.strip(), direction
+
+
+def _pareto_objectives(value: str) -> tuple[tuple[str, str], ...]:
+    objectives = []
+    for item in value.split(","):
+        name, separator, direction = item.strip().rpartition(":")
+        if not separator or not name.strip() or direction not in {"higher", "lower"}:
+            raise argparse.ArgumentTypeError("expected METRIC:higher,METRIC:lower")
+        objectives.append((name.strip(), direction))
+    if len(objectives) < 2:
+        raise argparse.ArgumentTypeError(
+            "Pareto selection requires at least two metrics"
+        )
+    return tuple(objectives)
+
+
 def _clean(value: object) -> str:
     if value is None:
         return ""
@@ -76,9 +121,7 @@ def _print_table(
             print("\t".join(row))
         return
 
-    widths = [
-        max(len(row[index]) for row in rendered) for index in range(len(headers))
-    ]
+    widths = [max(len(row[index]) for row in rendered) for index in range(len(headers))]
     right = set(right_align)
     for row in rendered:
         cells = []
@@ -114,10 +157,7 @@ def _paper_id(item: dict[str, Any]) -> str:
 
 def _paper_reference(item: dict[str, Any]) -> str:
     return str(
-        item.get("arxiv_id")
-        or item.get("route_identifier")
-        or item.get("id")
-        or ""
+        item.get("arxiv_id") or item.get("route_identifier") or item.get("id") or ""
     )
 
 
@@ -264,22 +304,23 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
             resources = [
                 resource
                 for resource in payload.get(field) or []
-                if (
-                    resource.get("url")
-                    if isinstance(resource, dict)
-                    else resource
-                )
+                if (resource.get("url") if isinstance(resource, dict) else resource)
             ]
             resources.sort(
-                key=lambda resource: not (
-                    isinstance(resource, dict) and resource.get("is_official") is True
+                key=lambda resource: (
+                    not (
+                        isinstance(resource, dict)
+                        and resource.get("is_official") is True
+                    )
                 )
             )
             if resources:
                 print(f"\n## {title}\n")
                 for resource in resources:
                     if isinstance(resource, dict):
-                        official = "**Official:** " if resource.get("is_official") else ""
+                        official = (
+                            "**Official:** " if resource.get("is_official") else ""
+                        )
                         url = resource["url"]
                     else:
                         official = ""
@@ -497,9 +538,7 @@ def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
 
     grouped = []
     for area in areas:
-        tasks = [
-            task for task in area.get("tasks") or [] if isinstance(task, dict)
-        ]
+        tasks = [task for task in area.get("tasks") or [] if isinstance(task, dict)]
         tasks.sort(key=sort_key, reverse=reverse)
         grouped.append({**area, "tasks": tasks})
     data = {"results": grouped}
@@ -638,6 +677,16 @@ def conference_list(args: argparse.Namespace, client: Client) -> int:
 
 
 def benchmark_list(args: argparse.Namespace, client: Client) -> int:
+    flat_filters = (
+        args.task
+        or args.search
+        or args.include_descendants
+        or args.is_open is not None
+        or args.order_by is not None
+        or args.order_dir != "asc"
+        or args.page != 1
+        or args.page_size != 50
+    )
     automatic_grouping = (
         sys.stdout.isatty()
         and not args.json
@@ -651,7 +700,19 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
         and args.page == 1
         and args.page_size == 50
     )
-    if args.group_by_area or automatic_grouping:
+    grouped = (
+        args.group_by_area or bool(args.area) or automatic_grouping
+    ) and not flat_filters
+    if args.area and flat_filters:
+        raise UsageError(
+            "--area cannot be combined with task/search/pagination filters"
+        )
+    if args.group_by_area and flat_filters and not args.json:
+        print(
+            "# filters select task-scoped flat output; --group-by-area ignored",
+            file=sys.stderr,
+        )
+    if grouped:
         return _benchmark_list_grouped(args, client)
 
     if args.task and args.order_by in (None, "trending"):
@@ -758,22 +819,6 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
 
 
 def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
-    incompatible = (
-        args.task
-        or args.search
-        or args.include_descendants
-        or args.is_open is not None
-        or args.order_by is not None
-        or args.order_dir != "asc"
-        or args.page != 1
-        or args.page_size != 50
-    )
-    if incompatible:
-        raise ResponseError(
-            "--group-by-area cannot be combined with task/search/pagination/"
-            "ordering/source filters; use --flat for the dataset endpoint"
-        )
-
     payload = client.get(
         "areas/with-task-benchmarks/",
         {
@@ -921,6 +966,166 @@ def _metric_summary(item: dict[str, Any]) -> str:
     return ", ".join(f"{name}: {metrics[name]}" for name in names)
 
 
+def _metric_value(item: dict[str, Any], requested: str) -> float | None:
+    metrics = item.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        return None
+    target = requested.casefold()
+    value = next(
+        (value for name, value in metrics.items() if str(name).casefold() == target),
+        None,
+    )
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().replace(",", "")
+    if normalized.endswith("%"):
+        normalized = normalized[:-1].strip()
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def _available_metrics(items: list[dict[str, Any]]) -> dict[str, str]:
+    available: dict[str, str] = {}
+    for item in items:
+        metrics = item.get("metrics") or {}
+        if not isinstance(metrics, dict):
+            continue
+        for name in metrics:
+            available.setdefault(str(name).casefold(), str(name))
+    return available
+
+
+def _metric_requests(args: argparse.Namespace) -> tuple[str, ...]:
+    requested = list(args.require_metrics)
+    requested.extend(name for name, _threshold in args.minimum_metrics)
+    requested.extend(name for name, _threshold in args.maximum_metrics)
+    if args.sort_metric:
+        requested.append(args.sort_metric[0])
+    if args.pareto:
+        requested.extend(name for name, _direction in args.pareto)
+    return tuple(dict.fromkeys(name.casefold() for name in requested))
+
+
+def _select_metric_rows(
+    items: list[dict[str, Any]], args: argparse.Namespace
+) -> list[dict[str, Any]]:
+    requested = _metric_requests(args)
+    if not requested:
+        return items
+    available = _available_metrics(items)
+    unknown = [name for name in requested if name not in available]
+    if unknown:
+        choices = ", ".join(sorted(available.values(), key=str.casefold)) or "none"
+        raise UsageError(
+            f"unknown metric(s): {', '.join(unknown)}; available metrics: {choices}"
+        )
+
+    required = {name.casefold() for name in args.require_metrics}
+    required.update(name.casefold() for name, _threshold in args.minimum_metrics)
+    required.update(name.casefold() for name, _threshold in args.maximum_metrics)
+    if args.sort_metric:
+        required.add(args.sort_metric[0].casefold())
+    if args.pareto:
+        required.update(name.casefold() for name, _direction in args.pareto)
+
+    selected = [
+        item
+        for item in items
+        if all(_metric_value(item, name) is not None for name in required)
+        and all(
+            (_metric_value(item, name) or 0) >= threshold
+            for name, threshold in args.minimum_metrics
+        )
+        and all(
+            (_metric_value(item, name) or 0) <= threshold
+            for name, threshold in args.maximum_metrics
+        )
+    ]
+    if args.pareto:
+        frontier = []
+        for candidate in selected:
+            dominated = False
+            for other in selected:
+                if other is candidate:
+                    continue
+                comparisons = []
+                for name, direction in args.pareto:
+                    candidate_value = _metric_value(candidate, name)
+                    other_value = _metric_value(other, name)
+                    assert candidate_value is not None and other_value is not None
+                    comparisons.append(
+                        other_value >= candidate_value
+                        if direction == "higher"
+                        else other_value <= candidate_value
+                    )
+                strictly_better = any(
+                    (_metric_value(other, name) or 0)
+                    > (_metric_value(candidate, name) or 0)
+                    if direction == "higher"
+                    else (_metric_value(other, name) or 0)
+                    < (_metric_value(candidate, name) or 0)
+                    for name, direction in args.pareto
+                )
+                if all(comparisons) and strictly_better:
+                    dominated = True
+                    break
+            if not dominated:
+                frontier.append(candidate)
+        selected = frontier
+    if args.sort_metric:
+        name, direction = args.sort_metric
+        selected.sort(
+            key=lambda item: _metric_value(item, name) or 0,
+            reverse=direction == "desc",
+        )
+    elif args.pareto:
+        name, direction = args.pareto[0]
+        selected.sort(
+            key=lambda item: _metric_value(item, name) or 0,
+            reverse=direction == "higher",
+        )
+    return selected
+
+
+def _benchmark_evaluations(
+    client: Client,
+    benchmark_id: object,
+    *,
+    is_open: str | None,
+    scan_all: bool,
+) -> tuple[list[dict[str, Any]], int]:
+    evaluations = []
+    page = 1
+    total = 0
+    while True:
+        payload = client.get(
+            f"datasets/{quote(str(benchmark_id), safe='')}/evaluations/",
+            {
+                "page": page,
+                "page_size": 100,
+                "ordering": "best_rank",
+                "is_open": is_open,
+            },
+        ).json()
+        current, count = _rows(payload)
+        evaluations.extend(current)
+        total = count if count is not None else len(evaluations)
+        if not scan_all or len(evaluations) >= total:
+            return evaluations, total
+        if len(evaluations) >= MAX_METRIC_SCAN_ROWS:
+            raise ResponseError(
+                f"metric selection requires scanning {total} evaluation rows; "
+                f"safety limit is {MAX_METRIC_SCAN_ROWS}"
+            )
+        page += 1
+
+
 def _paper_markdown(item: dict[str, Any]) -> str:
     title = _markdown_text(
         item.get("paper_title")
@@ -950,20 +1155,17 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
         suffix = f"; closest results: {suggestions}" if suggestions else ""
         raise ResponseError(f"Benchmark not found: {args.name}{suffix}")
 
-    evaluations_payload = client.get(
-        f"datasets/{quote(str(benchmark['id']), safe='')}/evaluations/",
-        {
-            "page": 1,
-            "page_size": 100,
-            "ordering": "best_rank",
-            "is_open": args.is_open,
-        },
-    ).json()
-    evaluations, total = _rows(evaluations_payload)
-    rows = _merged_evaluations(evaluations)[: args.limit]
+    scan_all = bool(_metric_requests(args))
+    evaluations, total = _benchmark_evaluations(
+        client, benchmark["id"], is_open=args.is_open, scan_all=scan_all
+    )
+    merged = _merged_evaluations(evaluations)
+    selected = _select_metric_rows(merged, args)
+    rows = selected[: args.limit]
     data = {
         "benchmark": benchmark,
-        "count": total if total is not None else len(evaluations),
+        "count": total,
+        "matched_count": len(selected),
         "results": rows,
     }
     if args.json:
@@ -986,7 +1188,13 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     slug = benchmark.get("slug") or benchmark.get("id")
     benchmark_url = f"https://paperswithcode.co/benchmark/{quote(str(slug), safe='-')}"
     print(f"\n[View benchmark]({benchmark_url})")
-    print(f"\nTop {len(rows)} of {data['count']} evaluation rows.\n")
+    if scan_all:
+        print(
+            f"\nShowing {len(rows)} of {len(selected)} matching merged rows "
+            f"from {data['count']} stored evaluation rows.\n"
+        )
+    else:
+        print(f"\nTop {len(rows)} of {data['count']} evaluation rows.\n")
     print("| Rank | Model | Scores | Task | Paper | Published | Open |")
     print("| ---: | --- | --- | --- | --- | --- | :---: |")
     for item in rows:
@@ -1203,6 +1411,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum leaderboard rows, 1-100 (default: 20)",
     )
     benchmark.add_argument("--is-open", choices=("true", "false"))
+    benchmark.add_argument(
+        "--require-metrics",
+        type=_metric_names,
+        default=(),
+        metavar="METRIC[,METRIC]",
+        help="keep rows containing numeric values for every named metric",
+    )
+    benchmark.add_argument(
+        "--min",
+        dest="minimum_metrics",
+        type=_metric_bound,
+        action="append",
+        default=[],
+        metavar="METRIC=VALUE",
+        help="keep rows at or above a metric threshold; repeatable",
+    )
+    benchmark.add_argument(
+        "--max",
+        dest="maximum_metrics",
+        type=_metric_bound,
+        action="append",
+        default=[],
+        metavar="METRIC=VALUE",
+        help="keep rows at or below a metric threshold; repeatable",
+    )
+    benchmark.add_argument(
+        "--sort",
+        dest="sort_metric",
+        type=_metric_sort,
+        metavar="METRIC[:asc|desc]",
+        help="sort matching rows by a numeric metric (default direction: desc)",
+    )
+    benchmark.add_argument(
+        "--pareto",
+        type=_pareto_objectives,
+        metavar="METRIC:higher,METRIC:lower",
+        help="keep the multi-metric Pareto frontier",
+    )
     _json(benchmark)
     benchmark.set_defaults(handler=benchmark_detail)
     benchmark_commands = benchmark.add_subparsers(dest="benchmark_command")
@@ -1267,6 +1513,9 @@ def main(argv: list[str] | None = None) -> int:
     except TransportError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 3
+    except UsageError as error:
+        print(f"pwc: {error}", file=sys.stderr)
+        return 2
     except ResponseError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 4

@@ -77,6 +77,8 @@ than silently selecting a paper.
   the default order is task-specific trending activity. Without filters,
   interactive output groups top benchmarks under visible tasks by area;
   `--group-by-area` forces Markdown and `--flat` forces the dataset table.
+  Task, search, pagination, ordering, and open-model filters take precedence
+  over `--group-by-area` and select task-scoped flat output.
   Rows include the benchmark name, slug, and ID (plus the full name when
   distinct in grouped output); pass the slug or ID to
   `pwc benchmark --name IDENTIFIER` for leaderboard details.
@@ -88,13 +90,23 @@ than silently selecting a paper.
 - `pwc benchmark --name NAME` — Show a benchmark's top models, scores, source
   papers, publication dates, and open/closed status. `NAME` must exactly match
   a benchmark name, full name, slug, or ID.
-  `[--limit 1-100 --is-open true|false --json]`
+  For multi-metric tradeoffs, require numeric metrics, apply repeatable
+  thresholds, sort by one metric, or select a Pareto frontier. Metric names are
+  case-insensitive.
+  `[--limit 1-100 --is-open true|false
+  --require-metrics METRIC[,METRIC]
+  --min METRIC=VALUE --max METRIC=VALUE
+  --sort METRIC[:asc|desc]
+  --pareto METRIC:higher,METRIC:lower --json]`
 - `pwc version` — Show the CLI and API contract versions.
 
 ## Research workflow
 
 1. Use `pwc benchmark list --task TASK` to discover active benchmarks for a given task,
    then `pwc benchmark --name NAME` to inspect a specific leaderboard.
+   For accuracy/latency or other multi-metric questions, use
+   `--require-metrics`, thresholds, or `--pareto`; do not infer a tradeoff from
+   a leaderboard sorted by one metric.
 2. Use `pwc paper info` to inspect promising results. Add `--include-resources`
    when linked GitHub repositories, project pages, or Hugging Face artifacts matter.
 3. Use `pwc search` to search more broadly for a topic or a known paper.

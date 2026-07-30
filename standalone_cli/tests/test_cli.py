@@ -29,9 +29,7 @@ def test_complete_parser_omits_mutation_and_auth_commands():
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
     assert build_parser().parse_args(["task", "list", "--area", "Vision"]).area
-    assert build_parser().parse_args(
-        ["task", "list", "--group-by-area"]
-    ).group_by_area
+    assert build_parser().parse_args(["task", "list", "--group-by-area"]).group_by_area
     assert build_parser().parse_args(["method", "list", "--area", "Audio"]).area
     assert build_parser().parse_args(["conference", "list", "--year", "2025"]).year
 
@@ -150,11 +148,32 @@ def test_benchmark_limit_alias_preserves_page_size_destination():
 
 def test_benchmark_detail_parser_matches_requested_command_shape():
     args = build_parser().parse_args(
-        ["benchmark", "--name", "SWE-Bench Pro", "--limit", "5"]
+        [
+            "benchmark",
+            "--name",
+            "SWE-Bench Pro",
+            "--limit",
+            "5",
+            "--require-metrics",
+            "Resolved,Latency",
+            "--min",
+            "Resolved=50",
+            "--max",
+            "Latency=2.5",
+            "--sort",
+            "Resolved:desc",
+            "--pareto",
+            "Resolved:higher,Latency:lower",
+        ]
     )
 
     assert args.name == "SWE-Bench Pro"
     assert args.limit == 5
+    assert args.require_metrics == ("Resolved", "Latency")
+    assert args.minimum_metrics == [("Resolved", 50)]
+    assert args.maximum_metrics == [("Latency", 2.5)]
+    assert args.sort_metric == ("Resolved", "desc")
+    assert args.pareto == (("Resolved", "higher"), ("Latency", "lower"))
 
 
 def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
@@ -212,6 +231,44 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
         ),
         "1\tclassic-ocr\tClassic OCR\t1\t0.3333\tReader 1\tClassic OCR Paper\t",
     ]
+
+
+def test_task_filter_takes_precedence_over_grouped_benchmark_display(
+    monkeypatch, capsys
+):
+    payload = {
+        "count": 1,
+        "results": [
+            {
+                "id": "2",
+                "slug": "recent-ocr",
+                "name": "Recent OCR",
+                "recent_paper_count": 4,
+                "trend_score": 1.3333,
+                "best_model_name": "Reader 2",
+                "best_paper_title": "Recent OCR Paper",
+            }
+        ],
+    }
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert main(["benchmark", "list", "--task", "OCR", "--group-by-area"]) == 0
+
+    captured = capsys.readouterr()
+    assert calls[0][0] == "tasks/OCR/trending-benchmarks"
+    assert captured.out.startswith("id\tslug\tname\trecent_papers")
+    assert captured.err == (
+        "# filters select task-scoped flat output; --group-by-area ignored\n"
+    )
 
 
 def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
@@ -451,13 +508,10 @@ def test_task_list_can_force_grouped_area_output_when_captured(monkeypatch):
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     output = io.StringIO()
     with redirect_stdout(output):
-        assert (
-            main(["task", "list", "--group-by-area", "--area", "vision"]) == 0
-        )
+        assert main(["task", "list", "--group-by-area", "--area", "vision"]) == 0
 
     assert output.getvalue() == (
-        "# Area: Vision\n"
-        "- **3D generation** (`3d-generation`) — 2,389 papers\n"
+        "# Area: Vision\n- **3D generation** (`3d-generation`) — 2,389 papers\n"
     )
 
 
@@ -712,6 +766,151 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
     )
 
 
+def test_benchmark_detail_filters_sorts_and_computes_pareto_frontier(
+    monkeypatch, capsys
+):
+    benchmark_payload = {
+        "count": 1,
+        "results": [{"id": "6", "name": "COCO", "slug": "coco"}],
+    }
+    evaluation_pages = {
+        1: {
+            "count": 3,
+            "results": [
+                {
+                    "id": "1",
+                    "paper_id": "1",
+                    "task_id": "3",
+                    "dataset_id": "6",
+                    "model_name": "Accurate",
+                    "metrics": {"mAP": 60, "FPS": 30},
+                    "best_rank": 1,
+                },
+                {
+                    "id": "2",
+                    "paper_id": "2",
+                    "task_id": "3",
+                    "dataset_id": "6",
+                    "model_name": "Fast",
+                    "metrics": {"mAP": "58", "FPS": "100"},
+                    "best_rank": 2,
+                },
+            ],
+        },
+        2: {
+            "count": 3,
+            "results": [
+                {
+                    "id": "3",
+                    "paper_id": "3",
+                    "task_id": "3",
+                    "dataset_id": "6",
+                    "model_name": "Dominated",
+                    "metrics": {"mAP": 57, "FPS": 50},
+                    "best_rank": 3,
+                }
+            ],
+        },
+    }
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            if path == "datasets/":
+                return Response(json.dumps(benchmark_payload).encode(), {})
+            return Response(json.dumps(evaluation_pages[params["page"]]).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "COCO",
+                "--pareto",
+                "mAP:higher,FPS:higher",
+                "--sort",
+                "FPS:desc",
+            ]
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert (
+        "Showing 2 of 2 matching merged rows from 3 stored evaluation rows."
+        in captured.out
+    )
+    assert captured.out.index("Fast") < captured.out.index("Accurate")
+    assert "Dominated" not in captured.out
+    assert [params["page"] for path, params in calls if path != "datasets/"] == [1, 2]
+
+
+def test_benchmark_detail_metric_thresholds_and_unknown_metric(monkeypatch, capsys):
+    benchmark_payload = {
+        "count": 1,
+        "results": [{"id": "6", "name": "COCO", "slug": "coco"}],
+    }
+    evaluations_payload = {
+        "count": 2,
+        "results": [
+            {
+                "paper_id": "1",
+                "task_id": "3",
+                "dataset_id": "6",
+                "model_name": "Fast",
+                "metrics": {"mAP": 58, "FPS": 100},
+            },
+            {
+                "paper_id": "2",
+                "task_id": "3",
+                "dataset_id": "6",
+                "model_name": "Slow",
+                "metrics": {"mAP": 62, "FPS": 20},
+            },
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, _params):
+            payload = benchmark_payload if path == "datasets/" else evaluations_payload
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "COCO",
+                "--require-metrics",
+                "mAP,FPS",
+                "--min",
+                "FPS=60",
+                "--max",
+                "mAP=60",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert "Fast" in captured.out
+    assert "Slow" not in captured.out
+
+    assert main(["benchmark", "--name", "COCO", "--sort", "Latency"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unknown metric(s): latency; available metrics: FPS, mAP" in captured.err
+
+
 def test_top_level_version_is_offline_and_stable():
     output = io.StringIO()
     with redirect_stdout(output):
@@ -719,7 +918,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.3\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.4\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -922,9 +1121,7 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     output = io.StringIO()
     with redirect_stdout(output):
-        assert (
-            main(["paper", "info", "2501.01234", "--include-resources"]) == 0
-        )
+        assert main(["paper", "info", "2501.01234", "--include-resources"]) == 0
 
     assert calls == [
         ("papers/2501.01234", {"include_resources": True}),

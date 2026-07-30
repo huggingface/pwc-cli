@@ -22,12 +22,27 @@ exact title. Title matching is case-insensitive and rejects ambiguity.
 
 Task lists and benchmark lists render grouped Markdown in a terminal. Use
 `--flat` for paginated tables or `--group-by-area` to force Markdown when
-piping. Grouped benchmarks include their name, full name when distinct, slug,
-and ID. Task-scoped benchmark lists also include the slug and ID alongside the
-best model, paper, and code repository. Inspect one with
+piping. Task, search, pagination, ordering, and open-model filters take
+precedence over `--group-by-area` and select task-scoped flat output. Grouped
+benchmarks include their name, full name when distinct, slug, and ID.
+Task-scoped benchmark lists also include the slug and ID alongside the best
+model, paper, and code repository. Inspect one with
 `pwc benchmark --name IDENTIFIER`; either identifier is accepted. Other list
 and search output uses aligned columns in a terminal and lossless TSV when
 captured.
+
+Leaderboard inspection supports numeric multi-metric selection:
+
+```bash
+pwc benchmark --name coco-val2017 --require-metrics mAP,FPS
+pwc benchmark --name coco-val2017 --min FPS=60 --sort mAP:desc
+pwc benchmark --name coco-val2017 --pareto mAP:higher,FPS:higher
+```
+
+`--min` and `--max` are repeatable. Metric names are case-insensitive. Metric
+selection scans the bounded leaderboard before applying `--limit`; it fails
+explicitly rather than returning an incomplete selection if a leaderboard
+exceeds the 1,000-row scan ceiling.
 
 `pipx install ./standalone_cli` is also supported. `PWC_API_URL` selects a
 compatible versioned API origin; it defaults to
