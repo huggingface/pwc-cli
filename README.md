@@ -1,17 +1,24 @@
-# pwc CLI
+# pwc CLI and Skill
 
-A fast, read-only command-line client for exploring the public
-[Papers with Code](https://paperswithcode.co) catalog.
+A fast, read-only command-line client for exploring the public [Papers with Code](https://paperswithcode.co) catalog, alongside a Skill for your favorite coding agent.
 
-Use `pwc` to search papers, browse benchmarks and find state-of-the-art (SOTA) by domain, read paper metadata and Markdown, discover recent,
-trending, and related work, inspect paper lineage, explore tasks, methods, and
-conferences. Public reads are anonymous: no account, API
-token, or Python environment is required.
+Let your coding agent use `pwc` to:
+
+- search papers
+- browse benchmarks and find state-of-the-art (SOTA) by domain
+- read paper metadata and Markdown
+- discover recent, trending, and related work
+- inspect paper lineage (follow-up work and predecessors)
+- explore tasks, methods, and conferences.
+
+Public reads are anonymous: no account, API token, or Python environment is required.
 
 ```bash
 pwc search "small vision language models" --limit 3
 pwc paper info 2501.01234
 ```
+
+It's recommended to also install the Skill so your coding agent knows how to use the CLI.
 
 ## Installation
 
