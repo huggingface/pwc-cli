@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from pwc_cli.cli import build_parser, main  # noqa: E402
+from pwc_cli.skills import build_skill_md  # noqa: E402
 from pwc_cli.transport import Client, Response  # noqa: E402
 
 INSTALLER_SPEC = importlib.util.spec_from_file_location(
@@ -22,9 +23,9 @@ installer = importlib.util.module_from_spec(INSTALLER_SPEC)
 INSTALLER_SPEC.loader.exec_module(installer)
 
 
-def test_complete_parser_omits_mutation_and_auth_commands():
+def test_complete_parser_omits_catalog_mutation_and_auth_commands():
     help_text = build_parser().format_help()
-    assert "{search,paper,task,method,conference,benchmark,version}" in help_text
+    assert "{search,paper,task,method,conference,benchmark,skills,version}" in help_text
     for command in ("auth", "add-external", "cron", "embedding", "github-issue"):
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
@@ -32,6 +33,72 @@ def test_complete_parser_omits_mutation_and_auth_commands():
     assert build_parser().parse_args(["task", "list", "--group-by-area"]).group_by_area
     assert build_parser().parse_args(["method", "list", "--area", "Audio"]).area
     assert build_parser().parse_args(["conference", "list", "--year", "2025"]).year
+
+
+def test_generated_skill_matches_installed_cli_version_and_commands():
+    skill = build_skill_md()
+
+    assert "name: pwc-cli" in skill
+    assert "Generated with `pwc v0.1.5`" in skill
+    assert "`pwc search QUERY" in skill
+    assert "`pwc benchmark --name NAME" in skill
+    assert "`pwc skills add" in skill
+
+
+def test_skills_add_installs_project_skill(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["skills", "add"]) == 0
+
+    skill_file = tmp_path / ".agents" / "skills" / "pwc-cli" / "SKILL.md"
+    assert skill_file.read_text() == build_skill_md()
+    assert str(skill_file.parent) in capsys.readouterr().out
+
+
+def test_skills_add_global_and_claude_uses_user_directories(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert main(["skills", "add", "--global", "--claude"]) == 0
+
+    central = tmp_path / ".agents" / "skills" / "pwc-cli"
+    claude = tmp_path / ".claude" / "skills" / "pwc-cli"
+    assert (central / "SKILL.md").is_file()
+    assert claude.is_symlink()
+    assert claude.resolve() == central
+    output = capsys.readouterr().out
+    assert str(central) in output
+    assert str(claude) in output
+
+
+def test_skills_add_protects_existing_install_and_force_replaces_it(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    existing = tmp_path / ".agents" / "skills" / "pwc-cli"
+    existing.mkdir(parents=True)
+    (existing / "old.txt").write_text("keep unless forced")
+
+    assert main(["skills", "add"]) == 2
+    assert (existing / "old.txt").is_file()
+    assert "rerun with --force" in capsys.readouterr().err
+
+    assert main(["skills", "add", "--force"]) == 0
+    assert not (existing / "old.txt").exists()
+    assert (existing / "SKILL.md").is_file()
+
+
+def test_skills_add_supports_custom_harness_directory_and_rejects_mixed_scope(
+    tmp_path, capsys
+):
+    custom = tmp_path / "agent-skills"
+
+    assert main(["skills", "add", "--dest", str(custom)]) == 0
+    assert (custom / "pwc-cli" / "SKILL.md").is_file()
+
+    assert main(["skills", "add", "--dest", str(custom), "--global"]) == 2
+    assert "--dest cannot be combined" in capsys.readouterr().err
 
 
 def test_installer_downloads_from_this_repository_release_origin():
@@ -918,7 +985,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.4\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.5\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

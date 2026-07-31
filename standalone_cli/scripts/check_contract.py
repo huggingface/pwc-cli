@@ -25,8 +25,11 @@ COMMANDS = (
     "conference list",
     "benchmark",
     "benchmark list",
+    "skills add",
     "version",
 )
+
+RESEARCH_COMMANDS = tuple(command for command in COMMANDS if command != "skills add")
 
 
 def parser_commands() -> set[str]:
@@ -63,7 +66,7 @@ def main() -> int:
         REPOSITORY / "backend" / "chat_sandbox_worker" / "CLI_GUIDE.md"
     ).read_text()
     skill = (REPOSITORY / "standalone_cli" / "SKILL.md").read_text()
-    for command in COMMANDS:
+    for command in RESEARCH_COMMANDS:
         if command == "version":
             continue
         invocation = f"pwc {command}"

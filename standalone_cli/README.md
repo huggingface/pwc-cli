@@ -15,6 +15,7 @@ pwc task list --group-by-area
 pwc method list --area Audio
 pwc conference list --year 2025
 pwc benchmark list
+pwc skills add
 ```
 
 Every `PAPER` argument accepts an arXiv ID, numeric external-paper ID, or quoted
@@ -49,3 +50,7 @@ compatible versioned API origin; it defaults to
 `https://paperswithcode.co/api/v1`. Run `pwc --help` for the complete read-only
 command tree. The stable exit codes are 0 (success), 2 (usage), 3 (network or
 server failure), and 4 (invalid response).
+
+Install the version-matched Skill for coding agents with `pwc skills add`.
+Add `--global` to use `~/.agents/skills`, `--claude` to also link it for Claude
+Code, or `--dest PATH` for another harness.

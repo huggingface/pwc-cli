@@ -8,10 +8,12 @@ import re
 import sys
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from pwc_cli import API_CONTRACT_VERSION, __version__
+from pwc_cli.skills import SkillInstallError, skills_add
 from pwc_cli.transport import Client, ResponseError, TransportError
 
 Handler = Callable[[argparse.Namespace, Client], int]
@@ -1498,6 +1500,39 @@ def build_parser() -> argparse.ArgumentParser:
     benchmarks.add_argument("--order-dir", choices=("asc", "desc"), default="asc")
     _json(benchmarks)
     benchmarks.set_defaults(handler=benchmark_list)
+    skills = commands.add_parser("skills", help="manage the Skill for AI coding agents")
+    skill_commands = skills.add_subparsers(dest="skills_command", required=True)
+    add_skill = skill_commands.add_parser(
+        "add",
+        help="install the version-matched pwc CLI Skill",
+        description=(
+            "Install the pwc CLI Skill for Codex, Cursor, OpenCode, Claude Code, "
+            "or another coding-agent harness."
+        ),
+    )
+    add_skill.add_argument(
+        "--global",
+        "-g",
+        dest="global_",
+        action="store_true",
+        help="install in the user-level skills directory",
+    )
+    add_skill.add_argument(
+        "--claude",
+        action="store_true",
+        help="also link the Skill into Claude's skills directory",
+    )
+    add_skill.add_argument(
+        "--dest",
+        type=Path,
+        help="install into a custom skills directory",
+    )
+    add_skill.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing pwc CLI Skill",
+    )
+    add_skill.set_defaults(handler=skills_add)
     version_parser = commands.add_parser(
         "version", help="show CLI and API contract versions"
     )
@@ -1514,6 +1549,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pwc: {error}", file=sys.stderr)
         return 3
     except UsageError as error:
+        print(f"pwc: {error}", file=sys.stderr)
+        return 2
+    except SkillInstallError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 2
     except ResponseError as error:
