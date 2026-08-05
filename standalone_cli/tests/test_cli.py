@@ -39,7 +39,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.6`" in skill
+    assert "Generated with `pwc v0.1.7`" in skill
     assert "`pwc search QUERY" in skill
     assert "`pwc benchmark --name NAME" in skill
     assert "`pwc skills add" in skill
@@ -833,6 +833,67 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
     )
 
 
+def test_benchmark_detail_renders_aligned_table_in_terminal(monkeypatch):
+    benchmark_payload = {
+        "count": 1,
+        "results": [
+            {
+                "id": "42",
+                "name": "SWE-Bench Pro",
+                "slug": "swe-bench-pro",
+                "description": "A coding-agent benchmark.",
+            }
+        ],
+    }
+    evaluations_payload = {
+        "count": 1,
+        "results": [
+            {
+                "id": "1",
+                "paper_id": "9",
+                "task_id": "3",
+                "dataset_id": "42",
+                "model_name": "Agent One",
+                "metrics": {"Resolved": 55.5},
+                "best_metric": "Resolved",
+                "best_rank": 1,
+                "paper_title": "An Agent Paper",
+                "paper_arxiv_id": "2601.12345",
+                "paper_published_date": "2026-01-20",
+                "task_name": "Coding Agents",
+                "is_open": False,
+            }
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            payload = benchmark_payload if path == "datasets/" else evaluations_payload
+            return Response(json.dumps(payload).encode(), {})
+
+    class TerminalBuffer(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = TerminalBuffer()
+    with redirect_stdout(output):
+        assert main(["benchmark", "--name", "SWE-Bench Pro"]) == 0
+
+    rendered = output.getvalue()
+    assert rendered.startswith("SWE-Bench Pro\n\nA coding-agent benchmark.\n")
+    assert (
+        "View benchmark: https://paperswithcode.co/benchmark/swe-bench-pro" in rendered
+    )
+    assert "Rank  Model      Scores          Task" in rendered
+    assert "   1  Agent One  Resolved: 55.5  Coding Agents" in rendered
+    assert "An Agent Paper [2601.12345]" in rendered
+    assert "| ---:" not in rendered
+
+
 def test_benchmark_detail_filters_sorts_and_computes_pareto_frontier(
     monkeypatch, capsys
 ):
@@ -985,7 +1046,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.6\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.7\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

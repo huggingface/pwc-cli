@@ -199,8 +199,9 @@ Run `pwc --help`, `pwc COMMAND --help`, or
 Task and benchmark lists use grouped Markdown in an interactive terminal;
 `--flat` forces their paginated tables and `--group-by-area` forces Markdown
 when piping. Other list and search commands use aligned columns in a terminal
-and lossless TSV when captured. Detail commands use labeled metadata or
-Markdown. Add `--json` to any data command for machine-readable output:
+and lossless TSV when captured. Benchmark details use an aligned table in a
+terminal and Markdown when piped or captured. Other detail commands use labeled
+metadata or Markdown. Add `--json` to any data command for machine-readable output:
 
 ```bash
 pwc search "language models" --limit 5 --json

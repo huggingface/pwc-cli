@@ -1168,6 +1168,21 @@ def _paper_markdown(item: dict[str, Any]) -> str:
     return f"[{title}]({url})"
 
 
+def _paper_terminal(item: dict[str, Any]) -> str:
+    """Render a compact paper reference for an aligned terminal table."""
+    title = (
+        str(
+            item.get("paper_title")
+            or item.get("paper_arxiv_id")
+            or f"Paper {item.get('paper_id')}"
+        )
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+    reference = item.get("paper_arxiv_id") or item.get("paper_id")
+    return f"{title} [{reference}]" if reference else title
+
+
 def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("benchmark inspection requires --name")
@@ -1207,16 +1222,31 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
         )
         return 0
 
-    title = _markdown_text(benchmark.get("name"))
+    interactive = sys.stdout.isatty()
+    title = (
+        _clean(benchmark.get("name"))
+        if interactive
+        else _markdown_text(benchmark.get("name"))
+    )
     full_name = benchmark.get("full_name")
-    print(f"# {title}")
+    print(title if interactive else f"# {title}")
     if full_name and str(full_name).casefold() != str(benchmark.get("name")).casefold():
-        print(f"\n{_markdown_text(full_name)}")
+        print(f"\n{_clean(full_name) if interactive else _markdown_text(full_name)}")
     if benchmark.get("description"):
-        print(f"\n{_markdown_text(benchmark['description'])}")
+        description = (
+            _clean(benchmark["description"])
+            if interactive
+            else _markdown_text(benchmark["description"])
+        )
+        print(f"\n{description}")
     slug = benchmark.get("slug") or benchmark.get("id")
     benchmark_url = f"https://paperswithcode.co/benchmark/{quote(str(slug), safe='-')}"
-    print(f"\n[View benchmark]({benchmark_url})")
+    link = (
+        f"View benchmark: {benchmark_url}"
+        if interactive
+        else (f"[View benchmark]({benchmark_url})")
+    )
+    print(f"\n{link}")
     if scan_all:
         print(
             f"\nShowing {len(rows)} of {len(selected)} matching merged rows "
@@ -1224,6 +1254,31 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
         )
     else:
         print(f"\nTop {len(rows)} of {data['count']} evaluation rows.\n")
+
+    if interactive:
+        table_rows = []
+        for item in rows:
+            model = item.get("model_name") or "—"
+            if item.get("harness"):
+                model = f"{model} ({item['harness']})"
+            table_rows.append(
+                (
+                    item.get("best_rank") or "—",
+                    model,
+                    _metric_summary(item),
+                    item.get("task_name") or "—",
+                    _paper_terminal(item),
+                    item.get("paper_published_date") or "—",
+                    "yes" if item.get("is_open", True) else "no",
+                )
+            )
+        _print_table(
+            ("Rank", "Model", "Scores", "Task", "Paper", "Published", "Open"),
+            table_rows,
+            right_align=(0,),
+        )
+        return 0
+
     print("| Rank | Model | Scores | Task | Paper | Published | Open |")
     print("| ---: | --- | --- | --- | --- | --- | :---: |")
     for item in rows:

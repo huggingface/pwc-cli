@@ -28,9 +28,10 @@ precedence over `--group-by-area` and select task-scoped flat output. Grouped
 benchmarks include their name, full name when distinct, slug, and ID.
 Task-scoped benchmark lists also include the slug and ID alongside the best
 model, paper, and code repository. Inspect one with
-`pwc benchmark --name IDENTIFIER`; either identifier is accepted. Other list
-and search output uses aligned columns in a terminal and lossless TSV when
-captured.
+`pwc benchmark --name IDENTIFIER`; either identifier is accepted. Benchmark
+details use an aligned table in a terminal and Markdown when piped or captured.
+Other list and search output uses aligned columns in a terminal and lossless
+TSV when captured.
 
 Leaderboard inspection supports numeric multi-metric selection:
 
