@@ -298,6 +298,18 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
         print("\n## Abstract\n")
         print(str(abstract).replace("\r", "").strip())
 
+    print("\n## Paper lineage")
+    for title, papers in (
+        ("Predecessors", payload.get("predecessor_papers") or []),
+        ("Successors", payload.get("successor_papers") or []),
+    ):
+        print(f"\n### {title}\n")
+        if papers:
+            for related_paper in papers:
+                print(_paper_info_lineage_markdown(related_paper))
+        else:
+            print("- None")
+
     if args.include_resources:
         for title, field in (
             ("Repositories", "repositories"),
@@ -344,6 +356,21 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
             for label, url in artifacts:
                 print(f"- **{label}:** {_clean(url)}")
     return 0
+
+
+def _paper_info_lineage_markdown(item: dict[str, Any]) -> str:
+    reference = item.get("route_identifier")
+    title = (
+        str(item.get("title") or reference or "Unknown paper")
+        .replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
+    published = f" ({item['published']})" if item.get("published") else ""
+    if not reference:
+        return f"- {title}{published}"
+    url = f"https://paperswithcode.co/paper/{quote(str(reference), safe='.')}"
+    return f"- [{title}]({url}){published}"
 
 
 def paper_read(args: argparse.Namespace, client: Client) -> int:

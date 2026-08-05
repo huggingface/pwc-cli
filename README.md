@@ -176,7 +176,7 @@ of silently selecting one paper.
 | Command | Description |
 | --- | --- |
 | `pwc search QUERY` | Search for papers by title, topic, author, or arXiv ID |
-| `pwc paper info PAPER` | Show paper metadata and abstract; optionally include linked GitHub, project, and HF URLs |
+| `pwc paper info PAPER` | Show paper metadata, abstract, predecessors, and successors; optionally include linked GitHub, project, and HF URLs |
 | `pwc paper read PAPER` | Print the stored paper Markdown |
 | `pwc paper list` | List and filter papers |
 | `pwc paper recent` | List recently published papers |

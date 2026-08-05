@@ -39,7 +39,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.5`" in skill
+    assert "Generated with `pwc v0.1.6`" in skill
     assert "`pwc search QUERY" in skill
     assert "`pwc benchmark --name NAME" in skill
     assert "`pwc skills add" in skill
@@ -985,7 +985,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.5\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.6\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -1156,6 +1156,58 @@ def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
         "\n"
         "First line.\n"
         "Second line.\n"
+        "\n"
+        "## Paper lineage\n"
+        "\n"
+        "### Predecessors\n"
+        "\n"
+        "- None\n"
+        "\n"
+        "### Successors\n"
+        "\n"
+        "- None\n"
+    )
+
+
+def test_paper_info_renders_linked_lineage_sections(monkeypatch):
+    payload = {
+        "arxiv_id": "2501.01234",
+        "title": "A Paper",
+        "predecessor_papers": [
+            {
+                "title": "Earlier [Paper]",
+                "route_identifier": "2401.00001",
+                "published": "2024-01-02",
+            }
+        ],
+        "successor_papers": [
+            {
+                "title": "Later Paper",
+                "route_identifier": "2601.00001",
+                "published": None,
+            }
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, _path, _params):
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["paper", "info", "2501.01234"]) == 0
+
+    assert output.getvalue().endswith(
+        "\n## Paper lineage\n\n"
+        "### Predecessors\n\n"
+        "- [Earlier \\[Paper\\]](https://paperswithcode.co/paper/2401.00001)"
+        " (2024-01-02)\n\n"
+        "### Successors\n\n"
+        "- [Later Paper](https://paperswithcode.co/paper/2601.00001)\n"
     )
 
 
@@ -1196,6 +1248,16 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
     assert output.getvalue() == (
         "id: 2501.01234\n"
         "title: A Paper\n"
+        "\n"
+        "## Paper lineage\n"
+        "\n"
+        "### Predecessors\n"
+        "\n"
+        "- None\n"
+        "\n"
+        "### Successors\n"
+        "\n"
+        "- None\n"
         "\n"
         "## Repositories\n"
         "\n"

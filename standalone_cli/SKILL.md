@@ -36,7 +36,7 @@ than silently selecting a paper.
 
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID. This is powered by hybrid/keyword/semantic search using pgvector. Defaults to hybrid.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
-- `pwc paper info PAPER` — Show metadata, including the abstract.
+- `pwc paper info PAPER` — Show metadata, the abstract, predecessors, and successors.
   `--include-resources` adds Markdown sections for GitHub repositories, project pages,
   and Hugging Face artifacts, with official links marked explicitly.
   `[--include-resources --json]`
