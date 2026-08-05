@@ -116,17 +116,17 @@ than silently selecting a paper.
 2. Use `pwc paper info` to inspect promising results. Add `--include-resources`
    when linked GitHub repositories, project pages, or Hugging Face artifacts matter.
    When the paper includes successors, always consider them more state-of-the-art.
-4. Use `pwc search` to search more broadly for a topic or a known paper.
+3. Use `pwc search` to search more broadly for a topic or a known paper.
    Use the default hybrid mode first; use keyword mode for exact terminology
    and semantic mode for conceptual matches.
-5. Go more in-depth with `pwc paper read`. Do not treat search snippets or
+4. Go more in-depth with `pwc paper read`. Do not treat search snippets or
    titles as sufficient support for detailed claims.
-6. Expand the literature with `pwc paper related` and use
+5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-7. Explore the catalog taxonomy with `pwc task list --group-by-area`,
+6. Explore the catalog taxonomy with `pwc task list --group-by-area`,
    `pwc method list`, and `pwc conference list`; use `--area` or `--year` to
    narrow broad lists.
-8. Synthesize only after gathering enough primary evidence. Preserve paper
+7. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
 
 ## Command selection
@@ -134,7 +134,6 @@ than silently selecting a paper.
 - Use `pwc benchmark list --task TASK` for finding state-of-the-art (SOTA) for a given task.
 - If the task is not supported by PwC, use `pwc search` for relevance-ranked discovery.
 - Use `pwc paper info` to gather more info about a specific paper.
-- When `pwc paper info` returns 
 - Use `pwc paper list` for structured filters, date windows, conferences, and
   deterministic sorting.
 - Use `pwc paper recent` for recency and `pwc paper trending` for current
