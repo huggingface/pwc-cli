@@ -13,6 +13,7 @@ pwc paper trending
 pwc paper related PAPER
 pwc paper lineage list PAPER
 pwc task list --group-by-area [--area AREA]
+pwc task --name "TASK"
 pwc method list --area AREA
 pwc conference list --year YEAR
 pwc benchmark list --task TASK

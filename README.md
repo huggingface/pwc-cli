@@ -148,6 +148,7 @@ Explore the research taxonomy and conferences:
 pwc task list
 pwc task list --area Vision
 pwc task list --group-by-area  # force grouped Markdown when piping/capturing
+pwc task --name "scene-text-recognition"
 pwc method list --area Audio
 pwc method list --area General --introduced-year 2017
 pwc conference list
@@ -184,6 +185,7 @@ of silently selecting one paper.
 | `pwc paper related PAPER` | Find related papers |
 | `pwc paper lineage list PAPER` | Show linked Markdown sections for a paper's predecessors and successors |
 | `pwc task list` | Group tasks by area with paper, benchmark, and evaluation counts; support flat pagination and area filters |
+| `pwc task --name NAME` | Show task-page details, including frameworks, sister tasks, common methods, benchmarks, and papers |
 | `pwc method list` | List methods and filter them by research area or introduction year |
 | `pwc conference list` | List conferences and filter them by year |
 | `pwc benchmark list` | Group top benchmarks by area and task; support flat filters and task-trend ranking |

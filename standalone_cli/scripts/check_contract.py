@@ -20,6 +20,7 @@ COMMANDS = (
     "paper trending",
     "paper related",
     "paper lineage list",
+    "task",
     "task list",
     "method list",
     "conference list",

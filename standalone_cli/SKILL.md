@@ -57,6 +57,10 @@ than silently selecting a paper.
   `[--limit 1-20 --json]`
 - `pwc paper lineage list PAPER` — Render linked Markdown sections for a paper,
   its predecessors, and its successors. `[--json]`
+- `pwc task --name NAME` — Show a task page in CLI form, including its area,
+  description, hierarchy, research trends, recommended frameworks, sister
+  tasks, subtasks, common methods, benchmarks, and trending papers. `NAME`
+  must exactly match a task name, slug, or ID. `[--json]`
 - `pwc task list` — List research tasks, optionally filtering by a
   case-insensitive exact area name such as Vision, Audio, or General.
   Rows include direct paper, benchmark, and evaluation counts for each task.
@@ -124,8 +128,9 @@ than silently selecting a paper.
    titles as sufficient support for detailed claims.
 5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-6. Explore the catalog taxonomy with `pwc task list --group-by-area`,
-   `pwc method list`, and `pwc conference list`; use `--area` or `--year` to
+6. Explore the catalog taxonomy with `pwc task list --group-by-area`, inspect a
+   specific task with `pwc task --name NAME`, then use
+   `pwc method list` and `pwc conference list`; use `--area` or `--year` to
    narrow broad lists.
 7. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.

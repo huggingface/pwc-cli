@@ -29,6 +29,10 @@ def test_complete_parser_omits_catalog_mutation_and_auth_commands():
     for command in ("auth", "add-external", "cron", "embedding", "github-issue"):
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
+    assert (
+        build_parser().parse_args(["task", "--name", "scene-text-recognition"]).name
+        == "scene-text-recognition"
+    )
     assert build_parser().parse_args(["task", "list", "--area", "Vision"]).area
     assert build_parser().parse_args(["task", "list", "--group-by-area"]).group_by_area
     assert build_parser().parse_args(["method", "list", "--area", "Audio"]).area
@@ -594,6 +598,165 @@ def test_task_list_can_force_grouped_area_output_when_captured(monkeypatch):
         "# Area: Vision\n- **3D generation** (`3d-generation`) — "
         "2,389 papers · 12 benchmarks · 345 evals\n"
     )
+
+
+def test_task_detail_renders_task_page_sections(monkeypatch):
+    calls = []
+    search = {
+        "count": 1,
+        "results": [
+            {
+                "id": "17",
+                "slug": "scene-text-recognition",
+                "name": "Scene Text Recognition",
+                "area_id": "1",
+                "level": 1,
+                "paper_count": 204,
+                "benchmark_count": 21,
+                "evaluation_count": 401,
+            }
+        ],
+    }
+    page = {
+        "task": {
+            "id": "17",
+            "slug": "scene-text-recognition",
+            "name": "Scene Text Recognition",
+            "description": "Recognizing text in natural images.",
+            "research_trends": ["Vision-language pretraining"],
+            "area_id": "1",
+            "level": 1,
+            "paper_count": 204,
+        },
+        "parents": [{"id": "2", "slug": "ocr", "name": "OCR"}],
+        "sisters": [{"id": "18", "slug": "text-detection", "name": "Text Detection"}],
+        "recommended_frameworks": [
+            {
+                "id": "44",
+                "url": "https://github.com/huggingface/transformers",
+                "owner": "huggingface",
+                "name": "transformers",
+                "num_stars": 150000,
+            }
+        ],
+        "children": [{"id": "19", "slug": "handwritten-text", "name": "Handwriting"}],
+        "benchmarks": [
+            {
+                "id": "30",
+                "slug": "iiit5k",
+                "name": "IIIT5K",
+                "paper_count": 12,
+                "best_model_name": "Model A",
+            }
+        ],
+        "subtask_benchmarks": [
+            {
+                "subtask_id": "19",
+                "benchmarks": [{"id": "31", "slug": "iam", "name": "IAM"}],
+            }
+        ],
+    }
+    papers = {
+        "count": 204,
+        "results": [
+            {
+                "id": "100",
+                "arxiv_id": "2501.00001",
+                "title": "A Better Text Recognizer",
+                "published": "2025-01-01",
+                "citation_count": 10,
+                "methods": [{"id": "7", "slug": "transformer", "name": "Transformer"}],
+            }
+        ],
+    }
+    areas = {"count": 1, "results": [{"id": "1", "name": "Vision"}]}
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            payloads = {
+                "tasks/": search,
+                "tasks/17/page": page,
+                "tasks/17/papers": papers,
+                "areas/": areas,
+            }
+            return Response(json.dumps(payloads[path]).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["task", "--name", "scene-text-recognition"]) == 0
+
+    rendered = output.getvalue()
+    assert "# Scene Text Recognition" in rendered
+    assert (
+        "Area: Vision · Level: 1 · 204 papers · 21 benchmarks · 401 evaluations"
+        in rendered
+    )
+    assert "## Recommended frameworks" in rendered
+    assert (
+        "[huggingface/transformers](https://github.com/huggingface/transformers)"
+        in rendered
+    )
+    assert "## Sister tasks" in rendered
+    assert "## Common methods (from 1 sampled papers)" in rendered
+    assert "## Benchmarks by subtask" in rendered
+    assert "## Trending papers (top 1 of 204)" in rendered
+    assert calls == [
+        ("tasks/", {"q": "scene-text-recognition", "page": 1, "page_size": 100}),
+        ("tasks/17/page", None),
+        (
+            "tasks/17/papers",
+            {
+                "page": 1,
+                "page_size": 100,
+                "order_by": "trending",
+                "order_dir": "desc",
+                "include_resources": True,
+            },
+        ),
+        ("areas/", {"page": 1, "page_size": 500, "ordering": "name"}),
+    ]
+
+
+def test_task_detail_json_has_stable_composed_payload(monkeypatch, capsys):
+    payloads = {
+        "tasks/": {
+            "count": 1,
+            "results": [
+                {
+                    "id": "17",
+                    "slug": "scene-text-recognition",
+                    "name": "Scene Text Recognition",
+                    "area_id": "1",
+                }
+            ],
+        },
+        "tasks/17/page": {
+            "task": {"id": "17", "name": "Scene Text Recognition"},
+            "recommended_frameworks": [],
+        },
+        "tasks/17/papers": {"count": 0, "results": []},
+        "areas/": {"count": 1, "results": [{"id": "1", "name": "Vision"}]},
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            return Response(json.dumps(payloads[path]).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert main(["task", "--name", "Scene Text Recognition", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["schema_version"] == "v1"
+    assert result["data"]["task"]["id"] == "17"
+    assert result["data"]["area"]["name"] == "Vision"
+    assert result["data"]["paper_sample_size"] == 0
 
 
 def test_method_list_accepts_area_id_and_year_filter(monkeypatch):

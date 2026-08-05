@@ -662,6 +662,270 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
     return _emit_page(payload, args, render)
 
 
+def _task_match(name: str, items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    target = name.strip().casefold()
+    for field in ("name", "slug", "id"):
+        for item in items:
+            if str(item.get(field) or "").strip().casefold() == target:
+                return item
+    return None
+
+
+def _task_reference(item: dict[str, Any], *, markdown: bool) -> str:
+    name = str(item.get("name") or item.get("slug") or item.get("id") or "Task")
+    slug = item.get("slug") or item.get("id")
+    url = f"https://paperswithcode.co/tasks/{quote(str(slug), safe='-')}"
+    return f"[{_markdown_text(name)}]({url})" if markdown else f"{name} [{slug}]"
+
+
+def _task_paper_reference(item: dict[str, Any], *, markdown: bool) -> str:
+    title = str(item.get("title") or item.get("arxiv_id") or item.get("id") or "Paper")
+    reference = item.get("arxiv_id") or item.get("id")
+    url = item.get("url_abs") or (
+        f"https://paperswithcode.co/paper/{quote(str(reference), safe='.')}"
+        if reference
+        else None
+    )
+    if markdown and url:
+        return f"[{_markdown_text(title)}]({url})"
+    return f"{title} [{reference}]" if reference else title
+
+
+def _common_methods(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, dict[str, Any]] = {}
+    for paper in papers:
+        for method in paper.get("methods") or []:
+            if not isinstance(method, dict):
+                continue
+            key = str(method.get("slug") or method.get("id") or "")
+            if not key:
+                continue
+            entry = counts.setdefault(key, {**method, "paper_count": 0})
+            entry["paper_count"] += 1
+    return sorted(
+        counts.values(),
+        key=lambda item: (
+            -int(item["paper_count"]),
+            str(item.get("name") or "").casefold(),
+        ),
+    )[:8]
+
+
+def task_detail(args: argparse.Namespace, client: Client) -> int:
+    if not args.name:
+        raise ResponseError("task inspection requires --name")
+
+    search_payload = client.get(
+        "tasks/",
+        {"q": args.name, "page": 1, "page_size": 100},
+    ).json()
+    candidates, _total = _rows(search_payload)
+    summary = _task_match(args.name, candidates)
+    if summary is None:
+        suggestions = ", ".join(
+            str(item.get("name")) for item in candidates[:3] if item.get("name")
+        )
+        suffix = f"; closest results: {suggestions}" if suggestions else ""
+        raise ResponseError(f"Task not found: {args.name}{suffix}")
+
+    task_id = str(summary["id"])
+    page = client.get(f"tasks/{quote(task_id, safe='')}/page").json()
+    if not isinstance(page, dict) or not isinstance(page.get("task"), dict):
+        raise ResponseError("task page API returned an unexpected response shape")
+    papers_payload = client.get(
+        f"tasks/{quote(task_id, safe='')}/papers",
+        {
+            "page": 1,
+            "page_size": 100,
+            "order_by": "trending",
+            "order_dir": "desc",
+            "include_resources": True,
+        },
+    ).json()
+    papers, paper_total = _rows(papers_payload)
+    areas = _area_catalog(client)
+    area = next(
+        (item for item in areas if str(item.get("id")) == str(summary.get("area_id"))),
+        None,
+    )
+
+    task = {**page["task"]}
+    for field in ("paper_count", "benchmark_count", "evaluation_count"):
+        if summary.get(field) is not None:
+            task[field] = summary[field]
+    data = {
+        "task": task,
+        "area": area,
+        "parents": page.get("parents") or [],
+        "sisters": page.get("sisters") or [],
+        "recommended_frameworks": page.get("recommended_frameworks") or [],
+        "children": page.get("children") or [],
+        "benchmarks": page.get("benchmarks") or [],
+        "subtask_benchmarks": page.get("subtask_benchmarks") or [],
+        "common_methods": _common_methods(papers),
+        "paper_sample_size": len(papers),
+        "paper_count": paper_total if paper_total is not None else len(papers),
+        "papers": papers[:10],
+    }
+    if args.json:
+        print(
+            json.dumps(
+                {"schema_version": API_CONTRACT_VERSION, "data": data},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    interactive = sys.stdout.isatty()
+    markdown = not interactive
+    name = str(task.get("name") or task.get("slug") or args.name)
+    print(name if interactive else f"# {_markdown_text(name)}")
+    metadata = []
+    if area and area.get("name"):
+        metadata.append(f"Area: {area['name']}")
+    if task.get("level") is not None:
+        metadata.append(f"Level: {task['level']}")
+    for field, label in (
+        ("paper_count", "papers"),
+        ("benchmark_count", "benchmarks"),
+        ("evaluation_count", "evaluations"),
+    ):
+        if task.get(field) is not None:
+            metadata.append(f"{int(task[field]):,} {label}")
+    if metadata:
+        print(f"\n{' · '.join(metadata)}")
+    if task.get("description"):
+        description = str(task["description"]).replace("\r", " ").replace("\n", " ")
+        print(f"\n{_markdown_text(description) if markdown else description}")
+    task_slug = task.get("slug") or task.get("id")
+    task_url = f"https://paperswithcode.co/tasks/{quote(str(task_slug), safe='-')}"
+    task_link = f"[View task]({task_url})" if markdown else f"View task: {task_url}"
+    print(f"\n{task_link}")
+
+    def heading(title: str) -> None:
+        print(f"\n{'## ' if markdown else ''}{title}\n")
+
+    parents = data["parents"]
+    if parents:
+        heading("Task hierarchy")
+        chain = list(reversed(parents)) + [task]
+        print(" → ".join(_task_reference(item, markdown=markdown) for item in chain))
+
+    trends = task.get("research_trends") or []
+    if trends:
+        heading("Research trends")
+        for trend in trends:
+            print(f"- {_markdown_text(trend) if markdown else str(trend)}")
+
+    frameworks = data["recommended_frameworks"]
+    if frameworks:
+        heading("Recommended frameworks")
+        for framework in frameworks:
+            framework_name = "/".join(
+                part for part in (framework.get("owner"), framework.get("name")) if part
+            ) or str(framework.get("url") or framework.get("id"))
+            stars = int(framework.get("num_stars") or 0)
+            if markdown:
+                print(
+                    f"- [{_markdown_text(framework_name)}]({framework.get('url')}) — {stars:,} stars"
+                )
+            else:
+                print(f"- {framework_name} — {stars:,} stars — {framework.get('url')}")
+
+    for title, items in (
+        ("Sister tasks", data["sisters"]),
+        ("Subtasks", data["children"]),
+    ):
+        if items:
+            heading(title)
+            for item in items:
+                print(f"- {_task_reference(item, markdown=markdown)}")
+
+    methods = data["common_methods"]
+    if methods:
+        heading(f"Common methods (from {len(papers)} sampled papers)")
+        for method in methods:
+            method_name = str(
+                method.get("name") or method.get("slug") or method.get("id")
+            )
+            method_slug = method.get("slug") or method.get("id")
+            method_url = (
+                f"https://paperswithcode.co/methods/{quote(str(method_slug), safe='-')}"
+            )
+            label = (
+                f"[{_markdown_text(method_name)}]({method_url})"
+                if markdown
+                else f"{method_name} [{method_slug}]"
+            )
+            print(f"- {label} — {int(method['paper_count']):,} papers")
+
+    benchmarks = data["benchmarks"]
+    if benchmarks:
+        heading("Benchmarks")
+        for benchmark in benchmarks:
+            benchmark_name = str(
+                benchmark.get("name") or benchmark.get("slug") or benchmark.get("id")
+            )
+            benchmark_slug = benchmark.get("slug") or benchmark.get("id")
+            benchmark_url = f"https://paperswithcode.co/benchmark/{quote(str(benchmark_slug), safe='-')}"
+            label = (
+                f"[{_markdown_text(benchmark_name)}]({benchmark_url})"
+                if markdown
+                else f"{benchmark_name} [{benchmark_slug}]"
+            )
+            details = []
+            if benchmark.get("paper_count") is not None:
+                details.append(f"{int(benchmark['paper_count']):,} papers")
+            if benchmark.get("best_model_name"):
+                details.append(f"best model: {benchmark['best_model_name']}")
+            suffix = f" — {', '.join(details)}" if details else ""
+            print(f"- {label}{suffix}")
+
+    subtask_benchmarks = {
+        str(item.get("subtask_id")): item.get("benchmarks") or []
+        for item in data["subtask_benchmarks"]
+        if isinstance(item, dict)
+    }
+    if any(subtask_benchmarks.values()):
+        heading("Benchmarks by subtask")
+        for child in data["children"]:
+            child_benchmarks = subtask_benchmarks.get(str(child.get("id")), [])
+            if not child_benchmarks:
+                continue
+            print(f"- {_task_reference(child, markdown=markdown)}")
+            for benchmark in child_benchmarks:
+                benchmark_name = str(
+                    benchmark.get("name")
+                    or benchmark.get("slug")
+                    or benchmark.get("id")
+                )
+                benchmark_slug = benchmark.get("slug") or benchmark.get("id")
+                benchmark_url = (
+                    "https://paperswithcode.co/benchmark/"
+                    f"{quote(str(benchmark_slug), safe='-')}"
+                )
+                label = (
+                    f"[{_markdown_text(benchmark_name)}]({benchmark_url})"
+                    if markdown
+                    else f"{benchmark_name} [{benchmark_slug}]"
+                )
+                print(f"  - {label}")
+
+    top_papers = data["papers"]
+    if top_papers:
+        heading(f"Trending papers (top {len(top_papers)} of {data['paper_count']})")
+        for paper in top_papers:
+            details = []
+            if paper.get("published"):
+                details.append(str(paper["published"]))
+            if paper.get("citation_count") is not None:
+                details.append(f"{int(paper['citation_count']):,} citations")
+            suffix = f" — {', '.join(details)}" if details else ""
+            print(f"- {_task_paper_reference(paper, markdown=markdown)}{suffix}")
+    return 0
+
+
 def method_list(args: argparse.Namespace, client: Client) -> int:
     area_id, area_names = _resolve_area(args.area, client)
     payload = client.get(
@@ -1338,6 +1602,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             'Examples:\n  pwc search "small VLMs" --limit 10\n'
             "  pwc paper info 2501.01234\n"
+            '  pwc task --name "scene-text-recognition"\n'
             "  pwc benchmark list --task OCR\n"
             '  pwc benchmark --name "SWE-Bench Pro"'
         ),
@@ -1438,8 +1703,11 @@ def build_parser() -> argparse.ArgumentParser:
     _json(lineage_list)
     lineage_list.set_defaults(handler=paper_lineage)
 
-    task = commands.add_parser("task", help="list research tasks")
-    task_commands = task.add_subparsers(dest="task_command", required=True)
+    task = commands.add_parser("task", help="inspect or list research tasks")
+    task.add_argument("--name", help="exact task name, slug, or ID")
+    _json(task)
+    task.set_defaults(handler=task_detail)
+    task_commands = task.add_subparsers(dest="task_command")
     tasks = task_commands.add_parser("list", help="list and filter research tasks")
     tasks.add_argument("--page", type=_page, default=1)
     tasks.add_argument("--page-size", type=_page_size, default=50)

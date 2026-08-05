@@ -10,6 +10,7 @@ pwc paper info 2501.01234
 pwc paper info 2501.01234 --include-resources
 pwc paper info "Attention Is All You Need"
 pwc paper read 2501.01234
+pwc task --name "scene-text-recognition"
 pwc task list --area Vision
 pwc task list --group-by-area
 pwc method list --area Audio
@@ -35,6 +36,11 @@ TSV when captured.
 
 Task lists report each task's direct paper, benchmark, and evaluation counts in
 both grouped and flat output.
+
+`pwc task --name NAME` accepts an exact task name, slug, or ID and renders the
+task-page details in CLI form: area, description, hierarchy, research trends,
+recommended frameworks, sister tasks, subtasks, common methods, benchmarks,
+and trending papers. Add `--json` for the complete structured payload.
 
 Leaderboard inspection supports numeric multi-metric selection:
 
