@@ -592,11 +592,17 @@ def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
         for task in tasks:
             name = _clean(task.get("name") or task.get("slug") or "Unnamed task")
             slug = _clean(task.get("slug"))
-            count = task.get("paper_count")
-            count_text = f"{int(count):,}" if count is not None else "unknown"
-            noun = "paper" if count == 1 else "papers"
+            counts = []
+            for field, singular, plural in (
+                ("paper_count", "paper", "papers"),
+                ("benchmark_count", "benchmark", "benchmarks"),
+                ("evaluation_count", "eval", "evals"),
+            ):
+                count = task.get(field)
+                count_text = f"{int(count):,}" if count is not None else "unknown"
+                counts.append(f"{count_text} {singular if count == 1 else plural}")
             slug_text = f" (`{slug}`)" if slug else ""
-            print(f"- **{name}**{slug_text} — {count_text} {noun}")
+            print(f"- **{name}**{slug_text} — {' · '.join(counts)}")
     return 0
 
 
@@ -627,7 +633,16 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
 
     def render(items: list[dict[str, Any]]) -> None:
         _print_table(
-            ("id", "slug", "name", "area", "level", "papers"),
+            (
+                "id",
+                "slug",
+                "name",
+                "area",
+                "level",
+                "papers",
+                "benchmarks",
+                "evals",
+            ),
             [
                 (
                     item.get("id"),
@@ -636,10 +651,12 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
                     area_names.get(str(item.get("area_id")), ""),
                     item.get("level"),
                     item.get("paper_count"),
+                    item.get("benchmark_count"),
+                    item.get("evaluation_count"),
                 )
                 for item in items
             ],
-            right_align=(4, 5),
+            right_align=(4, 5, 6, 7),
         )
 
     return _emit_page(payload, args, render)

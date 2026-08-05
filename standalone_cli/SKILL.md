@@ -59,6 +59,7 @@ than silently selecting a paper.
   its predecessors, and its successors. `[--json]`
 - `pwc task list` — List research tasks, optionally filtering by a
   case-insensitive exact area name such as Vision, Audio, or General.
+  Rows include direct paper, benchmark, and evaluation counts for each task.
   Interactive output groups visible top-level tasks into Markdown area sections;
   `--group-by-area` forces that view when output is captured, while `--flat`
   forces the paginated table.

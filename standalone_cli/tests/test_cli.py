@@ -39,7 +39,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.7`" in skill
+    assert "Generated with `pwc v0.1.8`" in skill
     assert "`pwc search QUERY" in skill
     assert "`pwc benchmark --name NAME" in skill
     assert "`pwc skills add" in skill
@@ -427,6 +427,8 @@ def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
                 "area_id": "1",
                 "level": 0,
                 "paper_count": 123,
+                "benchmark_count": 4,
+                "evaluation_count": 567,
             }
         ],
     }
@@ -476,8 +478,8 @@ def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
         ),
     ]
     assert output.getvalue() == (
-        "id\tslug\tname\tarea\tlevel\tpapers\n"
-        "10\timage-classification\tImage Classification\tVision\t0\t123\n"
+        "id\tslug\tname\tarea\tlevel\tpapers\tbenchmarks\tevals\n"
+        "10\timage-classification\tImage Classification\tVision\t0\t123\t4\t567\n"
     )
 
 
@@ -493,6 +495,8 @@ def test_task_list_groups_complete_taxonomy_in_interactive_terminal(monkeypatch)
                         "slug": "audio-classification",
                         "name": "Audio Classification",
                         "paper_count": 63,
+                        "benchmark_count": 1,
+                        "evaluation_count": 8,
                     }
                 ],
             },
@@ -505,12 +509,16 @@ def test_task_list_groups_complete_taxonomy_in_interactive_terminal(monkeypatch)
                         "slug": "3d-generation",
                         "name": "3D generation",
                         "paper_count": 2389,
+                        "benchmark_count": 12,
+                        "evaluation_count": 345,
                     },
                     {
                         "id": "1",
                         "slug": "image-classification",
                         "name": "Image Classification",
                         "paper_count": 1,
+                        "benchmark_count": 1,
+                        "evaluation_count": 1,
                     },
                 ],
             },
@@ -536,11 +544,14 @@ def test_task_list_groups_complete_taxonomy_in_interactive_terminal(monkeypatch)
 
     assert output.getvalue() == (
         "# Area: Audio\n"
-        "- **Audio Classification** (`audio-classification`) — 63 papers\n"
+        "- **Audio Classification** (`audio-classification`) — "
+        "63 papers · 1 benchmark · 8 evals\n"
         "\n"
         "# Area: Vision\n"
-        "- **3D generation** (`3d-generation`) — 2,389 papers\n"
-        "- **Image Classification** (`image-classification`) — 1 paper\n"
+        "- **3D generation** (`3d-generation`) — "
+        "2,389 papers · 12 benchmarks · 345 evals\n"
+        "- **Image Classification** (`image-classification`) — "
+        "1 paper · 1 benchmark · 1 eval\n"
     )
     assert "(`13`)" not in output.getvalue()
 
@@ -558,6 +569,8 @@ def test_task_list_can_force_grouped_area_output_when_captured(monkeypatch):
                         "slug": "3d-generation",
                         "name": "3D generation",
                         "paper_count": 2389,
+                        "benchmark_count": 12,
+                        "evaluation_count": 345,
                     }
                 ],
             },
@@ -578,7 +591,8 @@ def test_task_list_can_force_grouped_area_output_when_captured(monkeypatch):
         assert main(["task", "list", "--group-by-area", "--area", "vision"]) == 0
 
     assert output.getvalue() == (
-        "# Area: Vision\n- **3D generation** (`3d-generation`) — 2,389 papers\n"
+        "# Area: Vision\n- **3D generation** (`3d-generation`) — "
+        "2,389 papers · 12 benchmarks · 345 evals\n"
     )
 
 
@@ -1046,7 +1060,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.7\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.8\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

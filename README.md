@@ -183,7 +183,7 @@ of silently selecting one paper.
 | `pwc paper trending` | List trending papers |
 | `pwc paper related PAPER` | Find related papers |
 | `pwc paper lineage list PAPER` | Show linked Markdown sections for a paper's predecessors and successors |
-| `pwc task list` | Group visible top-level tasks by area in a terminal; support flat pagination and area filters |
+| `pwc task list` | Group tasks by area with paper, benchmark, and evaluation counts; support flat pagination and area filters |
 | `pwc method list` | List methods and filter them by research area or introduction year |
 | `pwc conference list` | List conferences and filter them by year |
 | `pwc benchmark list` | Group top benchmarks by area and task; support flat filters and task-trend ranking |

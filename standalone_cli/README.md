@@ -33,6 +33,9 @@ details use an aligned table in a terminal and Markdown when piped or captured.
 Other list and search output uses aligned columns in a terminal and lossless
 TSV when captured.
 
+Task lists report each task's direct paper, benchmark, and evaluation counts in
+both grouped and flat output.
+
 Leaderboard inspection supports numeric multi-metric selection:
 
 ```bash
