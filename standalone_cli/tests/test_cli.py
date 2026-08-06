@@ -30,6 +30,11 @@ def test_complete_parser_omits_catalog_mutation_and_auth_commands():
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
     assert (
+        build_parser()
+        .parse_args(["paper", "info", "2501.1", "--include-evals"])
+        .include_evals
+    )
+    assert (
         build_parser().parse_args(["task", "--name", "scene-text-recognition"]).name
         == "scene-text-recognition"
     )
@@ -43,8 +48,9 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.8`" in skill
+    assert "Generated with `pwc v0.1.9`" in skill
     assert "`pwc search QUERY" in skill
+    assert "--include-evals" in skill
     assert "`pwc benchmark --name NAME" in skill
     assert "`pwc skills add" in skill
 
@@ -1223,7 +1229,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.8\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.9\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -1513,6 +1519,119 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
         "- **Dataset:** https://huggingface.co/datasets/example/data\n"
         "- **Space:** https://huggingface.co/spaces/example/demo\n"
     )
+
+
+def test_paper_info_include_evals_renders_paginated_markdown_table(monkeypatch):
+    calls = []
+    paper_payload = {
+        "id": "9",
+        "arxiv_id": "2607.24653",
+        "title": "An Evaluated Paper",
+    }
+    evaluation_rows = [
+        {
+            "id": "1",
+            "paper_id": "9",
+            "model_name": "Agent | One",
+            "metrics": {"Resolved": 55.5},
+            "best_metric": "Resolved",
+            "best_rank": 1,
+            "task_name": "Coding Agents",
+            "dataset_name": "SWE-Bench Pro",
+            "is_open": True,
+            "result_url": "https://example.test/result-one",
+        },
+        {
+            "id": "2",
+            "paper_id": "9",
+            "model_name": "Agent Two",
+            "harness": "verified",
+            "metrics": {"Accuracy": 50},
+            "best_metric": "Accuracy",
+            "best_rank": None,
+            "task_name": "Agents",
+            "dataset_name": "Toolathlon",
+            "is_open": False,
+            "source_url": "https://example.test/result-two",
+        },
+    ]
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            if path.startswith("papers/"):
+                payload = paper_payload
+            else:
+                payload = {
+                    "count": 2,
+                    "results": [evaluation_rows[params["page"] - 1]],
+                }
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["paper", "info", "2607.24653", "--include-evals"]) == 0
+
+    assert calls == [
+        ("papers/2607.24653", {"include_resources": False}),
+        (
+            "evaluations/",
+            {
+                "page": 1,
+                "page_size": 100,
+                "paper_id": "9",
+                "ordering": "-benchmark_popularity",
+            },
+        ),
+        (
+            "evaluations/",
+            {
+                "page": 2,
+                "page_size": 100,
+                "paper_id": "9",
+                "ordering": "-benchmark_popularity",
+            },
+        ),
+    ]
+    rendered = output.getvalue()
+    assert "\n## Evaluations\n" in rendered
+    assert "| Benchmark | Model | Scores | Rank | Task | Open | Source |" in rendered
+    assert "Agent \\| One" in rendered
+    assert "Resolved: 55.5" in rendered
+    assert "Agent Two (verified)" in rendered
+    assert (
+        "| — | Agents | no | [source](<https://example.test/result-two>) |" in rendered
+    )
+
+
+def test_paper_info_include_evals_adds_structured_json(monkeypatch):
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            payload = (
+                {"id": "9", "arxiv_id": "2607.24653", "title": "Paper"}
+                if path.startswith("papers/")
+                else {"count": 0, "results": []}
+            )
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["paper", "info", "2607.24653", "--include-evals", "--json"]) == 0
+
+    data = json.loads(output.getvalue())["data"]
+    assert data["evaluations"] == {"count": 0, "results": []}
+    assert calls[-1][0] == "evaluations/"
 
 
 def test_paper_lineage_renders_linked_markdown_sections(monkeypatch):

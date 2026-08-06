@@ -39,7 +39,9 @@ than silently selecting a paper.
 - `pwc paper info PAPER` — Show metadata, the abstract, predecessors, and successors.
   `--include-resources` adds Markdown sections for GitHub repositories, project pages,
   and Hugging Face artifacts, with official links marked explicitly.
-  `[--include-resources --json]`
+  `--include-evals` fetches every evaluation for the resolved paper and adds an
+  Evaluations Markdown table (or structured `evaluations` in JSON output).
+  `[--include-resources --include-evals --json]`
 - `pwc paper read PAPER` — Print stored paper Markdown. The resolved paper must
   have a modern arXiv record. `[--json]`
 - `pwc paper list` — List and filter the paper catalog in a paginated manner.
@@ -150,6 +152,8 @@ than silently selecting a paper.
 - Use `pwc conference list --year YEAR` for a specific conference edition year.
 - Use `--include-resources` for linked repositories, project pages, and Hugging
   Face artifacts. Add `--json` when their structured metadata also matters.
+- Use `--include-evals` with `pwc paper info` when benchmark scores reported by
+  the paper matter.
 - Use `--all-versions` only when individual arXiv versions are relevant.
 - Use `--is-open true` to restrict benchmark results to open models.
 - Paginate when stderr reports more results. Do not silently treat the first

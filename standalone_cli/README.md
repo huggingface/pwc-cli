@@ -8,6 +8,7 @@ uv tool install ./standalone_cli
 pwc search "small vision language models" --limit 10
 pwc paper info 2501.01234
 pwc paper info 2501.01234 --include-resources
+pwc paper info 2501.01234 --include-evals
 pwc paper info "Attention Is All You Need"
 pwc paper read 2501.01234
 pwc task --name "scene-text-recognition"
@@ -21,6 +22,10 @@ pwc skills add
 
 Every `PAPER` argument accepts an arXiv ID, numeric external-paper ID, or quoted
 exact title. Title matching is case-insensitive and rejects ambiguity.
+
+`pwc paper info PAPER --include-evals` fetches every evaluation associated with
+the resolved paper. Human-readable output adds an Evaluations Markdown table;
+`--json` adds an `evaluations` object containing `count` and `results`.
 
 Task lists and benchmark lists render grouped Markdown in a terminal. Use
 `--flat` for paginated tables or `--group-by-area` to force Markdown when

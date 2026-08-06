@@ -121,6 +121,7 @@ Inspect or read a paper:
 ```bash
 pwc paper info 1706.03762
 pwc paper info 1706.03762 --include-resources  # linked GitHub, project, and HF URLs
+pwc paper info 1706.03762 --include-evals      # evaluation Markdown table
 pwc paper info "Attention Is All You Need"
 pwc paper read 1706.03762
 ```
@@ -177,7 +178,7 @@ of silently selecting one paper.
 | Command | Description |
 | --- | --- |
 | `pwc search QUERY` | Search for papers by title, topic, author, or arXiv ID |
-| `pwc paper info PAPER` | Show paper metadata, abstract, predecessors, and successors; optionally include linked GitHub, project, and HF URLs |
+| `pwc paper info PAPER` | Show paper metadata, abstract, predecessors, and successors; optionally include resources or an evaluation Markdown table |
 | `pwc paper read PAPER` | Print the stored paper Markdown |
 | `pwc paper list` | List and filter papers |
 | `pwc paper recent` | List recently published papers |
@@ -207,7 +208,7 @@ metadata or Markdown. Add `--json` to any data command for machine-readable outp
 
 ```bash
 pwc search "language models" --limit 5 --json
-pwc paper info 1706.03762 --json
+pwc paper info 1706.03762 --include-evals --json
 pwc benchmark list --task image-classification --json
 ```
 

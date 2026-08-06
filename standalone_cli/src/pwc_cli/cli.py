@@ -271,6 +271,13 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     payload = client.get(
         f"papers/{paper}", {"include_resources": args.include_resources}
     ).json()
+    evaluations = None
+    if args.include_evals:
+        paper_id = payload.get("id")
+        if not paper_id:
+            raise ResponseError("Paper response did not contain an ID")
+        evaluations = _paper_evaluations(client, paper_id)
+        payload = {**payload, "evaluations": evaluations}
     if args.json:
         print(
             json.dumps(
@@ -297,6 +304,9 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     if abstract:
         print("\n## Abstract\n")
         print(str(abstract).replace("\r", "").strip())
+
+    if evaluations is not None:
+        _render_paper_evaluations(evaluations["results"])
 
     print("\n## Paper lineage")
     for title, papers in (
@@ -1276,6 +1286,65 @@ def _metric_summary(item: dict[str, Any]) -> str:
     return ", ".join(f"{name}: {metrics[name]}" for name in names)
 
 
+def _paper_evaluations(client: Client, paper_id: object) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    total: int | None = None
+    page = 1
+    while True:
+        payload = client.get(
+            "evaluations/",
+            {
+                "page": page,
+                "page_size": 100,
+                "paper_id": paper_id,
+                "ordering": "-benchmark_popularity",
+            },
+        ).json()
+        items, page_total = _rows(payload)
+        results.extend(items)
+        if total is None:
+            total = page_total
+        if not items or total is None or len(results) >= total:
+            break
+        page += 1
+    return {"count": total if total is not None else len(results), "results": results}
+
+
+def _evaluation_source_markdown(item: dict[str, Any]) -> str:
+    url = item.get("result_url") or item.get("source_url")
+    if not url:
+        return "—"
+    return f"[source](<{str(url).replace('>', '%3E')}>)"
+
+
+def _render_paper_evaluations(items: list[dict[str, Any]]) -> None:
+    print("\n## Evaluations")
+    if not items:
+        print("\nNo evaluations found.")
+        return
+    print("\n| Benchmark | Model | Scores | Rank | Task | Open | Source |")
+    print("| --- | --- | --- | ---: | --- | :---: | --- |")
+    for item in items:
+        model = item.get("model_name") or "—"
+        if item.get("harness"):
+            model = f"{model} ({item['harness']})"
+        print(
+            "| "
+            + " | ".join(
+                (
+                    _markdown_text(item.get("dataset_name")),
+                    _markdown_text(model),
+                    _markdown_text(_metric_summary(item)),
+                    _markdown_text(item.get("best_rank")),
+                    _markdown_text(item.get("task_name")),
+                    "yes" if item.get("is_open", True) else "no",
+                    _evaluation_source_markdown(item),
+                )
+            )
+            + " |"
+        )
+
+
 def _metric_value(item: dict[str, Any], requested: str) -> float | None:
     metrics = item.get("metrics") or {}
     if not isinstance(metrics, dict):
@@ -1644,6 +1713,11 @@ def build_parser() -> argparse.ArgumentParser:
         "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
     )
     info.add_argument("--include-resources", action="store_true")
+    info.add_argument(
+        "--include-evals",
+        action="store_true",
+        help="include all paper evaluations and render them as Markdown",
+    )
     _json(info)
     info.set_defaults(handler=paper_info)
     read = paper_commands.add_parser("read", help="print stored paper Markdown")
