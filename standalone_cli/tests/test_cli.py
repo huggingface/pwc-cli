@@ -37,6 +37,27 @@ def test_complete_parser_omits_catalog_mutation_and_auth_commands():
         .parse_args(["paper", "info", "2501.1", "--include-evals"])
         .include_evals
     )
+    paper_filters = build_parser().parse_args(
+        [
+            "paper",
+            "list",
+            "--task",
+            "Image Classification",
+            "--method",
+            "Vision Transformer",
+            "--conference",
+            "CVPR 2026",
+            "--framework",
+            "vLLM",
+            "--organization",
+            "Qwen",
+        ]
+    )
+    assert paper_filters.task == "Image Classification"
+    assert paper_filters.method == "Vision Transformer"
+    assert paper_filters.conference == "CVPR 2026"
+    assert paper_filters.framework == "vLLM"
+    assert paper_filters.organization == "Qwen"
     assert (
         build_parser().parse_args(["task", "--name", "scene-text-recognition"]).name
         == "scene-text-recognition"
@@ -64,9 +85,10 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.10`" in skill
+    assert "Generated with `pwc v0.1.11`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
+    assert "[--organization ORGANIZATION]" in skill
     assert "`pwc organization [--name NAME] [--json]`" in skill
     assert "`pwc framework list [--domain DOMAIN]" in skill
     assert "`pwc benchmark --name NAME" in skill
@@ -239,6 +261,62 @@ def test_benchmark_limit_alias_preserves_page_size_destination():
     parser = build_parser()
     assert parser.parse_args(["benchmark", "list", "--limit", "7"]).page_size == 7
     assert parser.parse_args(["benchmark", "list", "--page-size", "8"]).page_size == 8
+
+
+def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            return Response(b'{"count":0,"results":[]}', {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert (
+        main(
+            [
+                "paper",
+                "list",
+                "--task",
+                "Image Classification",
+                "--method",
+                "Vision Transformer",
+                "--conference",
+                "CVPR 2026",
+                "--framework",
+                "vLLM",
+                "--organization",
+                "Qwen",
+            ]
+        )
+        == 0
+    )
+    assert calls == [
+        (
+            "papers/",
+            {
+                "page": 1,
+                "page_size": 20,
+                "search": None,
+                "published_after": None,
+                "published_before": None,
+                "task": "Image Classification",
+                "method": "Vision Transformer",
+                "conference": "CVPR 2026",
+                "framework": "vLLM",
+                "organization": "Qwen",
+                "latest_only": True,
+                "order_by": "trending",
+                "order_dir": "desc",
+                "time": "all_time",
+                "include_resources": False,
+            },
+        )
+    ]
 
 
 def test_benchmark_detail_parser_matches_requested_command_shape():
@@ -1447,7 +1525,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.10\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.11\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

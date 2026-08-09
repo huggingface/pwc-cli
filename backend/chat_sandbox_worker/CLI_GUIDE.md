@@ -7,7 +7,7 @@ join, or schema-dependent transformation.
 pwc search "QUERY" --limit 10
 pwc paper info PAPER --include-resources
 pwc paper read PAPER
-pwc paper list --search "QUERY"
+pwc paper list --search "QUERY" [--task NAME] [--method NAME] [--conference NAME] [--framework NAME] [--organization NAME]
 pwc paper recent
 pwc paper trending
 pwc paper related PAPER

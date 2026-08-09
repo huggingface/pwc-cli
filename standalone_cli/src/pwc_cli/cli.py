@@ -450,7 +450,11 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
             "search": args.search,
             "published_after": args.published_after,
             "published_before": args.published_before,
+            "task": args.task,
+            "method": args.method,
             "conference": args.conference,
+            "framework": args.framework,
+            "organization": args.organization,
             "latest_only": not args.all_versions,
             "order_by": args.order_by,
             "order_dir": args.order_dir,
@@ -2080,7 +2084,11 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--search")
     listing.add_argument("--published-after", type=date.fromisoformat)
     listing.add_argument("--published-before", type=date.fromisoformat)
+    listing.add_argument("--task", help="exact task name, slug, or ID")
+    listing.add_argument("--method", help="exact method name, full name, slug, or ID")
     listing.add_argument("--conference")
+    listing.add_argument("--framework", help="exact framework name, slug, or ID")
+    listing.add_argument("--organization", help="exact organization name, slug, or ID")
     listing.add_argument("--all-versions", action="store_true")
     listing.add_argument(
         "--order-by",

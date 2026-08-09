@@ -139,6 +139,9 @@ List and filter papers:
 
 ```bash
 pwc paper list --conference NeurIPS --page-size 20
+pwc paper list --organization Qwen --order-by date_published
+pwc paper list --task "Image Classification" --method Transformer
+pwc paper list --conference "CVPR 2026" --framework PyTorch
 pwc paper list --search "diffusion" --published-after 2025-01-01
 pwc paper list --order-by citation_count --order-dir desc
 ```

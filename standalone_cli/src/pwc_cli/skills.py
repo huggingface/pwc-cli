@@ -49,11 +49,14 @@ _WORKFLOW = """
 2. Use `pwc paper info` to inspect promising results. Add
    `--include-resources` when repositories, project pages, or Hugging Face
    artifacts matter.
-3. Use `pwc search` for broader discovery, then `pwc paper read` for primary
+3. Use exact `pwc paper list --task`, `--method`, `--conference`, `--framework`,
+   and `--organization` filters for tagged or catalog-associated papers. Combine
+   them to require every association; do not substitute a keyword search.
+4. Use `pwc search` for broader discovery, then `pwc paper read` for primary
    evidence.
-4. Expand the literature with `pwc paper related` and use
+5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-5. Preserve paper titles, identifiers, and URLs so claims remain traceable.
+6. Preserve paper titles, identifiers, and URLs so claims remain traceable.
 
 ## Output and limits
 

@@ -48,7 +48,8 @@ than silently selecting a paper.
 - `pwc paper list` — List and filter the paper catalog in a paginated manner.
   `[--page 1-100 --page-size 1-100 --search TEXT
   --published-after YYYY-MM-DD --published-before YYYY-MM-DD
-  --conference TEXT --all-versions
+  --task NAME --method NAME --conference NAME --framework NAME
+  --organization NAME --all-versions
   --order-by trending|date_published|citation_count
   --order-dir asc|desc --time today|week|month|all_time
   --include-resources --json]`
@@ -159,7 +160,10 @@ than silently selecting a paper.
 - If the task is not supported by PwC, use `pwc search` for relevance-ranked discovery.
 - Use `pwc paper info` to gather more info about a specific paper.
 - Use `pwc paper list` for structured filters, date windows, conferences, and
-  deterministic sorting.
+  deterministic sorting. Use exact `--task`, `--method`, `--conference`,
+  `--framework`, or `--organization` filters for tagged or catalog-associated
+  papers; combine filters to require every association. Do not substitute a
+  keyword search for an organization or taxonomy filter.
 - Use `pwc paper recent` for recency and `pwc paper trending` for current
   repository activity; these are different signals.
 - Use area names directly with task and method lists, for example

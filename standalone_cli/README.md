@@ -58,6 +58,9 @@ Methods, conferences, organizations, and frameworks share the same detail
 shape as tasks: pass an exact name, slug, or ID to `--name`. Their `list`
 subcommands retain entity-specific filters such as method area, conference
 year, featured organizations, and framework domain, category, or platform.
+`pwc paper list` accepts exact `--task`, `--method`, `--conference`,
+`--framework`, and `--organization` filters. Combine them to require every
+selected tag or catalog association.
 
 Leaderboard inspection supports numeric multi-metric selection:
 
