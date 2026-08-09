@@ -19,7 +19,8 @@ CLAUDE_GLOBAL = Path("~/.claude/skills")
 _DESCRIPTION = (
     "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, "
     "discovering recent and trending research, finding related work and paper "
-    "lineage, browsing tasks, methods, conferences, and benchmark leaderboards "
+    "lineage, browsing tasks, methods, conferences, organizations, frameworks, "
+    "and benchmark leaderboards "
     "through the public Papers With Code catalog. Use whenever the user asks to "
     "find papers, survey literature, compare research, inspect an arXiv paper, "
     "explore AI/ML taxonomy or conferences, discover benchmarks or "

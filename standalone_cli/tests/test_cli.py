@@ -25,7 +25,10 @@ INSTALLER_SPEC.loader.exec_module(installer)
 
 def test_complete_parser_omits_catalog_mutation_and_auth_commands():
     help_text = build_parser().format_help()
-    assert "{search,paper,task,method,conference,benchmark,skills,version}" in help_text
+    assert (
+        "{search,paper,task,method,conference,organization,framework,benchmark,skills,version}"
+        in help_text
+    )
     for command in ("auth", "add-external", "cron", "embedding", "github-issue"):
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
@@ -41,16 +44,31 @@ def test_complete_parser_omits_catalog_mutation_and_auth_commands():
     assert build_parser().parse_args(["task", "list", "--area", "Vision"]).area
     assert build_parser().parse_args(["task", "list", "--group-by-area"]).group_by_area
     assert build_parser().parse_args(["method", "list", "--area", "Audio"]).area
+    assert build_parser().parse_args(["method", "--name", "Transformer"]).name
     assert build_parser().parse_args(["conference", "list", "--year", "2025"]).year
+    assert build_parser().parse_args(["conference", "--name", "CVPR 2025"]).name
+    assert build_parser().parse_args(["organization", "--name", "NVIDIA"]).name
+    assert (
+        build_parser()
+        .parse_args(["organization", "list", "--featured-only"])
+        .featured_only
+    )
+    assert build_parser().parse_args(["framework", "--name", "vLLM"]).name
+    assert (
+        build_parser().parse_args(["framework", "list", "--platform", "gpu"]).platform
+        == "gpu"
+    )
 
 
 def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.9`" in skill
+    assert "Generated with `pwc v0.1.10`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
+    assert "`pwc organization [--name NAME] [--json]`" in skill
+    assert "`pwc framework list [--domain DOMAIN]" in skill
     assert "`pwc benchmark --name NAME" in skill
     assert "`pwc skills add" in skill
 
@@ -746,6 +764,12 @@ def test_task_detail_json_has_stable_composed_payload(monkeypatch, capsys):
             "recommended_frameworks": [],
         },
         "tasks/17/papers": {"count": 0, "results": []},
+        "tasks/17": {
+            "id": "17",
+            "slug": "scene-text-recognition",
+            "name": "Scene Text Recognition",
+            "area_id": "1",
+        },
         "areas/": {"count": 1, "results": [{"id": "1", "name": "Vision"}]},
     }
 
@@ -763,6 +787,10 @@ def test_task_detail_json_has_stable_composed_payload(monkeypatch, capsys):
     assert result["data"]["task"]["id"] == "17"
     assert result["data"]["area"]["name"] == "Vision"
     assert result["data"]["paper_sample_size"] == 0
+
+    assert main(["task", "--name", "17", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["data"]["task"]["id"] == "17"
 
 
 def test_method_list_accepts_area_id_and_year_filter(monkeypatch):
@@ -828,6 +856,68 @@ def test_method_list_accepts_area_id_and_year_filter(monkeypatch):
     )
 
 
+def test_method_detail_resolves_exact_name_and_renders_source(monkeypatch):
+    calls = []
+    payloads = {
+        "methods/": {
+            "count": 1,
+            "results": [
+                {
+                    "id": "2",
+                    "slug": "transformer",
+                    "name": "Transformer",
+                    "full_name": "Transformer",
+                }
+            ],
+        },
+        "methods/2": {
+            "id": "2",
+            "slug": "transformer",
+            "name": "Transformer",
+            "description": "Attention-only architecture.",
+            "area_id": "3",
+            "introduced_year": 2017,
+            "paper_count": 13086,
+            "source_url": "/paper/1706.03762",
+            "source_title": "Attention Is All You Need",
+        },
+        "areas/": {"count": 1, "results": [{"id": "3", "name": "General"}]},
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            return Response(json.dumps(payloads[path]).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["method", "--name", "Transformer"]) == 0
+
+    rendered = output.getvalue()
+    assert "# Transformer" in rendered
+    assert "Area: General · Introduced: 2017 · 13,086 papers" in rendered
+    assert (
+        "[Attention Is All You Need](https://paperswithcode.co/paper/1706.03762)"
+        in rendered
+    )
+    assert calls[0] == (
+        "methods/",
+        {"q": "Transformer", "page": 1, "page_size": 100},
+    )
+
+    calls.clear()
+    with redirect_stdout(io.StringIO()):
+        assert main(["method", "--name", "2"]) == 0
+    assert calls == [
+        ("methods/2", None),
+        ("areas/", {"page": 1, "page_size": 500, "ordering": "name"}),
+    ]
+
+
 def test_conference_list_filters_complete_response_by_year(monkeypatch):
     payload = {
         "count": 2,
@@ -866,6 +956,36 @@ def test_conference_list_filters_complete_response_by_year(monkeypatch):
         "slug\tname\tyear\tpapers\tlocation\n"
         "cvpr-2025\tCVPR 2025\t2025\t1834\tNashville, USA\n"
     )
+
+
+def test_conference_detail_accepts_name_slug_or_id(monkeypatch, capsys):
+    listing = {
+        "count": 1,
+        "results": [
+            {"id": "7", "slug": "cvpr-2026", "name": "CVPR 2026", "year": 2026}
+        ],
+    }
+    detail = {
+        "id": "7",
+        "slug": "cvpr-2026",
+        "name": "CVPR 2026",
+        "year": 2026,
+        "paper_count": 2677,
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            payload = listing if path == "conferences/" else detail
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    for reference in ("CVPR 2026", "cvpr-2026", "7"):
+        assert main(["conference", "--name", reference, "--json"]) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["data"]["slug"] == "cvpr-2026"
 
 
 def test_conference_list_aligns_columns_in_interactive_terminal(monkeypatch):
@@ -911,6 +1031,104 @@ def test_conference_list_aligns_columns_in_interactive_terminal(monkeypatch):
         "cvpr-2025     CVPR 2025     2025    1834  Nashville, USA\n"
         "neurips-2025  NeurIPS 2025  2025    2763  San Diego, USA\n"
     )
+
+
+def test_organization_detail_and_featured_list(monkeypatch, capsys):
+    listing = {
+        "count": 1,
+        "results": [
+            {
+                "id": "1",
+                "slug": "nvidia",
+                "name": "NVIDIA",
+                "paper_count": 158,
+                "is_featured": True,
+                "trending_rank": 1,
+            }
+        ],
+    }
+    detail = {
+        **listing["results"][0],
+        "hf_url": "https://huggingface.co/nvidia",
+        "website_url": "https://www.nvidia.com/",
+    }
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            payload = detail if path == "organizations/nvidia" else listing
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert main(["organization", "--name", "NVIDIA", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["data"]["slug"] == "nvidia"
+
+    assert main(["organization", "list", "--featured-only"]) == 0
+    assert "1\tnvidia\tNVIDIA\t158\tyes\t1" in capsys.readouterr().out
+    assert calls == [
+        ("organizations/", {"featured_only": False}),
+        ("organizations/nvidia", None),
+        ("organizations/", {"featured_only": True}),
+    ]
+
+
+def test_framework_detail_and_filtered_list_flatten_catalog(monkeypatch, capsys):
+    catalog = {
+        "domains": [
+            {
+                "slug": "llm",
+                "name": "Large Language Models",
+                "categories": [
+                    {
+                        "slug": "inference",
+                        "name": "Inference & Serving",
+                        "frameworks": [
+                            {
+                                "id": "11",
+                                "slug": "vllm",
+                                "name": "vLLM",
+                                "description": "High-throughput serving.",
+                                "platforms": ["gpu"],
+                                "paper_count": 73,
+                            },
+                            {
+                                "id": "9",
+                                "slug": "llama-cpp",
+                                "name": "llama.cpp",
+                                "description": "Portable inference.",
+                                "platforms": ["cpu", "apple"],
+                                "paper_count": 2,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            assert (path, params) == ("frameworks/", None)
+            return Response(json.dumps(catalog).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert main(["framework", "--name", "11", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["data"]["slug"] == "vllm"
+    assert result["data"]["domain_slug"] == "llm"
+
+    assert main(["framework", "list", "--platform", "apple"]) == 0
+    output = capsys.readouterr().out
+    assert "llama-cpp" in output
+    assert "vllm" not in output
 
 
 def test_unknown_area_lists_valid_choices(monkeypatch):
@@ -1229,7 +1447,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.9\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.10\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -1372,6 +1590,7 @@ def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
         "abstract": "First line.\nSecond line.",
         "published": "2025-01-03",
         "authors": ["Ada Researcher", "Grace Scientist"],
+        "organizations": [{"id": "1", "name": "Example AI", "slug": "example"}],
         "citation_count": 42,
         "url_abs": "https://paperswithcode.co/paper/2501.01234",
     }
@@ -1393,6 +1612,7 @@ def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
         "title: A Paper\n"
         "published: 2025-01-03\n"
         "authors: Ada Researcher, Grace Scientist\n"
+        "organizations: Example AI\n"
         "citations: 42\n"
         "url: https://paperswithcode.co/paper/2501.01234\n"
         "\n"

@@ -9,7 +9,7 @@ Let your coding agent use `pwc` to:
 - read paper metadata and Markdown
 - discover recent, trending, and related work
 - inspect paper lineage (follow-up work and predecessors)
-- explore tasks, methods, and conferences.
+- explore tasks, methods, conferences, organizations, and frameworks.
 
 Public reads are anonymous: no account, API token, or Python environment is required.
 
@@ -119,7 +119,7 @@ pwc search "attention" --page 2 --limit 10
 Inspect or read a paper:
 
 ```bash
-pwc paper info 1706.03762
+pwc paper info 1706.03762  # includes tagged organizations
 pwc paper info 1706.03762 --include-resources  # linked GitHub, project, and HF URLs
 pwc paper info 1706.03762 --include-evals      # evaluation Markdown table
 pwc paper info "Attention Is All You Need"
@@ -150,10 +150,16 @@ pwc task list
 pwc task list --area Vision
 pwc task list --group-by-area  # force grouped Markdown when piping/capturing
 pwc task --name "scene-text-recognition"
+pwc method --name Transformer
 pwc method list --area Audio
 pwc method list --area General --introduced-year 2017
+pwc conference --name "CVPR 2025"
 pwc conference list
 pwc conference list --year 2025
+pwc organization --name NVIDIA
+pwc organization list --featured-only
+pwc framework --name vLLM
+pwc framework list --platform gpu
 ```
 
 Browse benchmarks:
@@ -187,8 +193,14 @@ of silently selecting one paper.
 | `pwc paper lineage list PAPER` | Show linked Markdown sections for a paper's predecessors and successors |
 | `pwc task list` | Group tasks by area with paper, benchmark, and evaluation counts; support flat pagination and area filters |
 | `pwc task --name NAME` | Show task-page details, including frameworks, sister tasks, common methods, benchmarks, and papers |
+| `pwc method --name NAME` | Show details for an exact method name, full name, slug, or ID |
 | `pwc method list` | List methods and filter them by research area or introduction year |
+| `pwc conference --name NAME` | Show details for an exact conference name, slug, or ID |
 | `pwc conference list` | List conferences and filter them by year |
+| `pwc organization --name NAME` | Show details for an exact organization name, slug, or ID |
+| `pwc organization list` | List organizations, optionally restricting to featured organizations |
+| `pwc framework --name NAME` | Show details for an exact framework name, slug, or ID |
+| `pwc framework list` | List frameworks by domain, category, or platform |
 | `pwc benchmark list` | Group top benchmarks by area and task; support flat filters and task-trend ranking |
 | `pwc benchmark --name NAME` | Show a benchmark's top models, papers, scores, and publication dates |
 | `pwc skills add` | Install the version-matched Skill for coding agents |

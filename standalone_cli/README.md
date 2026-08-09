@@ -14,8 +14,14 @@ pwc paper read 2501.01234
 pwc task --name "scene-text-recognition"
 pwc task list --area Vision
 pwc task list --group-by-area
+pwc method --name Transformer
 pwc method list --area Audio
+pwc conference --name "CVPR 2025"
 pwc conference list --year 2025
+pwc organization --name NVIDIA
+pwc organization list --featured-only
+pwc framework --name vLLM
+pwc framework list --platform gpu
 pwc benchmark list
 pwc skills add
 ```
@@ -26,6 +32,7 @@ exact title. Title matching is case-insensitive and rejects ambiguity.
 `pwc paper info PAPER --include-evals` fetches every evaluation associated with
 the resolved paper. Human-readable output adds an Evaluations Markdown table;
 `--json` adds an `evaluations` object containing `count` and `results`.
+Normal paper-info output includes the names of tagged organizations when present.
 
 Task lists and benchmark lists render grouped Markdown in a terminal. Use
 `--flat` for paginated tables or `--group-by-area` to force Markdown when
@@ -46,6 +53,11 @@ both grouped and flat output.
 task-page details in CLI form: area, description, hierarchy, research trends,
 recommended frameworks, sister tasks, subtasks, common methods, benchmarks,
 and trending papers. Add `--json` for the complete structured payload.
+
+Methods, conferences, organizations, and frameworks share the same detail
+shape as tasks: pass an exact name, slug, or ID to `--name`. Their `list`
+subcommands retain entity-specific filters such as method area, conference
+year, featured organizations, and framework domain, category, or platform.
 
 Leaderboard inspection supports numeric multi-metric selection:
 

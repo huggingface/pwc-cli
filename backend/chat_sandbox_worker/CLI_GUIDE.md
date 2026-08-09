@@ -14,8 +14,14 @@ pwc paper related PAPER
 pwc paper lineage list PAPER
 pwc task list --group-by-area [--area AREA]
 pwc task --name "TASK"
+pwc method --name "METHOD"
 pwc method list --area AREA
+pwc conference --name "CONFERENCE"
 pwc conference list --year YEAR
+pwc organization --name "ORGANIZATION"
+pwc organization list --featured-only
+pwc framework --name "FRAMEWORK"
+pwc framework list --platform PLATFORM
 pwc benchmark list --task TASK
 pwc benchmark --name "BENCHMARK"
 ```

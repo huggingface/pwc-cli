@@ -153,6 +153,36 @@ def _rows(payload: Any) -> tuple[list[dict[str, Any]], int | None]:
     ) if total is not None else None
 
 
+def _exact_entity_match(
+    reference: str,
+    items: list[dict[str, Any]],
+    *,
+    label: str,
+    fields: tuple[str, ...] = ("name", "slug", "id"),
+) -> dict[str, Any]:
+    target = reference.strip().casefold()
+    for field in fields:
+        for item in items:
+            if str(item.get(field) or "").strip().casefold() == target:
+                return item
+    suggestions = ", ".join(
+        str(item.get("name") or item.get("slug"))
+        for item in items[:3]
+        if item.get("name") or item.get("slug")
+    )
+    suffix = f"; closest results: {suggestions}" if suggestions else ""
+    raise ResponseError(f"{label} not found: {reference}{suffix}")
+
+
+def _entity_heading(name: object) -> None:
+    value = str(name or "Unnamed")
+    print(value if sys.stdout.isatty() else f"# {_markdown_text(value)}")
+
+
+def _entity_link(label: str, url: str) -> str:
+    return f"{label}: {url}" if sys.stdout.isatty() else f"[{label}]({url})"
+
+
 def _paper_id(item: dict[str, Any]) -> str:
     return _clean(item.get("arxiv_id") or item.get("id"))
 
@@ -287,11 +317,17 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
             )
         )
         return 0
+    organizations = ", ".join(
+        str(item.get("name") or item.get("slug"))
+        for item in payload.get("organizations") or []
+        if isinstance(item, dict) and (item.get("name") or item.get("slug"))
+    )
     fields = (
         ("id", payload.get("arxiv_id") or payload.get("id")),
         ("title", payload.get("title")),
         ("published", payload.get("published")),
         ("authors", ", ".join(payload.get("authors") or [])),
+        ("organizations", organizations),
         ("conference", payload.get("conference_name") or payload.get("conference")),
         ("citations", payload.get("citation_count")),
         ("url", payload.get("url_abs") or payload.get("source_url")),
@@ -724,19 +760,21 @@ def _common_methods(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def task_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("task inspection requires --name")
-
-    search_payload = client.get(
-        "tasks/",
-        {"q": args.name, "page": 1, "page_size": 100},
-    ).json()
-    candidates, _total = _rows(search_payload)
-    summary = _task_match(args.name, candidates)
-    if summary is None:
-        suggestions = ", ".join(
-            str(item.get("name")) for item in candidates[:3] if item.get("name")
-        )
-        suffix = f"; closest results: {suggestions}" if suggestions else ""
-        raise ResponseError(f"Task not found: {args.name}{suffix}")
+    if args.name.strip().isdigit():
+        summary = client.get(f"tasks/{quote(args.name.strip(), safe='')}").json()
+    else:
+        search_payload = client.get(
+            "tasks/",
+            {"q": args.name, "page": 1, "page_size": 100},
+        ).json()
+        candidates, _total = _rows(search_payload)
+        summary = _task_match(args.name, candidates)
+        if summary is None:
+            suggestions = ", ".join(
+                str(item.get("name")) for item in candidates[:3] if item.get("name")
+            )
+            suffix = f"; closest results: {suggestions}" if suggestions else ""
+            raise ResponseError(f"Task not found: {args.name}{suffix}")
 
     task_id = str(summary["id"])
     page = client.get(f"tasks/{quote(task_id, safe='')}/page").json()
@@ -936,6 +974,68 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
     return 0
 
 
+def method_detail(args: argparse.Namespace, client: Client) -> int:
+    if not args.name:
+        raise ResponseError("method inspection requires --name")
+    if args.name.strip().isdigit():
+        method = client.get(f"methods/{quote(args.name.strip(), safe='')}").json()
+    else:
+        payload = client.get(
+            "methods/",
+            {"q": args.name, "page": 1, "page_size": 100},
+        ).json()
+        candidates, _total = _rows(payload)
+        summary = _exact_entity_match(
+            args.name,
+            candidates,
+            label="Method",
+            fields=("name", "full_name", "slug", "id"),
+        )
+        method_id = quote(str(summary.get("id") or summary.get("slug")), safe="")
+        method = client.get(f"methods/{method_id}").json()
+    area = next(
+        (
+            item
+            for item in _area_catalog(client)
+            if str(item.get("id")) == str(method.get("area_id"))
+        ),
+        None,
+    )
+    data = {"method": method, "area": area}
+    if args.json:
+        print(
+            json.dumps(
+                {"schema_version": API_CONTRACT_VERSION, "data": data},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    _entity_heading(method.get("name") or method.get("slug"))
+    metadata = []
+    if area and area.get("name"):
+        metadata.append(f"Area: {area['name']}")
+    if method.get("introduced_year") is not None:
+        metadata.append(f"Introduced: {method['introduced_year']}")
+    if method.get("paper_count") is not None:
+        metadata.append(f"{int(method['paper_count']):,} papers")
+    if metadata:
+        print(f"\n{' · '.join(metadata)}")
+    if method.get("description"):
+        print(f"\n{str(method['description']).strip()}")
+    source_url = method.get("source_url")
+    if source_url:
+        if str(source_url).startswith("/"):
+            source_url = f"https://paperswithcode.co{source_url}"
+        source_label = method.get("source_title") or "Source paper"
+        print(f"\n{_entity_link(str(source_label), str(source_url))}")
+    slug = method.get("slug") or method.get("id")
+    url = f"https://paperswithcode.co/methods/{quote(str(slug), safe='-')}"
+    print(f"\n{_entity_link('View method', url)}")
+    return 0
+
+
 def method_list(args: argparse.Namespace, client: Client) -> int:
     area_id, area_names = _resolve_area(args.area, client)
     payload = client.get(
@@ -970,6 +1070,58 @@ def method_list(args: argparse.Namespace, client: Client) -> int:
     return _emit_page(payload, args, render)
 
 
+def conference_detail(args: argparse.Namespace, client: Client) -> int:
+    if not args.name:
+        raise ResponseError("conference inspection requires --name")
+    payload = client.get("conferences/").json()
+    conferences, _total = _rows(payload)
+    summary = _exact_entity_match(args.name, conferences, label="Conference")
+    slug = str(summary.get("slug") or summary.get("id"))
+    conference = client.get(f"conferences/{quote(slug, safe='')}").json()
+    if args.json:
+        print(
+            json.dumps(
+                {"schema_version": API_CONTRACT_VERSION, "data": conference},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    _entity_heading(conference.get("name") or conference.get("slug"))
+    metadata = []
+    if conference.get("year") is not None:
+        metadata.append(str(conference["year"]))
+    if conference.get("paper_count") is not None:
+        metadata.append(f"{int(conference['paper_count']):,} papers")
+    if conference.get("tier"):
+        metadata.append(f"Tier: {str(conference['tier']).upper()}")
+    if metadata:
+        print(f"\n{' · '.join(metadata)}")
+    dates = " – ".join(
+        str(value)
+        for value in (conference.get("start_date"), conference.get("end_date"))
+        if value
+    )
+    venue = ", ".join(
+        str(value)
+        for value in (conference.get("venue"), conference.get("location"))
+        if value
+    )
+    if dates:
+        print(f"\nDates: {dates}")
+    if venue:
+        print(f"Venue: {venue}")
+    if conference.get("description"):
+        print(f"\n{str(conference['description']).strip()}")
+    for label, field in (("Conference website", "url"), ("Hugging Face", "hf_url")):
+        if conference.get(field):
+            print(f"\n{_entity_link(label, str(conference[field]))}")
+    url = f"https://paperswithcode.co/conferences/{quote(slug, safe='-')}"
+    print(f"\n{_entity_link('View conference', url)}")
+    return 0
+
+
 def conference_list(args: argparse.Namespace, client: Client) -> int:
     payload = client.get("conferences/").json()
     items, _total = _rows(payload)
@@ -994,6 +1146,203 @@ def conference_list(args: argparse.Namespace, client: Client) -> int:
         )
 
     return _emit_page(filtered, args, render)
+
+
+def organization_detail(args: argparse.Namespace, client: Client) -> int:
+    if not args.name:
+        raise ResponseError("organization inspection requires --name")
+    payload = client.get("organizations/", {"featured_only": False}).json()
+    organizations, _total = _rows(payload)
+    summary = _exact_entity_match(args.name, organizations, label="Organization")
+    slug = str(summary.get("slug") or summary.get("id"))
+    organization = client.get(f"organizations/{quote(slug, safe='')}").json()
+    if args.json:
+        print(
+            json.dumps(
+                {"schema_version": API_CONTRACT_VERSION, "data": organization},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    _entity_heading(organization.get("name") or organization.get("slug"))
+    metadata = []
+    if organization.get("paper_count") is not None:
+        metadata.append(f"{int(organization['paper_count']):,} papers")
+    if organization.get("trending_rank") is not None:
+        metadata.append(f"Trending rank: {int(organization['trending_rank']):,}")
+    if organization.get("is_featured"):
+        metadata.append("Featured")
+    if metadata:
+        print(f"\n{' · '.join(metadata)}")
+    years = [
+        value
+        for value in (
+            organization.get("first_paper_year"),
+            organization.get("latest_paper_year"),
+        )
+        if value is not None
+    ]
+    if years:
+        print(f"\nPaper years: {'–'.join(str(value) for value in years)}")
+    if organization.get("description"):
+        print(f"\n{str(organization['description']).strip()}")
+    for label, field in (
+        ("Website", "website_url"),
+        ("GitHub", "github_url"),
+        ("Hugging Face", "hf_url"),
+    ):
+        if organization.get(field):
+            print(f"\n{_entity_link(label, str(organization[field]))}")
+    url = f"https://paperswithcode.co/orgs/{quote(slug, safe='-')}"
+    print(f"\n{_entity_link('View organization', url)}")
+    return 0
+
+
+def organization_list(args: argparse.Namespace, client: Client) -> int:
+    payload = client.get("organizations/", {"featured_only": args.featured_only}).json()
+
+    def render(items: list[dict[str, Any]]) -> None:
+        _print_table(
+            ("id", "slug", "name", "papers", "featured", "trend_rank"),
+            [
+                (
+                    item.get("id"),
+                    item.get("slug"),
+                    item.get("name"),
+                    item.get("paper_count"),
+                    "yes" if item.get("is_featured") else "no",
+                    item.get("trending_rank"),
+                )
+                for item in items
+            ],
+            right_align=(3, 5),
+        )
+
+    return _emit_page(payload, args, render)
+
+
+def _framework_catalog_items(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("domains"), list):
+        raise ResponseError("framework catalog returned an unexpected response shape")
+    items = []
+    for domain in payload["domains"]:
+        if not isinstance(domain, dict):
+            continue
+        for category in domain.get("categories") or []:
+            if not isinstance(category, dict):
+                continue
+            for framework in category.get("frameworks") or []:
+                if isinstance(framework, dict):
+                    items.append(
+                        {
+                            **framework,
+                            "domain_slug": domain.get("slug"),
+                            "domain_name": domain.get("name"),
+                            "category_slug": category.get("slug"),
+                            "category_name": category.get("name"),
+                        }
+                    )
+    return items
+
+
+def framework_detail(args: argparse.Namespace, client: Client) -> int:
+    if not args.name:
+        raise ResponseError("framework inspection requires --name")
+    items = _framework_catalog_items(client.get("frameworks/").json())
+    framework = _exact_entity_match(args.name, items, label="Framework")
+    if args.json:
+        print(
+            json.dumps(
+                {"schema_version": API_CONTRACT_VERSION, "data": framework},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    _entity_heading(framework.get("name") or framework.get("slug"))
+    metadata = [
+        value
+        for value in (
+            framework.get("domain_name"),
+            framework.get("category_name"),
+            framework.get("organization_name"),
+        )
+        if value
+    ]
+    if framework.get("paper_count") is not None:
+        metadata.append(f"{int(framework['paper_count']):,} papers")
+    if metadata:
+        print(f"\n{' · '.join(str(value) for value in metadata)}")
+    if framework.get("description"):
+        print(f"\n{str(framework['description']).strip()}")
+    if framework.get("when_to_use"):
+        print(f"\nWhen to use: {str(framework['when_to_use']).strip()}")
+    platforms = framework.get("platforms") or []
+    if platforms:
+        print(f"\nPlatforms: {', '.join(str(value) for value in platforms)}")
+    for label, field in (("GitHub", "github_url"), ("Documentation", "docs_url")):
+        if framework.get(field):
+            print(f"\n{_entity_link(label, str(framework[field]))}")
+    paper = framework.get("introducing_paper_arxiv_id")
+    if paper:
+        url = f"https://paperswithcode.co/paper/{quote(str(paper), safe='.')}"
+        print(f"\n{_entity_link(f'Introducing paper {paper}', url)}")
+    slug = framework.get("slug") or framework.get("id")
+    url = f"https://paperswithcode.co/frameworks/{quote(str(slug), safe='-')}"
+    print(f"\n{_entity_link('View framework', url)}")
+    return 0
+
+
+def framework_list(args: argparse.Namespace, client: Client) -> int:
+    items = _framework_catalog_items(client.get("frameworks/").json())
+    for field, value in (
+        ("domain_slug", args.domain),
+        ("category_slug", args.category),
+    ):
+        if value:
+            target = value.strip().casefold()
+            name_field = field.replace("slug", "name")
+            items = [
+                item
+                for item in items
+                if target
+                in {
+                    str(item.get(field) or "").casefold(),
+                    str(item.get(name_field) or "").casefold(),
+                }
+            ]
+    if args.platform:
+        target = args.platform.strip().casefold()
+        items = [
+            item
+            for item in items
+            if target
+            in {str(value).casefold() for value in item.get("platforms") or []}
+        ]
+    payload = {"count": len(items), "results": items}
+
+    def render(rows: list[dict[str, Any]]) -> None:
+        _print_table(
+            ("id", "slug", "name", "domain", "category", "platforms", "papers"),
+            [
+                (
+                    item.get("id"),
+                    item.get("slug"),
+                    item.get("name"),
+                    item.get("domain_name"),
+                    item.get("category_name"),
+                    ",".join(str(value) for value in item.get("platforms") or []),
+                    item.get("paper_count"),
+                )
+                for item in rows
+            ],
+            right_align=(6,),
+        )
+
+    return _emit_page(payload, args, render)
 
 
 def benchmark_list(args: argparse.Namespace, client: Client) -> int:
@@ -1672,6 +2021,7 @@ def build_parser() -> argparse.ArgumentParser:
             'Examples:\n  pwc search "small VLMs" --limit 10\n'
             "  pwc paper info 2501.01234\n"
             '  pwc task --name "scene-text-recognition"\n'
+            '  pwc organization --name "NVIDIA"\n'
             "  pwc benchmark list --task OCR\n"
             '  pwc benchmark --name "SWE-Bench Pro"'
         ),
@@ -1811,8 +2161,11 @@ def build_parser() -> argparse.ArgumentParser:
     _json(tasks)
     tasks.set_defaults(handler=task_list)
 
-    method = commands.add_parser("method", help="list research methods")
-    method_commands = method.add_subparsers(dest="method_command", required=True)
+    method = commands.add_parser("method", help="inspect or list research methods")
+    method.add_argument("--name", help="exact method name, full name, slug, or ID")
+    _json(method)
+    method.set_defaults(handler=method_detail)
+    method_commands = method.add_subparsers(dest="method_command")
     methods = method_commands.add_parser(
         "list", help="list and filter research methods"
     )
@@ -1832,16 +2185,49 @@ def build_parser() -> argparse.ArgumentParser:
     _json(methods)
     methods.set_defaults(handler=method_list)
 
-    conference = commands.add_parser("conference", help="list conferences")
-    conference_commands = conference.add_subparsers(
-        dest="conference_command", required=True
-    )
+    conference = commands.add_parser("conference", help="inspect or list conferences")
+    conference.add_argument("--name", help="exact conference name, slug, or ID")
+    _json(conference)
+    conference.set_defaults(handler=conference_detail)
+    conference_commands = conference.add_subparsers(dest="conference_command")
     conferences = conference_commands.add_parser(
         "list", help="list conferences with imported papers"
     )
     conferences.add_argument("--year", type=int)
     _json(conferences)
     conferences.set_defaults(handler=conference_list)
+
+    organization = commands.add_parser(
+        "organization", help="inspect or list research organizations"
+    )
+    organization.add_argument("--name", help="exact organization name, slug, or ID")
+    _json(organization)
+    organization.set_defaults(handler=organization_detail)
+    organization_commands = organization.add_subparsers(dest="organization_command")
+    organizations = organization_commands.add_parser(
+        "list", help="list research organizations"
+    )
+    organizations.add_argument(
+        "--featured-only",
+        action="store_true",
+        help="return only curated featured organizations",
+    )
+    _json(organizations)
+    organizations.set_defaults(handler=organization_list)
+
+    framework = commands.add_parser(
+        "framework", help="inspect or list research frameworks"
+    )
+    framework.add_argument("--name", help="exact framework name, slug, or ID")
+    _json(framework)
+    framework.set_defaults(handler=framework_detail)
+    framework_commands = framework.add_subparsers(dest="framework_command")
+    frameworks = framework_commands.add_parser("list", help="list research frameworks")
+    frameworks.add_argument("--domain", help="exact framework domain name or slug")
+    frameworks.add_argument("--category", help="exact framework category name or slug")
+    frameworks.add_argument("--platform", help="exact platform name")
+    _json(frameworks)
+    frameworks.set_defaults(handler=framework_list)
 
     benchmark = commands.add_parser("benchmark", help="inspect benchmarks")
     benchmark.add_argument(

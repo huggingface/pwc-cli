@@ -1,6 +1,6 @@
 ---
 name: pwc-cli
-description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, and benchmark leaderboards through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or the `pwc-cli`. Prefer this skill for grounded AI/ML research even when the user does not explicitly ask for a CLI command."
+description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, organizations, frameworks, and benchmark leaderboards through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or the `pwc-cli`. Prefer this skill for grounded AI/ML research even when the user does not explicitly ask for a CLI command."
 ---
 
 Install:
@@ -36,7 +36,8 @@ than silently selecting a paper.
 
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID. This is powered by hybrid/keyword/semantic search using pgvector. Defaults to hybrid.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
-- `pwc paper info PAPER` — Show metadata, the abstract, predecessors, and successors.
+- `pwc paper info PAPER` — Show metadata including tagged organizations, the
+  abstract, predecessors, and successors.
   `--include-resources` adds Markdown sections for GitHub repositories, project pages,
   and Hugging Face artifacts, with official links marked explicitly.
   `--include-evals` fetches every evaluation for the resolved paper and adds an
@@ -82,8 +83,23 @@ than silently selecting a paper.
   --introduced-year YEAR
   --order-by name|full_name|introduced_year|created_at|paper_count
   --order-dir asc|desc --json]`
+- `pwc method --name NAME` — Show method metadata, its research area,
+  description, introduction year, source paper, and paper count. `NAME` must
+  exactly match a method name, full name, slug, or ID. `[--json]`
 - `pwc conference list` — List conferences with imported papers.
   `[--year YEAR --json]`
+- `pwc conference --name NAME` — Show conference dates, venue, description,
+  links, tier, and paper count. `NAME` must exactly match a conference name,
+  slug, or ID. `[--json]`
+- `pwc organization list` — List research organizations and their paper and
+  trending metadata. `[--featured-only --json]`
+- `pwc organization --name NAME` — Show organization metadata and public links.
+  `NAME` must exactly match an organization name, slug, or ID. `[--json]`
+- `pwc framework list` — Flatten and list the framework catalog.
+  `[--domain NAME_OR_SLUG --category NAME_OR_SLUG --platform NAME --json]`
+- `pwc framework --name NAME` — Show framework guidance, platforms, links, and
+  introducing paper. `NAME` must exactly match a framework name, slug, or ID.
+  `[--json]`
 - `pwc benchmark list` — Find and rank benchmarks. When `--task` is supplied,
   the default order is task-specific trending activity. Without filters,
   interactive output groups top benchmarks under visible tasks by area;
@@ -132,8 +148,8 @@ than silently selecting a paper.
    `pwc paper lineage list` when model or method ancestry matters.
 6. Explore the catalog taxonomy with `pwc task list --group-by-area`, inspect a
    specific task with `pwc task --name NAME`, then use
-   `pwc method list` and `pwc conference list`; use `--area` or `--year` to
-   narrow broad lists.
+   a method, conference, organization, or framework with its `--name` command;
+   use each entity's `list` filters to narrow broad catalogs.
 7. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
 
