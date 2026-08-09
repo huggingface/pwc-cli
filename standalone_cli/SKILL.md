@@ -191,6 +191,8 @@ than silently selecting a paper.
   failure, and `4` invalid API response.
 - `PWC_API_URL` may select another compatible v1 endpoint. The default is
   `https://paperswithcode.co/api/v1`.
+- Catalog-filtered paper lists fail closed unless the server confirms every
+  requested filter; never treat results from an older server as filtered.
 
 The standalone parser contains no authentication, mutation, ingestion,
 publication, image, CRON, embedding, or infrastructure commands. Do not

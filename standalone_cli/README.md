@@ -60,7 +60,8 @@ subcommands retain entity-specific filters such as method area, conference
 year, featured organizations, and framework domain, category, or platform.
 `pwc paper list` accepts exact `--task`, `--method`, `--conference`,
 `--framework`, and `--organization` filters. Combine them to require every
-selected tag or catalog association.
+selected tag or catalog association. The CLI fails closed if the selected API
+does not confirm that it applied every requested catalog filter.
 
 Leaderboard inspection supports numeric multi-metric selection:
 

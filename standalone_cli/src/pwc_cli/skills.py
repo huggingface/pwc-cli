@@ -66,6 +66,8 @@ _WORKFLOW = """
   failure, and `4` invalid API response.
 - `PWC_API_URL` may select another compatible v1 endpoint. The default is
   `https://paperswithcode.co/api/v1`.
+- Catalog-filtered paper lists fail closed unless the server confirms every
+  requested filter; never treat results from an older server as filtered.
 
 The research commands contain no authentication, catalog mutation, ingestion,
 publication, image, embedding, CRON, or infrastructure-maintenance operations.

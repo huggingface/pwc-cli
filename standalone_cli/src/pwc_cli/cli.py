@@ -442,6 +442,17 @@ def paper_read(args: argparse.Namespace, client: Client) -> int:
 
 
 def paper_list(args: argparse.Namespace, client: Client) -> int:
+    requested_filters = {
+        name: value
+        for name, value in {
+            "task": args.task,
+            "method": args.method,
+            "conference": args.conference,
+            "framework": args.framework,
+            "organization": args.organization,
+        }.items()
+        if value is not None
+    }
     payload = client.get(
         "papers/",
         {
@@ -462,6 +473,16 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
             "include_resources": args.include_resources,
         },
     ).json()
+    if requested_filters:
+        applied = payload.get("applied_filters")
+        if not isinstance(applied, dict) or any(
+            str(applied.get(name, "")).casefold() != str(value).casefold()
+            for name, value in requested_filters.items()
+        ):
+            raise ResponseError(
+                "Papers API did not confirm the requested catalog filters; "
+                "the server must be upgraded before using these flags"
+            )
     return _emit_page(payload, args, _paper_rows)
 
 

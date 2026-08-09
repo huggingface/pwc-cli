@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.11`" in skill
+    assert "Generated with `pwc v0.1.12`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -272,7 +272,13 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
 
         def get(self, path, params=None):
             calls.append((path, params))
-            return Response(b'{"count":0,"results":[]}', {})
+            return Response(
+                b'{"count":0,"results":[],"applied_filters":'
+                b'{"task":"Image Classification","method":"Vision Transformer",'
+                b'"conference":"CVPR 2026","framework":"vLLM",'
+                b'"organization":"Qwen"}}',
+                {},
+            )
 
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
 
@@ -317,6 +323,20 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
             },
         )
     ]
+
+
+def test_paper_list_rejects_server_that_does_not_confirm_filters(monkeypatch, capsys):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            return Response(b'{"count":20,"results":[]}', {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--organization", "Qwen"]) == 4
+    assert "server must be upgraded" in capsys.readouterr().err
 
 
 def test_benchmark_detail_parser_matches_requested_command_shape():
@@ -1525,7 +1545,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.11\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.12\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
