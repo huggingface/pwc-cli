@@ -134,11 +134,17 @@ than silently selecting a paper.
 
 1. Use `pwc benchmark list --task TASK` to discover active benchmarks for a given task,
    then `pwc benchmark --name NAME` to inspect a specific leaderboard.
-   Note that benchmarks are ranked based on relevance, so ALWAYS consider the rank of
-   the benchmarks for a given task as it gives high signal.
    For accuracy/latency or other multi-metric questions, use
    `--require-metrics`, thresholds, or `--pareto`; do not infer a tradeoff from
    a leaderboard sorted by one metric.
+2. Treat the row order from `pwc benchmark list --task TASK` as the primary
+   benchmark priority for an unqualified "best models for TASK" or SOTA request.
+   The order reflects support-weighted recent reporting activity. Inspect and lead
+   with the highest-ranked benchmark that has usable leaderboard results, and
+   preserve benchmark order when comparing several. Do not promote a familiar
+   lower-ranked benchmark merely because its name resembles the task. Deviate only
+   when the user's requested use case clearly favors a specialized benchmark, and
+   explain that reason explicitly.
 3. Use `pwc paper info` to inspect promising results. Add `--include-resources`
    when linked GitHub repositories, project pages, or Hugging Face artifacts matter.
    When the paper includes successors, always consider them more state-of-the-art.
