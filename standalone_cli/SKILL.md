@@ -134,24 +134,26 @@ than silently selecting a paper.
 
 1. Use `pwc benchmark list --task TASK` to discover active benchmarks for a given task,
    then `pwc benchmark --name NAME` to inspect a specific leaderboard.
+   Note that benchmarks are ranked based on relevance, so ALWAYS consider the rank of
+   the benchmarks for a given task as it gives high signal.
    For accuracy/latency or other multi-metric questions, use
    `--require-metrics`, thresholds, or `--pareto`; do not infer a tradeoff from
    a leaderboard sorted by one metric.
-2. Use `pwc paper info` to inspect promising results. Add `--include-resources`
+3. Use `pwc paper info` to inspect promising results. Add `--include-resources`
    when linked GitHub repositories, project pages, or Hugging Face artifacts matter.
    When the paper includes successors, always consider them more state-of-the-art.
-3. Use `pwc search` to search more broadly for a topic or a known paper.
+4. Use `pwc search` to search more broadly for a topic or a known paper.
    Use the default hybrid mode first; use keyword mode for exact terminology
    and semantic mode for conceptual matches.
-4. Go more in-depth with `pwc paper read`. Do not treat search snippets or
+5. Go more in-depth with `pwc paper read`. Do not treat search snippets or
    titles as sufficient support for detailed claims.
-5. Expand the literature with `pwc paper related` and use
+6. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-6. Explore the catalog taxonomy with `pwc task list --group-by-area`, inspect a
+7. Explore the catalog taxonomy with `pwc task list --group-by-area`, inspect a
    specific task with `pwc task --name NAME`, then use
    a method, conference, organization, or framework with its `--name` command;
    use each entity's `list` filters to narrow broad catalogs.
-7. Synthesize only after gathering enough primary evidence. Preserve paper
+8. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
 
 ## Command selection
