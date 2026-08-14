@@ -52,7 +52,9 @@ both grouped and flat output.
 `pwc task --name NAME` accepts an exact task name, slug, or ID and renders the
 task-page details in CLI form: area, description, hierarchy, research trends,
 recommended frameworks, sister tasks, subtasks, common methods, benchmarks,
-and trending papers. Add `--json` for the complete structured payload.
+and trending papers. Direct benchmarks follow the ranking returned by the
+task benchmark-trends API; the CLI does not calculate or re-sort trend scores.
+Add `--json` for the complete structured payload.
 
 Methods, conferences, organizations, and frameworks share the same detail
 shape as tasks: pass an exact name, slug, or ID to `--name`. Their `list`

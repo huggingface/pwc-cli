@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.12`" in skill
+    assert "Generated with `pwc v0.1.13`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -383,6 +383,7 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
                 "recent_paper_count": 4,
                 "all_time_paper_count": 5,
                 "trend_score": 1.3333,
+                "support_weighted_score": 3.8627,
                 "best_model_name": "Reader 2",
                 "best_paper_title": "Recent OCR Paper",
                 "best_code_url": "https://github.com/example/reader-2",
@@ -394,6 +395,7 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
                 "recent_paper_count": 1,
                 "all_time_paper_count": 20,
                 "trend_score": 0.3333,
+                "support_weighted_score": 0.5941,
                 "best_model_name": "Reader 1",
                 "best_paper_title": "Classic OCR Paper",
                 "best_code_url": None,
@@ -417,12 +419,12 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
     assert calls[0][1]["min_recent_papers"] == 0
     assert output.getvalue().splitlines() == [
-        "id\tslug\tname\trecent_papers\ttrend_score\tbest_model\tpaper_title\tcode",
+        "id\tslug\tname\trecent_papers\tranking_score\tbest_model\tpaper_title\tcode",
         (
-            "2\trecent-ocr\tRecent OCR\t4\t1.3333\tReader 2\tRecent OCR Paper"
+            "2\trecent-ocr\tRecent OCR\t4\t3.8627\tReader 2\tRecent OCR Paper"
             "\thttps://github.com/example/reader-2"
         ),
-        "1\tclassic-ocr\tClassic OCR\t1\t0.3333\tReader 1\tClassic OCR Paper\t",
+        "1\tclassic-ocr\tClassic OCR\t1\t0.5941\tReader 1\tClassic OCR Paper\t",
     ]
 
 
@@ -769,7 +771,14 @@ def test_task_detail_renders_task_page_sections(monkeypatch):
                 "name": "IIIT5K",
                 "paper_count": 12,
                 "best_model_name": "Model A",
-            }
+            },
+            {
+                "id": "32",
+                "slug": "svt",
+                "name": "SVT",
+                "paper_count": 4,
+                "best_model_name": "Model B",
+            },
         ],
         "subtask_benchmarks": [
             {
@@ -791,6 +800,23 @@ def test_task_detail_renders_task_page_sections(monkeypatch):
             }
         ],
     }
+    benchmark_trends = {
+        "support_prior_papers": 2.0,
+        "results": [
+            {
+                "id": "32",
+                "slug": "svt",
+                "name": "SVT",
+                "support_weighted_score": 2.5,
+            },
+            {
+                "id": "30",
+                "slug": "iiit5k",
+                "name": "IIIT5K",
+                "support_weighted_score": 1.25,
+            },
+        ],
+    }
     areas = {"count": 1, "results": [{"id": "1", "name": "Vision"}]}
 
     class Client:
@@ -802,6 +828,7 @@ def test_task_detail_renders_task_page_sections(monkeypatch):
             payloads = {
                 "tasks/": search,
                 "tasks/17/page": page,
+                "tasks/17/trending-benchmarks": benchmark_trends,
                 "tasks/17/papers": papers,
                 "areas/": areas,
             }
@@ -827,9 +854,15 @@ def test_task_detail_renders_task_page_sections(monkeypatch):
     assert "## Common methods (from 1 sampled papers)" in rendered
     assert "## Benchmarks by subtask" in rendered
     assert "## Trending papers (top 1 of 204)" in rendered
+    assert rendered.index("SVT") < rendered.index("IIIT5K")
+    assert "trend score: 2.50" in rendered
     assert calls == [
         ("tasks/", {"q": "scene-text-recognition", "page": 1, "page_size": 100}),
         ("tasks/17/page", None),
+        (
+            "tasks/17/trending-benchmarks",
+            {"limit": 100, "min_recent_papers": 0},
+        ),
         (
             "tasks/17/papers",
             {
@@ -860,7 +893,9 @@ def test_task_detail_json_has_stable_composed_payload(monkeypatch, capsys):
         "tasks/17/page": {
             "task": {"id": "17", "name": "Scene Text Recognition"},
             "recommended_frameworks": [],
+            "benchmarks": [],
         },
+        "tasks/17/trending-benchmarks": {"results": []},
         "tasks/17/papers": {"count": 0, "results": []},
         "tasks/17": {
             "id": "17",
@@ -1545,7 +1580,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.12\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.13\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

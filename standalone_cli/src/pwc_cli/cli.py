@@ -782,6 +782,40 @@ def _common_methods(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )[:8]
 
 
+def _api_ranked_benchmarks(
+    page_benchmarks: object,
+    trend_payload: object,
+) -> list[dict[str, Any]]:
+    if not isinstance(page_benchmarks, list):
+        raise ResponseError("task page API did not contain a benchmark list")
+    if not isinstance(trend_payload, dict) or not isinstance(
+        trend_payload.get("results"), list
+    ):
+        raise ResponseError(
+            "benchmark trends API returned an unexpected response shape"
+        )
+
+    benchmarks = [item for item in page_benchmarks if isinstance(item, dict)]
+    by_id = {str(item.get("id")): item for item in benchmarks}
+    ranked = []
+    ranked_ids = set()
+    for trend in trend_payload["results"]:
+        if not isinstance(trend, dict):
+            continue
+        benchmark_id = str(trend.get("id"))
+        benchmark = by_id.get(benchmark_id)
+        if benchmark is None:
+            continue
+        ranked.append({**benchmark, **trend})
+        ranked_ids.add(benchmark_id)
+    ranked.extend(
+        benchmark
+        for benchmark in benchmarks
+        if str(benchmark.get("id")) not in ranked_ids
+    )
+    return ranked
+
+
 def task_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("task inspection requires --name")
@@ -805,6 +839,11 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
     page = client.get(f"tasks/{quote(task_id, safe='')}/page").json()
     if not isinstance(page, dict) or not isinstance(page.get("task"), dict):
         raise ResponseError("task page API returned an unexpected response shape")
+    benchmark_trends = client.get(
+        f"tasks/{quote(task_id, safe='')}/trending-benchmarks",
+        {"limit": 100, "min_recent_papers": 0},
+    ).json()
+    benchmarks = _api_ranked_benchmarks(page.get("benchmarks"), benchmark_trends)
     papers_payload = client.get(
         f"tasks/{quote(task_id, safe='')}/papers",
         {
@@ -833,7 +872,7 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
         "sisters": page.get("sisters") or [],
         "recommended_frameworks": page.get("recommended_frameworks") or [],
         "children": page.get("children") or [],
-        "benchmarks": page.get("benchmarks") or [],
+        "benchmarks": benchmarks,
         "subtask_benchmarks": page.get("subtask_benchmarks") or [],
         "common_methods": _common_methods(papers),
         "paper_sample_size": len(papers),
@@ -950,6 +989,10 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
             details = []
             if benchmark.get("paper_count") is not None:
                 details.append(f"{int(benchmark['paper_count']):,} papers")
+            if benchmark.get("support_weighted_score") is not None:
+                details.append(
+                    f"trend score: {float(benchmark['support_weighted_score']):.2f}"
+                )
             if benchmark.get("best_model_name"):
                 details.append(f"best model: {benchmark['best_model_name']}")
             suffix = f" — {', '.join(details)}" if details else ""
@@ -1454,7 +1497,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     "slug",
                     "name",
                     "recent_papers",
-                    "trend_score",
+                    "ranking_score",
                     "best_model",
                     "paper_title",
                     "code",
@@ -1465,7 +1508,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                         item.get("slug"),
                         item.get("name"),
                         item.get("recent_paper_count"),
-                        item.get("trend_score"),
+                        item.get("support_weighted_score", item.get("trend_score")),
                         item.get("best_model_name"),
                         item.get("best_paper_title"),
                         item.get("best_code_url"),
