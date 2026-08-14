@@ -116,9 +116,10 @@ def _print_table(
     rows: list[tuple[object, ...]],
     *,
     right_align: tuple[int, ...] = (),
+    align_when_captured: bool = False,
 ) -> None:
     rendered = [list(headers)] + [[_clean(value) for value in row] for row in rows]
-    if not sys.stdout.isatty():
+    if not sys.stdout.isatty() and not align_when_captured:
         for row in rendered:
             print("\t".join(row))
         return
@@ -128,10 +129,10 @@ def _print_table(
     for row in rendered:
         cells = []
         for index, value in enumerate(row):
-            if index == len(row) - 1:
-                cells.append(value)
-            elif index in right:
+            if index in right:
                 cells.append(value.rjust(widths[index]))
+            elif index == len(row) - 1:
+                cells.append(value)
             else:
                 cells.append(value.ljust(widths[index]))
         print("  ".join(cells))
@@ -1515,7 +1516,8 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     )
                     for item in rows
                 ],
-                right_align=(3, 4),
+                right_align=(0, 3, 4),
+                align_when_captured=True,
             )
 
         return _emit_page(payload, args, render_trends)
@@ -1549,7 +1551,8 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                 )
                 for item in items
             ],
-            right_align=(3,),
+            right_align=(0, 3),
+            align_when_captured=True,
         )
 
     return _emit_page(payload, args, render)

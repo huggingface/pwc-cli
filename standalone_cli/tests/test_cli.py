@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.13`" in skill
+    assert "Generated with `pwc v0.1.14`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -369,7 +369,7 @@ def test_benchmark_detail_parser_matches_requested_command_shape():
     assert args.pareto == (("Resolved", "higher"), ("Latency", "lower"))
 
 
-def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
+def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatch):
     calls = []
     payload = {
         "task_id": "18",
@@ -419,12 +419,18 @@ def test_task_benchmark_list_uses_frontend_trending_order(monkeypatch):
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
     assert calls[0][1]["min_recent_papers"] == 0
     assert output.getvalue().splitlines() == [
-        "id\tslug\tname\trecent_papers\tranking_score\tbest_model\tpaper_title\tcode",
         (
-            "2\trecent-ocr\tRecent OCR\t4\t3.8627\tReader 2\tRecent OCR Paper"
-            "\thttps://github.com/example/reader-2"
+            "id  slug         name         recent_papers  ranking_score  "
+            "best_model  paper_title        code"
         ),
-        "1\tclassic-ocr\tClassic OCR\t1\t0.5941\tReader 1\tClassic OCR Paper\t",
+        (
+            " 2  recent-ocr   Recent OCR               4         3.8627  "
+            "Reader 2    Recent OCR Paper   https://github.com/example/reader-2"
+        ),
+        (
+            " 1  classic-ocr  Classic OCR              1         0.5941  "
+            "Reader 1    Classic OCR Paper  "
+        ),
     ]
 
 
@@ -460,10 +466,41 @@ def test_task_filter_takes_precedence_over_grouped_benchmark_display(
 
     captured = capsys.readouterr()
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
-    assert captured.out.startswith("id\tslug\tname\trecent_papers")
+    assert captured.out.startswith("id  slug        name")
     assert captured.err == (
         "# filters select task-scoped flat output; --group-by-area ignored\n"
     )
+
+
+def test_flat_benchmark_list_aligns_captured_column_widths(monkeypatch, capsys):
+    payload = {
+        "count": 2,
+        "results": [
+            {"id": "2", "name": "Short", "full_name": "S", "paper_count": 3},
+            {
+                "id": "10",
+                "name": "Longer Name",
+                "full_name": "Full benchmark name",
+                "paper_count": 12,
+            },
+        ],
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, _path, _params):
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert main(["benchmark", "list", "--flat"]) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        "id  name         full_name            evals",
+        " 2  Short        S                        3",
+        "10  Longer Name  Full benchmark name     12",
+    ]
 
 
 def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
@@ -1580,7 +1617,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.13\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.14\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

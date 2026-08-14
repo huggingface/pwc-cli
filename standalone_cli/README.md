@@ -40,7 +40,8 @@ piping. Task, search, pagination, ordering, and open-model filters take
 precedence over `--group-by-area` and select task-scoped flat output. Grouped
 benchmarks include their name, full name when distinct, slug, and ID.
 Task-scoped benchmark lists also include the slug and ID alongside the best
-model, paper, and code repository. Inspect one with
+model, paper, and code repository, using aligned columns even when output is
+captured by an agent or another process. Inspect one with
 `pwc benchmark --name IDENTIFIER`; either identifier is accepted. Benchmark
 details use an aligned table in a terminal and Markdown when piped or captured.
 Other list and search output uses aligned columns in a terminal and lossless

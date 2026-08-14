@@ -60,8 +60,9 @@ _WORKFLOW = """
 
 ## Output and limits
 
-- Interactive output is optimized for people; captured list output uses
-  lossless TSV. Add `--json` for structured agent or script consumption.
+- Interactive output is optimized for people. Benchmark lists remain aligned
+  when captured; other captured list output uses lossless TSV. Add `--json` for
+  structured agent or script consumption.
 - Stable exit codes are `0` success, `2` invalid usage, `3` network/server
   failure, and `4` invalid API response.
 - `PWC_API_URL` may select another compatible v1 endpoint. The default is
