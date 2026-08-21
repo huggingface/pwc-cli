@@ -35,7 +35,8 @@ than silently selecting a paper.
 ## Commands
 
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID. This is powered by hybrid/keyword/semantic search using pgvector. Defaults to hybrid.
-  `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic --json]`
+  `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic
+  --start-date YYYY-MM-DD --end-date YYYY-MM-DD --json]`
 - `pwc paper info PAPER` — Show metadata including tagged organizations, the
   abstract, predecessors, and successors.
   `--include-resources` adds Markdown sections for GitHub repositories, project pages,
@@ -47,12 +48,15 @@ than silently selecting a paper.
   have a modern arXiv record. `[--json]`
 - `pwc paper list` — List and filter the paper catalog in a paginated manner.
   `[--page 1-100 --page-size 1-100 --search TEXT
-  --published-after YYYY-MM-DD --published-before YYYY-MM-DD
+  --start-date YYYY-MM-DD --end-date YYYY-MM-DD
   --task NAME --method NAME --conference NAME --framework NAME
   --organization NAME --all-versions
   --order-by trending|date_published|citation_count
-  --order-dir asc|desc --time today|week|month|all_time
+  --order-dir asc|desc
   --include-resources --json]`
+
+Date ranges are inclusive. When both bounds are supplied, the start date must
+not be after the end date.
 - `pwc paper recent` — List recently published papers.
   `[--limit 1-100 --json]`
 - `pwc paper trending` — List papers with recent repository activity.

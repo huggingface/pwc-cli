@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.14`" in skill
+    assert "Generated with `pwc v0.1.15`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -93,6 +93,16 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     assert "`pwc framework list [--domain DOMAIN]" in skill
     assert "`pwc benchmark --name NAME" in skill
     assert "`pwc skills add" in skill
+    assert "Publication date ranges are inclusive" in skill
+    assert "must not be later than `--end-date`" in skill
+
+
+def test_published_skill_advertises_inclusive_date_ranges():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "--start-date YYYY-MM-DD --end-date YYYY-MM-DD" in skill
+    assert "--published-after" not in skill
+    assert "--time today|week|month|all_time" not in skill
 
 
 def test_skills_add_installs_project_skill(monkeypatch, tmp_path, capsys):
@@ -308,8 +318,8 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
                 "page": 1,
                 "page_size": 20,
                 "search": None,
-                "published_after": None,
-                "published_before": None,
+                "start_date": None,
+                "end_date": None,
                 "task": "Image Classification",
                 "method": "Vision Transformer",
                 "conference": "CVPR 2026",
@@ -318,11 +328,77 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
                 "latest_only": True,
                 "order_by": "trending",
                 "order_dir": "desc",
-                "time": "all_time",
                 "include_resources": False,
             },
         )
     ]
+
+
+def test_search_and_paper_list_forward_inclusive_date_ranges(monkeypatch):
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            return Response(
+                b'{"count":0,"results":[],"applied_filters":'
+                b'{"start_date":"2026-08-01","end_date":"2026-08-21"}}',
+                {},
+            )
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert (
+        main(
+            [
+                "search",
+                "date filtering",
+                "--start-date",
+                "2026-08-01",
+                "--end-date",
+                "2026-08-21",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "paper",
+                "list",
+                "--start-date",
+                "2026-08-01",
+                "--end-date",
+                "2026-08-21",
+            ]
+        )
+        == 0
+    )
+
+    assert calls[0][1]["start_date"].isoformat() == "2026-08-01"
+    assert calls[0][1]["end_date"].isoformat() == "2026-08-21"
+    assert calls[1][1]["start_date"].isoformat() == "2026-08-01"
+    assert calls[1][1]["end_date"].isoformat() == "2026-08-21"
+
+
+def test_date_range_rejects_an_end_before_its_start(capsys):
+    assert (
+        main(
+            [
+                "search",
+                "date filtering",
+                "--start-date",
+                "2026-08-21",
+                "--end-date",
+                "2026-08-01",
+            ]
+        )
+        == 2
+    )
+    assert "start date must be on or before end date" in capsys.readouterr().err
 
 
 def test_paper_list_rejects_server_that_does_not_confirm_filters(monkeypatch, capsys):
@@ -1617,7 +1693,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.14\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.15\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

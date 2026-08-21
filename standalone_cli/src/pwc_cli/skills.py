@@ -36,6 +36,10 @@ skill disagree; the parser is authoritative.
 Use compact output for reading and discovery. Add `--json` for programmatic
 filtering, joining, or schema-dependent processing.
 
+Publication date ranges are inclusive: use `--start-date YYYY-MM-DD` and
+`--end-date YYYY-MM-DD` with `pwc search` or `pwc paper list`; the start date
+must not be later than `--end-date`.
+
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
 exact paper title. Quote titles containing spaces. Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs.

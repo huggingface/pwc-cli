@@ -284,7 +284,17 @@ def _emit_page(
     return 0
 
 
+def _validate_date_range(args: argparse.Namespace) -> None:
+    if (
+        args.start_date is not None
+        and args.end_date is not None
+        and args.start_date > args.end_date
+    ):
+        raise UsageError("start date must be on or before end date")
+
+
 def search(args: argparse.Namespace, client: Client) -> int:
+    _validate_date_range(args)
     payload = client.get(
         "papers/search",
         {
@@ -292,6 +302,8 @@ def search(args: argparse.Namespace, client: Client) -> int:
             "page": args.page,
             "page_size": args.limit,
             "mode": args.mode,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
         },
     ).json()
     return _emit_page(payload, args, _paper_rows)
@@ -443,6 +455,7 @@ def paper_read(args: argparse.Namespace, client: Client) -> int:
 
 
 def paper_list(args: argparse.Namespace, client: Client) -> int:
+    _validate_date_range(args)
     requested_filters = {
         name: value
         for name, value in {
@@ -451,6 +464,12 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
             "conference": args.conference,
             "framework": args.framework,
             "organization": args.organization,
+            "start_date": args.start_date.isoformat()
+            if args.start_date is not None
+            else None,
+            "end_date": args.end_date.isoformat()
+            if args.end_date is not None
+            else None,
         }.items()
         if value is not None
     }
@@ -460,8 +479,8 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
             "page": args.page,
             "page_size": args.page_size,
             "search": args.search,
-            "published_after": args.published_after,
-            "published_before": args.published_before,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
             "task": args.task,
             "method": args.method,
             "conference": args.conference,
@@ -470,7 +489,6 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
             "latest_only": not args.all_versions,
             "order_by": args.order_by,
             "order_dir": args.order_dir,
-            "time": args.time,
             "include_resources": args.include_resources,
         },
     ).json()
@@ -2122,6 +2140,8 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--mode", choices=("hybrid", "keyword", "semantic"), default="hybrid"
     )
+    search_parser.add_argument("--start-date", type=date.fromisoformat)
+    search_parser.add_argument("--end-date", type=date.fromisoformat)
     _json(search_parser)
     search_parser.set_defaults(handler=search)
 
@@ -2149,8 +2169,8 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--page", type=_page, default=1)
     listing.add_argument("--page-size", type=_page_size, default=20)
     listing.add_argument("--search")
-    listing.add_argument("--published-after", type=date.fromisoformat)
-    listing.add_argument("--published-before", type=date.fromisoformat)
+    listing.add_argument("--start-date", type=date.fromisoformat)
+    listing.add_argument("--end-date", type=date.fromisoformat)
     listing.add_argument("--task", help="exact task name, slug, or ID")
     listing.add_argument("--method", help="exact method name, full name, slug, or ID")
     listing.add_argument("--conference")
@@ -2163,9 +2183,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="trending",
     )
     listing.add_argument("--order-dir", choices=("asc", "desc"), default="desc")
-    listing.add_argument(
-        "--time", choices=("today", "week", "month", "all_time"), default="all_time"
-    )
     listing.add_argument("--include-resources", action="store_true")
     _json(listing)
     listing.set_defaults(handler=paper_list)
