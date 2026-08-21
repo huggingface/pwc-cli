@@ -65,6 +65,8 @@ year, featured organizations, and framework domain, category, or platform.
 `--framework`, and `--organization` filters. Combine them to require every
 selected tag or catalog association. The CLI fails closed if the selected API
 does not confirm that it applied every requested catalog filter.
+Publication date ranges use inclusive `--start-date YYYY-MM-DD` and
+`--end-date YYYY-MM-DD` bounds; the start date cannot be later than the end date.
 
 Leaderboard inspection supports numeric multi-metric selection:
 
