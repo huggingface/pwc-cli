@@ -111,8 +111,9 @@ not be after the end date.
   `--group-by-area` forces Markdown and `--flat` forces the dataset table.
   Task, search, pagination, ordering, and open-model filters take precedence
   over `--group-by-area` and select task-scoped flat output.
-  Rows include the benchmark name, slug, and ID (plus the full name when
-  distinct in grouped output); pass the slug or ID to
+  Rows place the benchmark description and optional Hugging Face dataset URL
+  immediately after the benchmark name, followed by the slug and ID (plus the
+  full name when distinct in grouped output); pass the slug or ID to
   `pwc benchmark --name IDENTIFIER` for leaderboard details.
   `[--page 1-100 --page-size 1-100 --search TEXT --task TASK --area NAME_OR_ID
   --benchmarks-per-task 1-10 --group-by-area|--flat
@@ -165,6 +166,10 @@ not be after the end date.
    use each entity's `list` filters to narrow broad catalogs.
 8. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
+9. Task and benchmark lists paginate at 100 rows per page. When filtering a
+   list with `rg`, append `|| true` because no match is a valid result; inspect
+   the next page when stderr reports more results. Do not infer domain-specific
+   benchmarks from an unrelated global leaderboard.
 
 ## Command selection
 

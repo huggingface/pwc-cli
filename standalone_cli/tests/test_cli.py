@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.15`" in skill
+    assert "Generated with `pwc v0.1.16`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -456,6 +456,8 @@ def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatc
                 "id": "2",
                 "slug": "recent-ocr",
                 "name": "Recent OCR",
+                "description": "Recent OCR benchmark.",
+                "hf_url": "https://huggingface.co/datasets/example/recent-ocr",
                 "recent_paper_count": 4,
                 "all_time_paper_count": 5,
                 "trend_score": 1.3333,
@@ -468,6 +470,8 @@ def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatc
                 "id": "1",
                 "slug": "classic-ocr",
                 "name": "Classic OCR",
+                "description": None,
+                "hf_url": None,
                 "recent_paper_count": 1,
                 "all_time_paper_count": 20,
                 "trend_score": 0.3333,
@@ -494,20 +498,22 @@ def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatc
 
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
     assert calls[0][1]["min_recent_papers"] == 0
-    assert output.getvalue().splitlines() == [
-        (
-            "id  slug         name         recent_papers  ranking_score  "
-            "best_model  paper_title        code"
-        ),
-        (
-            " 2  recent-ocr   Recent OCR               4         3.8627  "
-            "Reader 2    Recent OCR Paper   https://github.com/example/reader-2"
-        ),
-        (
-            " 1  classic-ocr  Classic OCR              1         0.5941  "
-            "Reader 1    Classic OCR Paper  "
-        ),
+    rows = output.getvalue().splitlines()
+    assert rows[0].split() == [
+        "id",
+        "slug",
+        "name",
+        "description",
+        "hf_url",
+        "recent_papers",
+        "ranking_score",
+        "best_model",
+        "paper_title",
+        "code",
     ]
+    assert "Recent OCR benchmark." in rows[1]
+    assert "https://huggingface.co/datasets/example/recent-ocr" in rows[1]
+    assert "Classic OCR" in rows[2]
 
 
 def test_task_filter_takes_precedence_over_grouped_benchmark_display(
@@ -552,10 +558,19 @@ def test_flat_benchmark_list_aligns_captured_column_widths(monkeypatch, capsys):
     payload = {
         "count": 2,
         "results": [
-            {"id": "2", "name": "Short", "full_name": "S", "paper_count": 3},
+            {
+                "id": "2",
+                "name": "Short",
+                "description": "Short description",
+                "hf_url": None,
+                "full_name": "S",
+                "paper_count": 3,
+            },
             {
                 "id": "10",
                 "name": "Longer Name",
+                "description": "Longer benchmark description",
+                "hf_url": "https://huggingface.co/datasets/example/longer",
                 "full_name": "Full benchmark name",
                 "paper_count": 12,
             },
@@ -572,11 +587,18 @@ def test_flat_benchmark_list_aligns_captured_column_widths(monkeypatch, capsys):
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     assert main(["benchmark", "list", "--flat"]) == 0
 
-    assert capsys.readouterr().out.splitlines() == [
-        "id  name         full_name            evals",
-        " 2  Short        S                        3",
-        "10  Longer Name  Full benchmark name     12",
+    rows = capsys.readouterr().out.splitlines()
+    assert rows[0].split() == [
+        "id",
+        "name",
+        "description",
+        "hf_url",
+        "full_name",
+        "evals",
     ]
+    assert "Short description" in rows[1]
+    assert "Longer benchmark description" in rows[2]
+    assert "https://huggingface.co/datasets/example/longer" in rows[2]
 
 
 def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
@@ -598,6 +620,8 @@ def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
                                 "name": "ImageNet [1K]",
                                 "slug": "imagenet",
                                 "full_name": "ImageNet Large Scale Visual Recognition",
+                                "description": "Image classification benchmark.",
+                                "hf_url": "https://huggingface.co/datasets/imagenet-1k",
                                 "evaluation_count": 1234,
                                 "featured_rank": 1,
                             }
@@ -647,7 +671,8 @@ def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
         "\n"
         "## Image Classification (`image-classification`)\n"
         "\n"
-        "- ImageNet [1K] — full name: ImageNet Large Scale Visual Recognition; "
+        "- ImageNet [1K] — description: Image classification benchmark.; HF: "
+        "https://huggingface.co/datasets/imagenet-1k; full name: ImageNet Large Scale Visual Recognition; "
         "slug: `imagenet`; ID: `20`; 1,234 evaluations\n"
     )
 
@@ -1693,7 +1718,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.15\tapi v1\n"
+    assert output.getvalue() == "pwc 0.1.16\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):

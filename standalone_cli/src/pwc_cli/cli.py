@@ -1515,6 +1515,8 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     "id",
                     "slug",
                     "name",
+                    "description",
+                    "hf_url",
                     "recent_papers",
                     "ranking_score",
                     "best_model",
@@ -1526,6 +1528,8 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                         item.get("id"),
                         item.get("slug"),
                         item.get("name"),
+                        item.get("description"),
+                        item.get("hf_url"),
                         item.get("recent_paper_count"),
                         item.get("support_weighted_score", item.get("trend_score")),
                         item.get("best_model_name"),
@@ -1534,7 +1538,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     )
                     for item in rows
                 ],
-                right_align=(0, 3, 4),
+                right_align=(0, 5, 6),
                 align_when_captured=True,
             )
 
@@ -1559,17 +1563,19 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
 
     def render(items: list[dict[str, Any]]) -> None:
         _print_table(
-            ("id", "name", "full_name", "evals"),
+            ("id", "name", "description", "hf_url", "full_name", "evals"),
             [
                 (
                     item.get("id"),
                     item.get("name"),
+                    item.get("description"),
+                    item.get("hf_url"),
                     item.get("full_name"),
                     item.get("paper_count"),
                 )
                 for item in items
             ],
-            right_align=(0, 3),
+            right_align=(0, 5),
             align_when_captured=True,
         )
 
@@ -1639,6 +1645,12 @@ def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
                 slug = _clean(benchmark.get("slug"))
                 benchmark_id = _clean(benchmark.get("id"))
                 identifiers = []
+                description = _clean(benchmark.get("description"))
+                hf_url = _clean(benchmark.get("hf_url"))
+                if description:
+                    identifiers.append(f"description: {description}")
+                if hf_url:
+                    identifiers.append(f"HF: {hf_url}")
                 if full_name and full_name != name:
                     identifiers.append(f"full name: {full_name}")
                 if slug:
