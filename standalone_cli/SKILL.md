@@ -167,9 +167,10 @@ not be after the end date.
 8. Synthesize only after gathering enough primary evidence. Preserve paper
    titles, identifiers, and URLs in the answer so claims remain traceable.
 9. Task and benchmark lists paginate at 100 rows per page. When filtering a
-   list with `rg`, append `|| true` because no match is a valid result; inspect
-   the next page when stderr reports more results. Do not infer domain-specific
-   benchmarks from an unrelated global leaderboard.
+   list with `rg`, use `| { rg -i -- 'QUERY' || test $? -eq 1; }`: it permits
+   only `rg`'s no-match status while `pipefail` still reports a failed CLI
+   command. Inspect the next page when stderr reports more results. Do not infer
+   domain-specific benchmarks from an unrelated global leaderboard.
 
 ## Command selection
 
