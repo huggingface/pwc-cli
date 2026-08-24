@@ -23,12 +23,14 @@ pwc organization list --featured-only
 pwc framework --name "FRAMEWORK"
 pwc framework list --platform PLATFORM
 pwc benchmark list --task TASK
-pwc benchmark --name "BENCHMARK"
+pwc benchmark --name "BENCHMARK" [--is-open true|false] [--max-parameters SIZE]
 ```
 
 `PAPER` may be an arXiv ID, numeric external-paper ID, or quoted exact title.
 Titles are matched case-insensitively and ambiguous titles are rejected.
 
 Run `pwc COMMAND --help` or `pwc paper COMMAND --help` when a flag is unclear.
+`--max-parameters` is inclusive and accepts sizes such as `500M`, `1.5B`, and
+`3B`; constrained results exclude models without a consistent parameter count.
 The distributed client has no mutation, publication, authentication, network
 fetch, diagnostics, image, embedding, or maintenance commands.

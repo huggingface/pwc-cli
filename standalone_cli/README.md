@@ -74,12 +74,20 @@ Leaderboard inspection supports numeric multi-metric selection:
 pwc benchmark --name coco-val2017 --require-metrics mAP,FPS
 pwc benchmark --name coco-val2017 --min FPS=60 --sort mAP:desc
 pwc benchmark --name coco-val2017 --pareto mAP:higher,FPS:higher
+pwc benchmark --name wikitext-103 --is-open true --max-parameters 3B
 ```
 
 `--min` and `--max` are repeatable. Metric names are case-insensitive. Metric
 selection scans the bounded leaderboard before applying `--limit`; it fails
 explicitly rather than returning an incomplete selection if a leaderboard
 exceeds the 1,000-row scan ceiling.
+
+`--max-parameters SIZE` keeps models at or below an inclusive parameter limit.
+SIZE accepts case-insensitive decimal suffixes such as `500M`, `1.5B`, and
+`3B`, plus raw integers. Parameter-constrained results exclude models whose
+parameter count is unknown or inconsistent across metric rows and fail closed
+against APIs that cannot confirm support. Human-readable leaderboard output
+includes a Parameters column; JSON retains the exact `num_parameters` integer.
 
 `pipx install ./standalone_cli` is also supported. `PWC_API_URL` selects a
 compatible versioned API origin; it defaults to

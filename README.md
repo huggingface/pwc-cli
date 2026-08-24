@@ -175,6 +175,7 @@ pwc benchmark list --task OCR
 pwc benchmark list --task image-classification --include-descendants
 pwc benchmark list --min-eval-count 10 --order-by paper_count --order-dir desc
 pwc benchmark --name "SWE-Bench Pro"
+pwc benchmark --name wikitext-103 --is-open true --max-parameters 3B
 ```
 
 ## Command reference
@@ -205,7 +206,7 @@ of silently selecting one paper.
 | `pwc framework --name NAME` | Show details for an exact framework name, slug, or ID |
 | `pwc framework list` | List frameworks by domain, category, or platform |
 | `pwc benchmark list` | Group top benchmarks by area and task; support flat filters and task-trend ranking |
-| `pwc benchmark --name NAME` | Show a benchmark's top models, papers, scores, and publication dates |
+| `pwc benchmark --name NAME` | Show a benchmark's top models, parameter counts, papers, scores, and publication dates; optionally apply an inclusive model-size limit |
 | `pwc skills add` | Install the version-matched Skill for coding agents |
 | `pwc version` | Show the CLI and API contract versions |
 

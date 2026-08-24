@@ -8,6 +8,7 @@ import re
 import sys
 from collections.abc import Callable
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -20,6 +21,8 @@ Handler = Callable[[argparse.Namespace, Client], int]
 MAX_METRIC_SCAN_ROWS = 1_000
 MODERN_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$", re.IGNORECASE)
 LEGACY_ARXIV_ID = re.compile(r"^[a-z][a-z0-9.-]+/\d{7}(?:v\d+)?$", re.IGNORECASE)
+PARAMETER_SIZE = re.compile(r"^(\d(?:_?\d)*(?:\.\d(?:_?\d)*)?)([mb])?$", re.IGNORECASE)
+MAX_PARAMETER_LIMIT = 2**63 - 2
 
 
 class UsageError(ValueError):
@@ -63,6 +66,31 @@ def _metric_names(value: str) -> tuple[str, ...]:
     if not names:
         raise argparse.ArgumentTypeError("metric list must not be empty")
     return names
+
+
+def _parameter_size(value: str) -> int:
+    match = PARAMETER_SIZE.fullmatch(value.strip())
+    if not match or ("." in match.group(1) and not match.group(2)):
+        raise argparse.ArgumentTypeError(
+            "expected a positive integer or decimal size with M/B suffix"
+        )
+    multiplier = {None: 1, "m": 1_000_000, "b": 1_000_000_000}[
+        match.group(2).lower() if match.group(2) else None
+    ]
+    try:
+        parameter_count = Decimal(match.group(1).replace("_", "")) * multiplier
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError("parameter size must be numeric") from error
+    if parameter_count != parameter_count.to_integral_value():
+        raise argparse.ArgumentTypeError(
+            "parameter size must resolve to a whole number"
+        )
+    count = int(parameter_count)
+    if not 1 <= count <= MAX_PARAMETER_LIMIT:
+        raise argparse.ArgumentTypeError(
+            f"parameter size must be between 1 and {MAX_PARAMETER_LIMIT}"
+        )
+    return count
 
 
 def _metric_bound(value: str) -> tuple[str, float]:
@@ -1433,6 +1461,8 @@ def framework_list(args: argparse.Namespace, client: Client) -> int:
 
 
 def benchmark_list(args: argparse.Namespace, client: Client) -> int:
+    if getattr(args, "max_parameters", None) is not None:
+        raise UsageError("--max-parameters is only valid with benchmark --name")
     flat_filters = (
         args.task
         or args.search
@@ -1674,6 +1704,7 @@ def _benchmark_match(name: str, items: list[dict[str, Any]]) -> dict[str, Any] |
 
 def _merged_evaluations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[tuple[str, ...], dict[str, Any]] = {}
+    parameter_counts: dict[tuple[str, ...], set[int | None]] = {}
     for item in items:
         key = tuple(
             str(item.get(field) or "")
@@ -1685,6 +1716,13 @@ def _merged_evaluations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "harness",
             )
         )
+        count = item.get("num_parameters")
+        valid_count = (
+            count
+            if isinstance(count, int) and not isinstance(count, bool) and count > 0
+            else None
+        )
+        parameter_counts.setdefault(key, set()).add(valid_count)
         existing = merged.get(key)
         if existing is None:
             existing = {**item, "metrics": dict(item.get("metrics") or {})}
@@ -1699,6 +1737,9 @@ def _merged_evaluations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         existing["best_rank"] = min(ranks) if ranks else None
         if not existing.get("best_metric") and item.get("best_metric"):
             existing["best_metric"] = item["best_metric"]
+    for key, counts in parameter_counts.items():
+        parameter_count = next(iter(counts)) if len(counts) == 1 else None
+        merged[key]["num_parameters"] = parameter_count
     return sorted(
         merged.values(),
         key=lambda item: (
@@ -1734,6 +1775,22 @@ def _metric_summary(item: dict[str, Any]) -> str:
         ),
     )
     return ", ".join(f"{name}: {metrics[name]}" for name in names)
+
+
+def _parameter_summary(item: dict[str, Any]) -> str:
+    count = item.get("num_parameters")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        return "—"
+    for suffix, divisor in (("B", 1_000_000_000), ("M", 1_000_000)):
+        if count >= divisor:
+            value = Decimal(count) / divisor
+            rendered = (
+                format(value, ".0f")
+                if value == value.to_integral_value()
+                else format(value, "f").rstrip("0").rstrip(".")
+            )
+            return f"{rendered}{suffix}"
+    return f"{count:,}"
 
 
 def _paper_evaluations(client: Client, paper_id: object) -> dict[str, Any]:
@@ -1927,32 +1984,61 @@ def _benchmark_evaluations(
     benchmark_id: object,
     *,
     is_open: str | None,
+    max_parameters: int | None,
     scan_all: bool,
 ) -> tuple[list[dict[str, Any]], int]:
     evaluations = []
     page = 1
     total = 0
     while True:
-        payload = client.get(
-            f"datasets/{quote(str(benchmark_id), safe='')}/evaluations/",
-            {
+        if max_parameters is None:
+            path = f"datasets/{quote(str(benchmark_id), safe='')}/evaluations/"
+            params = {
                 "page": page,
                 "page_size": 100,
                 "ordering": "best_rank",
                 "is_open": is_open,
-            },
-        ).json()
+            }
+        else:
+            path = "evaluations/"
+            params = {
+                "page": page,
+                "page_size": 100,
+                "dataset_id": str(benchmark_id),
+                "ordering": "best_rank",
+                "is_open": is_open,
+                "max_parameters_exclusive": max_parameters + 1,
+            }
+        payload = client.get(path, params).json()
+        if max_parameters is not None and (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("parameter_coverage_known"), int)
+            or not isinstance(payload.get("parameter_coverage_total"), int)
+        ):
+            raise ResponseError(
+                "parameter filtering requires a compatible API; server must be upgraded"
+            )
         current, count = _rows(payload)
         evaluations.extend(current)
         total = count if count is not None else len(evaluations)
-        if not scan_all or len(evaluations) >= total:
+        next_page = payload.get("next_page") if isinstance(payload, dict) else None
+        if (
+            not scan_all
+            or (max_parameters is None and len(evaluations) >= total)
+            or (max_parameters is not None and next_page is None)
+        ):
             return evaluations, total
         if len(evaluations) >= MAX_METRIC_SCAN_ROWS:
             raise ResponseError(
                 f"metric selection requires scanning {total} evaluation rows; "
                 f"safety limit is {MAX_METRIC_SCAN_ROWS}"
             )
-        page += 1
+        if max_parameters is not None:
+            if not isinstance(next_page, int) or next_page <= page:
+                raise ResponseError("API returned invalid evaluation pagination")
+            page = next_page
+        else:
+            page += 1
 
 
 def _paper_markdown(item: dict[str, Any]) -> str:
@@ -2001,9 +2087,22 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
 
     scan_all = bool(_metric_requests(args))
     evaluations, total = _benchmark_evaluations(
-        client, benchmark["id"], is_open=args.is_open, scan_all=scan_all
+        client,
+        benchmark["id"],
+        is_open=args.is_open,
+        max_parameters=args.max_parameters,
+        scan_all=scan_all,
     )
     merged = _merged_evaluations(evaluations)
+    if args.max_parameters is not None and any(
+        isinstance(item.get("num_parameters"), bool)
+        or not isinstance(item.get("num_parameters"), int)
+        or item["num_parameters"] > args.max_parameters
+        for item in merged
+    ):
+        raise ResponseError(
+            "API returned a model outside the requested parameter limit"
+        )
     selected = _select_metric_rows(merged, args)
     rows = selected[: args.limit]
     data = {
@@ -2065,6 +2164,7 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
                 (
                     item.get("best_rank") or "—",
                     model,
+                    _parameter_summary(item),
                     _metric_summary(item),
                     item.get("task_name") or "—",
                     _paper_terminal(item),
@@ -2073,14 +2173,23 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
                 )
             )
         _print_table(
-            ("Rank", "Model", "Scores", "Task", "Paper", "Published", "Open"),
+            (
+                "Rank",
+                "Model",
+                "Parameters",
+                "Scores",
+                "Task",
+                "Paper",
+                "Published",
+                "Open",
+            ),
             table_rows,
             right_align=(0,),
         )
         return 0
 
-    print("| Rank | Model | Scores | Task | Paper | Published | Open |")
-    print("| ---: | --- | --- | --- | --- | --- | :---: |")
+    print("| Rank | Model | Parameters | Scores | Task | Paper | Published | Open |")
+    print("| ---: | --- | ---: | --- | --- | --- | --- | :---: |")
     for item in rows:
         model = item.get("model_name") or "—"
         if item.get("harness"):
@@ -2091,6 +2200,7 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
                 (
                     _markdown_text(item.get("best_rank")),
                     _markdown_text(model),
+                    _markdown_text(_parameter_summary(item)),
                     _markdown_text(_metric_summary(item)),
                     _markdown_text(item.get("task_name")),
                     _paper_markdown(item),
@@ -2344,6 +2454,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum leaderboard rows, 1-100 (default: 20)",
     )
     benchmark.add_argument("--is-open", choices=("true", "false"))
+    benchmark.add_argument(
+        "--max-parameters",
+        type=_parameter_size,
+        metavar="SIZE",
+        help="keep models with at most SIZE parameters (for example 500M or 3B)",
+    )
     benchmark.add_argument(
         "--require-metrics",
         type=_metric_names,

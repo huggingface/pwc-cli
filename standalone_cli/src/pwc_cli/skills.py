@@ -40,6 +40,11 @@ Publication date ranges are inclusive: use `--start-date YYYY-MM-DD` and
 `--end-date YYYY-MM-DD` with `pwc search` or `pwc paper list`; the start date
 must not be later than `--end-date`.
 
+Use `pwc benchmark --name NAME --max-parameters SIZE` to keep models at or
+below an inclusive parameter limit. SIZE accepts values such as `500M`, `1.5B`,
+`3B`, and raw integers. Models without one consistent parameter count are
+excluded from constrained results.
+
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
 exact paper title. Quote titles containing spaces. Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs.
@@ -49,7 +54,8 @@ _WORKFLOW = """
 ## Research workflow
 
 1. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
-   `pwc benchmark --name NAME` to inspect a leaderboard.
+   `pwc benchmark --name NAME` to inspect a leaderboard. Add
+   `--max-parameters SIZE` when model size is part of the request.
 2. Use `pwc paper info` to inspect promising results. Add
    `--include-resources` when repositories, project pages, or Hugging Face
    artifacts matter.
@@ -73,6 +79,8 @@ _WORKFLOW = """
   `https://paperswithcode.co/api/v1`.
 - Catalog-filtered paper lists fail closed unless the server confirms every
   requested filter; never treat results from an older server as filtered.
+- Parameter-filtered benchmark details fail closed unless the server confirms
+  parameter-filter support and every returned model satisfies the limit.
 
 The research commands contain no authentication, catalog mutation, ingestion,
 publication, image, embedding, CRON, or infrastructure-maintenance operations.
