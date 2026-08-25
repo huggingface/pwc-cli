@@ -20,6 +20,13 @@ class TransportError(RuntimeError):
     pass
 
 
+class HTTPStatusError(TransportError):
+    def __init__(self, status: int, detail: str):
+        super().__init__(f"API request failed ({status}): {detail}")
+        self.status = status
+        self.detail = detail
+
+
 class ResponseError(RuntimeError):
     pass
 
@@ -50,7 +57,8 @@ class Client:
                 key: str(value).lower() if isinstance(value, bool) else value
                 for key, value in (params or {}).items()
                 if value is not None
-            }
+            },
+            doseq=True,
         )
         url = f"{self.base_url}/{path.lstrip('/')}"
         if query:
@@ -76,8 +84,6 @@ class Client:
                 )
         except urllib.error.HTTPError as error:
             detail = error.read(4096).decode("utf-8", errors="replace")
-            raise TransportError(
-                f"API request failed ({error.code}): {detail}"
-            ) from error
+            raise HTTPStatusError(error.code, detail) from error
         except urllib.error.URLError as error:
             raise TransportError(f"API request failed: {error.reason}") from error

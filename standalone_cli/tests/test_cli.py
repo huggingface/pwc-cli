@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from pwc_cli.cli import build_parser, main  # noqa: E402
 from pwc_cli.skills import build_skill_md  # noqa: E402
-from pwc_cli.transport import Client, Response  # noqa: E402
+from pwc_cli.transport import Client, HTTPStatusError, Response  # noqa: E402
 
 INSTALLER_SPEC = importlib.util.spec_from_file_location(
     "pwc_cli_installer", ROOT / "install.py"
@@ -85,10 +85,12 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.2.0`" in skill
+    assert "Generated with `pwc v0.3.0`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
+    assert "[--author AUTHOR]" in skill
+    assert "When the user identifies an author" in skill
     assert "`pwc organization [--name NAME] [--json]`" in skill
     assert "`pwc framework list [--domain DOMAIN]" in skill
     assert "`pwc benchmark --name NAME" in skill
@@ -289,7 +291,9 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
                 b'{"count":0,"results":[],"applied_filters":'
                 b'{"task":"Image Classification","method":"Vision Transformer",'
                 b'"conference":"CVPR 2026","framework":"vLLM",'
-                b'"organization":"Qwen"}}',
+                b'"organization":"Qwen","authors":['
+                b'{"id":"264","name":"Kaiming He","hf_username":null},'
+                b'{"id":"26405","name":"Yilun Du","hf_username":"yilundu"}]}}',
                 {},
             )
 
@@ -310,6 +314,10 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
                 "vLLM",
                 "--organization",
                 "Qwen",
+                "--author",
+                "Kaiming He",
+                "--author",
+                "@yilundu",
             ]
         )
         == 0
@@ -328,6 +336,7 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
                 "conference": "CVPR 2026",
                 "framework": "vLLM",
                 "organization": "Qwen",
+                "author": ["Kaiming He", "@yilundu"],
                 "latest_only": True,
                 "order_by": "trending",
                 "order_dir": "desc",
@@ -335,6 +344,24 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
             },
         )
     ]
+
+
+def test_paper_list_rejects_more_than_ten_authors_before_request(monkeypatch, capsys):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            raise AssertionError("author limit must be checked before the request")
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    arguments = ["paper", "list"]
+    for author_id in range(1, 12):
+        arguments.extend(("--author", str(author_id)))
+
+    assert main(arguments) == 2
+    assert "at most 10 author filters" in capsys.readouterr().err.lower()
 
 
 def test_search_and_paper_list_forward_inclusive_date_ranges(monkeypatch):
@@ -416,6 +443,110 @@ def test_paper_list_rejects_server_that_does_not_confirm_filters(monkeypatch, ca
 
     assert main(["paper", "list", "--organization", "Qwen"]) == 4
     assert "server must be upgraded" in capsys.readouterr().err
+
+
+def test_paper_list_rejects_server_that_does_not_confirm_authors(monkeypatch, capsys):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            return Response(b'{"count":20,"results":[],"applied_filters":{}}', {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--author", "Kaiming He"]) == 4
+    assert "did not confirm" in capsys.readouterr().err
+
+
+def test_paper_list_rejects_partial_author_confirmation(monkeypatch, capsys):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            return Response(
+                b'{"count":0,"results":[],"applied_filters":{"authors":['
+                b'{"id":"264","name":"Kaiming He","hf_username":null}]}}',
+                {},
+            )
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert (
+        main(
+            [
+                "paper",
+                "list",
+                "--author",
+                "Kaiming He",
+                "--author",
+                "@yilundu",
+            ]
+        )
+        == 4
+    )
+    assert "did not confirm" in capsys.readouterr().err
+
+
+def test_paper_list_accepts_canonical_confirmation_for_zero_padded_id(
+    monkeypatch, capsys
+):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            return Response(
+                b'{"count":0,"results":[],"applied_filters":{"authors":['
+                b'{"id":"264","name":"Kaiming He","hf_username":null}]}}',
+                {},
+            )
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--author", "000264"]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_paper_list_reports_ambiguous_author_as_usage_error(monkeypatch, capsys):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            raise HTTPStatusError(
+                409,
+                json.dumps(
+                    {
+                        "detail": {
+                            "code": "ambiguous_author",
+                            "reference": "Alex Kim",
+                            "candidates": [
+                                {
+                                    "id": "41",
+                                    "name": "Alex Kim",
+                                    "hf_username": "alex-one",
+                                },
+                                {
+                                    "id": "72",
+                                    "name": "Alex Kim",
+                                    "hf_username": None,
+                                },
+                            ],
+                        }
+                    }
+                ),
+            )
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--author", "Alex Kim"]) == 2
+    error = capsys.readouterr().err
+    assert "Alex Kim is ambiguous" in error
+    assert "--author 41" in error
+    assert "@alex-one" in error
+    assert "--author 72" in error
 
 
 def test_benchmark_detail_parser_matches_requested_command_shape():
@@ -2124,7 +2255,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.2.0\tapi v1\n"
+    assert output.getvalue() == "pwc 0.3.0\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -2725,3 +2856,30 @@ def test_transport_is_anonymous_by_default(monkeypatch):
     assert response.body == b"# Public paper\n"
     assert requests[0].full_url.endswith("/api/v1/research/papers/2501.01234/read")
     assert requests[0].get_header("Authorization") is None
+
+
+def test_transport_encodes_repeated_query_parameters(monkeypatch):
+    requests = []
+
+    class HTTPResponse(io.BytesIO):
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(request, *, timeout):
+        requests.append(request)
+        return HTTPResponse(b'{"count":0,"results":[]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    Client("https://example.test/api/v1").get(
+        "papers/", {"author": ["Kaiming He", "@yilundu"]}
+    )
+
+    assert requests[0].full_url.endswith(
+        "/api/v1/papers/?author=Kaiming+He&author=%40yilundu"
+    )

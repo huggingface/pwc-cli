@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from pwc_cli import API_CONTRACT_VERSION, __version__
 from pwc_cli.skills import SkillInstallError, skills_add
-from pwc_cli.transport import Client, ResponseError, TransportError
+from pwc_cli.transport import Client, HTTPStatusError, ResponseError, TransportError
 
 Handler = Callable[[argparse.Namespace, Client], int]
 MAX_METRIC_SCAN_ROWS = 1_000
@@ -534,6 +534,8 @@ def paper_read(args: argparse.Namespace, client: Client) -> int:
 
 def paper_list(args: argparse.Namespace, client: Client) -> int:
     _validate_date_range(args)
+    if len(args.author) > 10:
+        raise UsageError("at most 10 author filters are allowed")
     requested_filters = {
         name: value
         for name, value in {
@@ -565,6 +567,7 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
         "conference": args.conference,
         "framework": args.framework,
         "organization": args.organization,
+        "author": args.author or None,
         "latest_only": not args.all_versions,
         "order_by": args.order_by,
         "order_dir": args.order_dir,
@@ -572,7 +575,12 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
     }
     if args.has_official_implementation:
         params["has_official_implementation"] = True
-    payload = client.get("papers/", params).json()
+    try:
+        payload = client.get("papers/", params).json()
+    except HTTPStatusError as error:
+        if args.author and error.status in {404, 409, 422}:
+            raise UsageError(_author_filter_error_message(error)) from error
+        raise
     if requested_filters:
         applied = payload.get("applied_filters")
         if not isinstance(applied, dict) or any(
@@ -583,7 +591,67 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
                 "Papers API did not confirm the requested catalog filters; "
                 "the server must be upgraded before using these flags"
             )
+    if args.author:
+        applied_authors = (payload.get("applied_filters") or {}).get("authors")
+        if not _authors_confirmed(args.author, applied_authors):
+            raise ResponseError(
+                "Papers API did not confirm the requested author filters; "
+                "the server must be upgraded before using --author"
+            )
     return _emit_paper_page(payload, args)
+
+
+def _authors_confirmed(requested: list[str], applied: object) -> bool:
+    if not isinstance(applied, list) or not applied:
+        return False
+    if any(
+        not isinstance(author, dict)
+        or not str(author.get("id", "")).isdigit()
+        or not str(author.get("name", "")).strip()
+        for author in applied
+    ):
+        return False
+
+    def matches(reference: str, author: dict) -> bool:
+        value = reference.strip()
+        if value.isdigit():
+            return int(value) == int(author["id"])
+        if value.startswith("@"):
+            return value[1:].strip().casefold() == str(
+                author.get("hf_username") or ""
+            ).casefold()
+        return " ".join(value.split()).casefold() == " ".join(
+            str(author["name"]).split()
+        ).casefold()
+
+    return all(
+        any(matches(reference, author) for author in applied)
+        for reference in requested
+    )
+
+
+def _author_filter_error_message(error: HTTPStatusError) -> str:
+    try:
+        payload = json.loads(error.detail)
+    except json.JSONDecodeError:
+        return f"author filter request failed ({error.status})"
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, str):
+        return detail
+    if not isinstance(detail, dict) or detail.get("code") != "ambiguous_author":
+        return f"author filter request failed ({error.status})"
+
+    reference = str(detail.get("reference") or "Author")
+    choices = []
+    for candidate in detail.get("candidates") or []:
+        if not isinstance(candidate, dict) or not str(candidate.get("id", "")).isdigit():
+            continue
+        metadata = [str(candidate.get("name") or reference)]
+        if candidate.get("hf_username"):
+            metadata.append(f"@{candidate['hf_username']}")
+        choices.append(f"--author {candidate['id']} ({', '.join(metadata)})")
+    suffix = f"; retry with {' or '.join(choices)}" if choices else ""
+    return f"{reference} is ambiguous{suffix}"
 
 
 def paper_recent(args: argparse.Namespace, client: Client) -> int:
@@ -2363,6 +2431,12 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--conference")
     listing.add_argument("--framework", help="exact framework name, slug, or ID")
     listing.add_argument("--organization", help="exact organization name, slug, or ID")
+    listing.add_argument(
+        "--author",
+        action="append",
+        default=[],
+        help="exact author name, numeric ID, or @HF username; repeatable (AND)",
+    )
     listing.add_argument("--all-versions", action="store_true")
     listing.add_argument(
         "--order-by",

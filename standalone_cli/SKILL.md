@@ -51,7 +51,7 @@ than silently selecting a paper.
   `[--page 1-100 --page-size 1-100 --search TEXT
   --start-date YYYY-MM-DD --end-date YYYY-MM-DD
   --task NAME --method NAME --conference NAME --framework NAME
-  --organization NAME --all-versions
+  --organization NAME --author AUTHOR --all-versions
   --order-by trending|date_published|citation_count
   --order-dir asc|desc
   --include-resources --has-official-implementation
@@ -186,10 +186,14 @@ not be after the end date.
 - If the task is not supported by PwC, use `pwc search` for relevance-ranked discovery.
 - Use `pwc paper info` to gather more info about a specific paper.
 - Use `pwc paper list` for structured filters, date windows, conferences, and
-  deterministic sorting. Use exact `--task`, `--method`, `--conference`,
-  `--framework`, or `--organization` filters for tagged or catalog-associated
-  papers; combine filters to require every association. Do not substitute a
-  keyword search for an organization or taxonomy filter.
+  deterministic sorting. When the user identifies an author, prefer repeatable
+  exact `--author` filters; add `--search` for stated title or abstract terms,
+  and explicit date ordering for newest work. Author references accept a
+  normalized exact name, numeric ID, or `@HF_USERNAME`; repeats use AND
+  semantics. Use exact `--task`, `--method`, `--conference`, `--framework`, or
+  `--organization` filters for tagged or catalog-associated papers; combine
+  filters to require every association. Do not substitute a keyword search for
+  an organization, author, or taxonomy filter.
 - Use `pwc paper recent` for recency and `pwc paper trending` for current
   repository activity; these are different signals.
 - Use area names directly with task and method lists, for example

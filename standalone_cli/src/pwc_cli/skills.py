@@ -36,6 +36,12 @@ skill disagree; the parser is authoritative.
 Use compact output for reading and discovery. Add `--json` for programmatic
 filtering, joining, or schema-dependent processing.
 
+When the user identifies an author, prefer repeatable structured
+`pwc paper list --author AUTHOR` filters. Add `--search TEXT` for stated topic
+terms and explicit `--order-by date_published --order-dir desc` for newest or
+recent work. Author references accept an exact normalized name, numeric ID, or
+`@HF_USERNAME`; repeated authors use AND semantics.
+
 Publication date ranges are inclusive: use `--start-date YYYY-MM-DD` and
 `--end-date YYYY-MM-DD` with `pwc search` or `pwc paper list`; the start date
 must not be later than `--end-date`.
@@ -65,9 +71,10 @@ _WORKFLOW = """
 2. Use `pwc paper info` to inspect promising results. Add
    `--include-resources` when repositories, project pages, or Hugging Face
    artifacts matter.
-3. Use exact `pwc paper list --task`, `--method`, `--conference`, `--framework`,
-   and `--organization` filters for tagged or catalog-associated papers. Combine
-   them to require every association; do not substitute a keyword search.
+3. Use exact `pwc paper list --author`, `--task`, `--method`, `--conference`,
+   `--framework`, and `--organization` filters for known identities or catalog
+   associations. Combine them to require every association; do not substitute
+   a keyword search. Add `--search` for title or abstract topic terms.
 4. Use `pwc search` for broader discovery, then `pwc paper read` for primary
    evidence.
 5. Expand the literature with `pwc paper related` and use

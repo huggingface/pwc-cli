@@ -70,11 +70,20 @@ shape as tasks: pass an exact name, slug, or ID to `--name`. Their `list`
 subcommands retain entity-specific filters such as method area, conference
 year, featured organizations, and framework domain, category, or platform.
 `pwc paper list` accepts exact `--task`, `--method`, `--conference`,
-`--framework`, and `--organization` filters. Combine them to require every
-selected tag or catalog association. The CLI fails closed if the selected API
-does not confirm that it applied every requested catalog filter.
+`--framework`, and `--organization` filters. Repeat `--author` with exact
+normalized names, numeric IDs, or `@HF_USERNAME` references to require every
+listed co-author. Combine these filters to require every selected identity,
+tag, or catalog association. The CLI fails closed if the selected API does not
+confirm that it applied every requested catalog filter.
 Publication date ranges use inclusive `--start-date YYYY-MM-DD` and
 `--end-date YYYY-MM-DD` bounds; the start date cannot be later than the end date.
+
+For example, find an author's papers on a stated topic in newest-first order:
+
+```bash
+pwc paper list --author "Kaiming He" --search drift \
+  --order-by date_published --order-dir desc
+```
 
 Leaderboard inspection supports numeric multi-metric selection:
 
