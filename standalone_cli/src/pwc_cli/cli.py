@@ -274,19 +274,34 @@ def _resolve_paper(reference: str, client: Client) -> str:
     raise ResponseError(f"Paper title not found: {_clean(candidate)}{suffix}")
 
 
-def _paper_rows(items: list[dict[str, Any]]) -> None:
+def _paper_rows(
+    items: list[dict[str, Any]], *, include_implementation_coverage: bool = False
+) -> None:
     rows = []
     for item in items:
         published = _clean(item.get("published") or item.get("date_published"))
-        rows.append(
-            (
-                _paper_id(item),
-                item.get("title"),
-                published[:4],
-                item.get("citation_count"),
+        row = [
+            _paper_id(item),
+            item.get("title"),
+            published[:4],
+            item.get("citation_count"),
+        ]
+        if include_implementation_coverage:
+            row.extend(
+                (
+                    "true"
+                    if item.get("has_official_implementation") is True
+                    else "false",
+                    item.get("code_repository_count"),
+                )
             )
-        )
-    _print_table(("id", "title", "year", "citations"), rows, right_align=(2, 3))
+        rows.append(tuple(row))
+    headers = ["id", "title", "year", "citations"]
+    right_align = [2, 3]
+    if include_implementation_coverage:
+        headers.extend(("official_implementation", "code_repositories"))
+        right_align.append(5)
+    _print_table(tuple(headers), rows, right_align=tuple(right_align))
 
 
 def _emit_page(
@@ -312,6 +327,32 @@ def _emit_page(
     return 0
 
 
+def _emit_paper_page(payload: Any, args: argparse.Namespace) -> int:
+    return _emit_page(
+        payload,
+        args,
+        lambda items: _paper_rows(
+            items,
+            include_implementation_coverage=args.implementation_coverage,
+        ),
+    )
+
+
+def _require_official_implementation_filter(
+    payload: Any, args: argparse.Namespace
+) -> None:
+    if not getattr(args, "has_official_implementation", False):
+        return
+    applied = payload.get("applied_filters") if isinstance(payload, dict) else None
+    if not isinstance(applied, dict) or applied.get(
+        "has_official_implementation"
+    ) not in ("true", True):
+        raise ResponseError(
+            "Papers API did not confirm has_official_implementation; "
+            "refusing unfiltered results"
+        )
+
+
 def _validate_date_range(args: argparse.Namespace) -> None:
     if (
         args.start_date is not None
@@ -323,18 +364,22 @@ def _validate_date_range(args: argparse.Namespace) -> None:
 
 def search(args: argparse.Namespace, client: Client) -> int:
     _validate_date_range(args)
+    params = {
+        "q": args.query,
+        "page": args.page,
+        "page_size": args.limit,
+        "mode": args.mode,
+        "start_date": args.start_date,
+        "end_date": args.end_date,
+    }
+    if args.has_official_implementation:
+        params["has_official_implementation"] = True
     payload = client.get(
         "papers/search",
-        {
-            "q": args.query,
-            "page": args.page,
-            "page_size": args.limit,
-            "mode": args.mode,
-            "start_date": args.start_date,
-            "end_date": args.end_date,
-        },
+        params,
     ).json()
-    return _emit_page(payload, args, _paper_rows)
+    _require_official_implementation_filter(payload, args)
+    return _emit_paper_page(payload, args)
 
 
 def paper_info(args: argparse.Namespace, client: Client) -> int:
@@ -371,6 +416,11 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
         ("organizations", organizations),
         ("conference", payload.get("conference_name") or payload.get("conference")),
         ("citations", payload.get("citation_count")),
+        (
+            "official_implementation",
+            "true" if payload.get("has_official_implementation") is True else "false",
+        ),
+        ("code_repositories", payload.get("code_repository_count")),
         ("url", payload.get("url_abs") or payload.get("source_url")),
     )
     for label, value in fields:
@@ -498,28 +548,31 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
             "end_date": args.end_date.isoformat()
             if args.end_date is not None
             else None,
+            "has_official_implementation": "true"
+            if args.has_official_implementation
+            else None,
         }.items()
         if value is not None
     }
-    payload = client.get(
-        "papers/",
-        {
-            "page": args.page,
-            "page_size": args.page_size,
-            "search": args.search,
-            "start_date": args.start_date,
-            "end_date": args.end_date,
-            "task": args.task,
-            "method": args.method,
-            "conference": args.conference,
-            "framework": args.framework,
-            "organization": args.organization,
-            "latest_only": not args.all_versions,
-            "order_by": args.order_by,
-            "order_dir": args.order_dir,
-            "include_resources": args.include_resources,
-        },
-    ).json()
+    params = {
+        "page": args.page,
+        "page_size": args.page_size,
+        "search": args.search,
+        "start_date": args.start_date,
+        "end_date": args.end_date,
+        "task": args.task,
+        "method": args.method,
+        "conference": args.conference,
+        "framework": args.framework,
+        "organization": args.organization,
+        "latest_only": not args.all_versions,
+        "order_by": args.order_by,
+        "order_dir": args.order_dir,
+        "include_resources": args.include_resources,
+    }
+    if args.has_official_implementation:
+        params["has_official_implementation"] = True
+    payload = client.get("papers/", params).json()
     if requested_filters:
         applied = payload.get("applied_filters")
         if not isinstance(applied, dict) or any(
@@ -530,17 +583,17 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
                 "Papers API did not confirm the requested catalog filters; "
                 "the server must be upgraded before using these flags"
             )
-    return _emit_page(payload, args, _paper_rows)
+    return _emit_paper_page(payload, args)
 
 
 def paper_recent(args: argparse.Namespace, client: Client) -> int:
-    return _emit_page(
-        client.get("papers/recent", {"limit": args.limit}).json(), args, _paper_rows
+    return _emit_paper_page(
+        client.get("papers/recent", {"limit": args.limit}).json(), args
     )
 
 
 def paper_trending(args: argparse.Namespace, client: Client) -> int:
-    return _emit_page(
+    return _emit_paper_page(
         client.get(
             "papers/trending",
             {
@@ -550,16 +603,14 @@ def paper_trending(args: argparse.Namespace, client: Client) -> int:
             },
         ).json(),
         args,
-        _paper_rows,
     )
 
 
 def paper_related(args: argparse.Namespace, client: Client) -> int:
     paper = _resolve_paper(args.paper, client)
-    return _emit_page(
+    return _emit_paper_page(
         client.get(f"papers/{paper}/related", {"limit": args.limit}).json(),
         args,
-        _paper_rows,
     )
 
 
@@ -2224,6 +2275,14 @@ def _json(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _implementation_coverage(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--implementation-coverage",
+        action="store_true",
+        help="add official-implementation status and repository count columns",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = Parser(
         prog="pwc",
@@ -2264,6 +2323,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search_parser.add_argument("--start-date", type=date.fromisoformat)
     search_parser.add_argument("--end-date", type=date.fromisoformat)
+    search_parser.add_argument(
+        "--has-official-implementation",
+        action="store_true",
+        help="only return papers with a catalog-linked official code repository",
+    )
+    _implementation_coverage(search_parser)
     _json(search_parser)
     search_parser.set_defaults(handler=search)
 
@@ -2306,6 +2371,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     listing.add_argument("--order-dir", choices=("asc", "desc"), default="desc")
     listing.add_argument("--include-resources", action="store_true")
+    listing.add_argument(
+        "--has-official-implementation",
+        action="store_true",
+        help="only return papers with a catalog-linked official code repository",
+    )
+    _implementation_coverage(listing)
     _json(listing)
     listing.set_defaults(handler=paper_list)
     for name, handler, default_limit, maximum in (
@@ -2321,6 +2392,7 @@ def build_parser() -> argparse.ArgumentParser:
                 default=180,
             )
             leaf.add_argument("--min-velocity", type=float)
+        _implementation_coverage(leaf)
         _json(leaf)
         leaf.set_defaults(handler=handler)
     related = paper_commands.add_parser("related", help="list related papers")
@@ -2328,6 +2400,7 @@ def build_parser() -> argparse.ArgumentParser:
         "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
     )
     related.add_argument("--limit", type=_limit(20), default=4)
+    _implementation_coverage(related)
     _json(related)
     related.set_defaults(handler=paper_related)
     lineage = paper_commands.add_parser("lineage", help="inspect paper lineage")

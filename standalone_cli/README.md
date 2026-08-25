@@ -47,6 +47,14 @@ details use an aligned table in a terminal and Markdown when piped or captured.
 Other list and search output uses aligned columns in a terminal and lossless
 TSV when captured.
 
+Paper discovery commands accept `--implementation-coverage` to add
+`official_implementation` and `code_repositories` columns. JSON and
+`pwc paper info` always include those fields. The boolean reports whether the
+catalog links an official repository to any version of the paper; `false` does
+not prove that no official code exists elsewhere. `pwc search` and
+`pwc paper list` accept `--has-official-implementation` and fail closed unless
+the API confirms the filter.
+
 Task lists report each task's direct paper, benchmark, and evaluation counts in
 both grouped and flat output.
 

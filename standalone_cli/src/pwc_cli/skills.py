@@ -40,6 +40,12 @@ Publication date ranges are inclusive: use `--start-date YYYY-MM-DD` and
 `--end-date YYYY-MM-DD` with `pwc search` or `pwc paper list`; the start date
 must not be later than `--end-date`.
 
+Paper discovery commands accept `--implementation-coverage` to add official
+implementation status and total linked repository count columns. JSON and
+`pwc paper info` always include both fields. Use
+`--has-official-implementation` with `pwc search` or `pwc paper list` to require
+a catalog-linked official repository; these filters fail closed if unconfirmed.
+
 Use `pwc benchmark --name NAME --max-parameters SIZE` to keep models at or
 below an inclusive parameter limit. SIZE accepts values such as `500M`, `1.5B`,
 `3B`, and raw integers. Models without one consistent parameter count are

@@ -114,6 +114,7 @@ Search the paper catalog:
 pwc search "retrieval augmented generation"
 pwc search "vision transformers" --mode semantic --limit 20
 pwc search "attention" --page 2 --limit 10
+pwc search "attention" --has-official-implementation
 ```
 
 Inspect or read a paper:
@@ -130,6 +131,7 @@ Discover papers:
 
 ```bash
 pwc paper recent --limit 10
+pwc paper recent --implementation-coverage
 pwc paper trending --limit 20 --max-age-days 90
 pwc paper related 1706.03762 --limit 4
 pwc paper lineage list 1706.03762
@@ -144,6 +146,7 @@ pwc paper list --task "Image Classification" --method Transformer
 pwc paper list --conference "CVPR 2026" --framework PyTorch
 pwc paper list --search "diffusion" --start-date 2025-01-01 --end-date 2025-01-31
 pwc paper list --order-by citation_count --order-dir desc
+pwc paper list --has-official-implementation --implementation-coverage
 ```
 
 Explore the research taxonomy and conferences:
@@ -222,6 +225,11 @@ captured output; use `--json` for machine-readable benchmark rows. Other list
 and search commands use aligned columns in a terminal and lossless TSV when
 captured. Benchmark details use an aligned table in a terminal and Markdown
 when piped or captured. Other detail commands use labeled metadata or Markdown.
+Paper discovery commands accept `--implementation-coverage` to add official-code
+status and the total linked repository count; JSON and `pwc paper info` always
+include them. A false official-code status only means the catalog has no linked
+official repository. Search and paper-list filters using
+`--has-official-implementation` fail closed unless the API confirms the filter.
 Add `--json` to any data command for machine-readable output:
 
 ```bash

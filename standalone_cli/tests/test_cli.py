@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.1.17`" in skill
+    assert "Generated with `pwc v0.2.0`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -454,15 +454,24 @@ def test_benchmark_detail_parser_matches_requested_command_shape():
 def test_benchmark_detail_parser_accepts_human_parameter_sizes():
     parser = build_parser()
 
-    assert parser.parse_args(
-        ["benchmark", "--name", "LM", "--max-parameters", "500m"]
-    ).max_parameters == 500_000_000
-    assert parser.parse_args(
-        ["benchmark", "--name", "LM", "--max-parameters", "1.5B"]
-    ).max_parameters == 1_500_000_000
-    assert parser.parse_args(
-        ["benchmark", "--name", "LM", "--max-parameters", "3_000_000_000"]
-    ).max_parameters == 3_000_000_000
+    assert (
+        parser.parse_args(
+            ["benchmark", "--name", "LM", "--max-parameters", "500m"]
+        ).max_parameters
+        == 500_000_000
+    )
+    assert (
+        parser.parse_args(
+            ["benchmark", "--name", "LM", "--max-parameters", "1.5B"]
+        ).max_parameters
+        == 1_500_000_000
+    )
+    assert (
+        parser.parse_args(
+            ["benchmark", "--name", "LM", "--max-parameters", "3_000_000_000"]
+        ).max_parameters
+        == 3_000_000_000
+    )
 
     for invalid in (
         "0",
@@ -1632,9 +1641,7 @@ def test_benchmark_detail_renders_aligned_table_in_terminal(monkeypatch):
 def _parameter_filter_client(monkeypatch, evaluations_payload):
     benchmark_payload = {
         "count": 1,
-        "results": [
-            {"id": "42", "name": "Language Model Benchmark", "slug": "lmb"}
-        ],
+        "results": [{"id": "42", "name": "Language Model Benchmark", "slug": "lmb"}],
     }
     calls = []
 
@@ -1675,18 +1682,21 @@ def test_benchmark_detail_filters_by_inclusive_max_parameters(monkeypatch, capsy
     }
     calls = _parameter_filter_client(monkeypatch, evaluations_payload)
 
-    assert main(
-        [
-            "benchmark",
-            "--name",
-            "Language Model Benchmark",
-            "--is-open",
-            "true",
-            "--max-parameters",
-            "3B",
-            "--json",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--is-open",
+                "true",
+                "--max-parameters",
+                "3B",
+                "--json",
+            ]
+        )
+        == 0
+    )
 
     assert calls[1] == (
         "evaluations/",
@@ -1704,15 +1714,18 @@ def test_benchmark_detail_filters_by_inclusive_max_parameters(monkeypatch, capsy
     assert result["data"]["results"][0]["model_name"] == "Edge 3B"
     assert result["data"]["results"][0]["num_parameters"] == 3_000_000_000
 
-    assert main(
-        [
-            "benchmark",
-            "--name",
-            "Language Model Benchmark",
-            "--max-parameters",
-            "3B",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--max-parameters",
+                "3B",
+            ]
+        )
+        == 0
+    )
     rendered = capsys.readouterr().out
     assert "| Rank | Model | Parameters | Scores |" in rendered
     assert "| 4 | Edge 3B | 3B | Perplexity: 12.5 |" in rendered
@@ -1724,9 +1737,18 @@ def test_benchmark_detail_parameter_filter_fails_closed_without_api_support(
     unsupported_payload = {"count": 0, "results": []}
     _parameter_filter_client(monkeypatch, unsupported_payload)
 
-    assert main(
-        ["benchmark", "--name", "Language Model Benchmark", "--max-parameters", "3B"]
-    ) == 4
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--max-parameters",
+                "3B",
+            ]
+        )
+        == 4
+    )
     assert capsys.readouterr().err == (
         "pwc: parameter filtering requires a compatible API; server must be upgraded\n"
     )
@@ -1753,9 +1775,18 @@ def test_benchmark_detail_parameter_filter_rejects_out_of_bound_response(
 
     _parameter_filter_client(monkeypatch, invalid_payload)
 
-    assert main(
-        ["benchmark", "--name", "Language Model Benchmark", "--max-parameters", "3B"]
-    ) == 4
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--max-parameters",
+                "3B",
+            ]
+        )
+        == 4
+    )
     assert capsys.readouterr().err == (
         "pwc: API returned a model outside the requested parameter limit\n"
     )
@@ -1790,9 +1821,18 @@ def test_benchmark_detail_parameter_filter_rejects_conflicting_sibling_counts(
 
     _parameter_filter_client(monkeypatch, invalid_payload)
 
-    assert main(
-        ["benchmark", "--name", "Language Model Benchmark", "--max-parameters", "3B"]
-    ) == 4
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--max-parameters",
+                "3B",
+            ]
+        )
+        == 4
+    )
     assert capsys.readouterr().err == (
         "pwc: API returned a model outside the requested parameter limit\n"
     )
@@ -1826,9 +1866,18 @@ def test_benchmark_detail_parameter_filter_rejects_incomplete_sibling_counts(
     }
     _parameter_filter_client(monkeypatch, invalid_payload)
 
-    assert main(
-        ["benchmark", "--name", "Language Model Benchmark", "--max-parameters", "3B"]
-    ) == 4
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--max-parameters",
+                "3B",
+            ]
+        )
+        == 4
+    )
     assert capsys.readouterr().err == (
         "pwc: API returned a model outside the requested parameter limit\n"
     )
@@ -1897,20 +1946,23 @@ def test_benchmark_detail_parameter_filter_composes_with_metric_pagination(
 
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
 
-    assert main(
-        [
-            "benchmark",
-            "--name",
-            "Language Model Benchmark",
-            "--max-parameters",
-            "2B",
-            "--require-metrics",
-            "Accuracy,Latency",
-            "--sort",
-            "Accuracy:desc",
-            "--json",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "benchmark",
+                "--name",
+                "Language Model Benchmark",
+                "--max-parameters",
+                "2B",
+                "--require-metrics",
+                "Accuracy,Latency",
+                "--sort",
+                "Accuracy:desc",
+                "--json",
+            ]
+        )
+        == 0
+    )
 
     result = json.loads(capsys.readouterr().out)
     assert [row["model_name"] for row in result["data"]["results"]] == [
@@ -2072,7 +2124,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.1.17\tapi v1\n"
+    assert output.getvalue() == "pwc 0.2.0\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -2084,6 +2136,8 @@ def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
                 "title": "Line one\nline two",
                 "published": "2025-01-03",
                 "citation_count": 42,
+                "has_official_implementation": True,
+                "code_repository_count": 3,
             }
         ],
     }
@@ -2102,6 +2156,68 @@ def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
     assert output.getvalue() == (
         "id\ttitle\tyear\tcitations\n2501.01234\tLine one\\nline two\t2025\t42\n"
     )
+
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["search", "vision", "--implementation-coverage"]) == 0
+    assert output.getvalue() == (
+        "id\ttitle\tyear\tcitations\tofficial_implementation\tcode_repositories\n"
+        "2501.01234\tLine one\\nline two\t2025\t42\ttrue\t3\n"
+    )
+
+
+def test_search_official_implementation_filter_is_forwarded_and_fail_closed(
+    monkeypatch, capsys
+):
+    calls = []
+    payloads = [
+        {"results": [], "applied_filters": {}},
+        {
+            "results": [],
+            "applied_filters": {"has_official_implementation": "true"},
+        },
+    ]
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            return Response(json.dumps(payloads.pop(0)).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    command = ["search", "vision", "--has-official-implementation"]
+
+    assert main(command) == 4
+    assert "did not confirm has_official_implementation" in capsys.readouterr().err
+    assert main(command) == 0
+    capsys.readouterr()
+
+    assert calls[0][0] == "papers/search"
+    assert calls[0][1]["has_official_implementation"] is True
+
+
+def test_paper_list_forwards_confirmed_official_implementation_filter(monkeypatch):
+    calls = []
+    payload = {
+        "results": [],
+        "applied_filters": {"has_official_implementation": "true"},
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params):
+            calls.append((path, params))
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    assert main(["paper", "list", "--has-official-implementation"]) == 0
+
+    assert calls[0][0] == "papers/"
+    assert calls[0][1]["has_official_implementation"] is True
 
 
 def test_all_paper_commands_resolve_exact_titles(monkeypatch):
@@ -2217,6 +2333,8 @@ def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
         "authors": ["Ada Researcher", "Grace Scientist"],
         "organizations": [{"id": "1", "name": "Example AI", "slug": "example"}],
         "citation_count": 42,
+        "has_official_implementation": False,
+        "code_repository_count": 2,
         "url_abs": "https://paperswithcode.co/paper/2501.01234",
     }
 
@@ -2239,6 +2357,8 @@ def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
         "authors: Ada Researcher, Grace Scientist\n"
         "organizations: Example AI\n"
         "citations: 42\n"
+        "official_implementation: false\n"
+        "code_repositories: 2\n"
         "url: https://paperswithcode.co/paper/2501.01234\n"
         "\n"
         "## Abstract\n"
@@ -2305,6 +2425,8 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
     payload = {
         "arxiv_id": "2501.01234",
         "title": "A Paper",
+        "has_official_implementation": True,
+        "code_repository_count": 2,
         "repositories": [
             {"url": "https://github.com/example/implementation", "is_official": False},
             {"url": "https://github.com/example/official", "is_official": True},
@@ -2337,6 +2459,8 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
     assert output.getvalue() == (
         "id: 2501.01234\n"
         "title: A Paper\n"
+        "official_implementation: true\n"
+        "code_repositories: 2\n"
         "\n"
         "## Paper lineage\n"
         "\n"

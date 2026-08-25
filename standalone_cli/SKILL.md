@@ -36,7 +36,8 @@ than silently selecting a paper.
 
 - `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID. This is powered by hybrid/keyword/semantic search using pgvector. Defaults to hybrid.
   `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic
-  --start-date YYYY-MM-DD --end-date YYYY-MM-DD --json]`
+  --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+  --has-official-implementation --implementation-coverage --json]`
 - `pwc paper info PAPER` — Show metadata including tagged organizations, the
   abstract, predecessors, and successors.
   `--include-resources` adds Markdown sections for GitHub repositories, project pages,
@@ -53,16 +54,18 @@ than silently selecting a paper.
   --organization NAME --all-versions
   --order-by trending|date_published|citation_count
   --order-dir asc|desc
-  --include-resources --json]`
+  --include-resources --has-official-implementation
+  --implementation-coverage --json]`
 
 Date ranges are inclusive. When both bounds are supplied, the start date must
 not be after the end date.
 - `pwc paper recent` — List recently published papers.
-  `[--limit 1-100 --json]`
+  `[--limit 1-100 --implementation-coverage --json]`
 - `pwc paper trending` — List papers with recent repository activity.
-  `[--limit 1-100 --max-age-days 1-365 --min-velocity FLOAT --json]`
+  `[--limit 1-100 --max-age-days 1-365 --min-velocity FLOAT
+  --implementation-coverage --json]`
 - `pwc paper related PAPER` — Find embedding- and taxonomy-ranked related work.
-  `[--limit 1-20 --json]`
+  `[--limit 1-20 --implementation-coverage --json]`
 - `pwc paper lineage list PAPER` — Render linked Markdown sections for a paper,
   its predecessors, and its successors. `[--json]`
 - `pwc task --name NAME` — Show a task page in CLI form, including its area,
@@ -197,6 +200,13 @@ not be after the end date.
   Face artifacts. Add `--json` when their structured metadata also matters.
 - Use `--include-evals` with `pwc paper info` when benchmark scores reported by
   the paper matter.
+- Use `--implementation-coverage` on paper discovery commands to add official
+  implementation status and the total linked repository count. JSON and paper
+  info always include both fields. A false status means only that the catalog
+  has no linked official repository.
+- Use `--has-official-implementation` with search or paper list to require a
+  catalog-linked official repository. The CLI fails closed if the API does not
+  confirm this filter.
 - Use `--all-versions` only when individual arXiv versions are relevant.
 - Use `--is-open true` to restrict benchmark results to open models.
 - Paginate when stderr reports more results. Do not silently treat the first
