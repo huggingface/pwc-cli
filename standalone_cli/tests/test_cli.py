@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.3.0`" in skill
+    assert "Generated with `pwc v0.3.1`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2255,7 +2255,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.3.0\tapi v1\n"
+    assert output.getvalue() == "pwc 0.3.1\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -2856,6 +2856,30 @@ def test_transport_is_anonymous_by_default(monkeypatch):
     assert response.body == b"# Public paper\n"
     assert requests[0].full_url.endswith("/api/v1/research/papers/2501.01234/read")
     assert requests[0].get_header("Authorization") is None
+
+
+def test_transport_timeout_is_configurable_without_changing_the_default(monkeypatch):
+    observed = []
+
+    class HTTPResponse(io.BytesIO):
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(_request, *, timeout):
+        observed.append(timeout)
+        return HTTPResponse(b"{}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    Client("https://example.test/api/v1", timeout=25).get("health")
+    Client("https://example.test/api/v1").get("health")
+
+    assert observed == [25, 30]
 
 
 def test_transport_encodes_repeated_query_parameters(monkeypatch):

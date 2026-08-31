@@ -44,10 +44,16 @@ class Response:
 
 
 class Client:
-    def __init__(self, base_url: str | None = None, credential: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        credential: str | None = None,
+        timeout: float = 30,
+    ):
         configured = base_url or os.environ.get("PWC_API_URL") or DEFAULT_API_URL
         self.base_url = configured.rstrip("/")
         self.credential = credential
+        self.timeout = timeout
 
     def get(
         self, path: str, params: dict[str, object | None] | None = None
@@ -71,7 +77,7 @@ class Client:
             headers["Authorization"] = f"Bearer {self.credential}"
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 length = response.headers.get("Content-Length")
                 if length and int(length) > MAX_RESPONSE_BYTES:
                     raise ResponseError("API response exceeded the client byte limit")

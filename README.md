@@ -1,6 +1,22 @@
-# pwc CLI and Skill
+# pwc CLI, Skill, and MCP server
 
-A fast, read-only command-line client for exploring the public [Papers with Code](https://paperswithcode.co) catalog, alongside a Skill for your favorite coding agent.
+A fast, read-only command-line client for exploring the public [Papers with Code](https://paperswithcode.co) catalog, alongside a Skill for coding agents and a hosted Model Context Protocol server.
+
+## MCP server
+
+The [`mcp_server`](mcp_server) package exposes an anonymous, read-only,
+agent-native interface over Streamable HTTP. It supports MCP `2026-07-28` and
+legacy 2025-era clients from one endpoint, with tools for papers, related work,
+lineage, tasks, methods, benchmarks, and leaderboard evaluations.
+
+Run it locally with:
+
+```bash
+uv run --project mcp_server pwc-mcp
+```
+
+See [`mcp_server/README.md`](mcp_server/README.md) for tools, resources,
+configuration, security limits, and Space deployment details.
 
 Let your coding agent use `pwc` to:
 
