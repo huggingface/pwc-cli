@@ -5,10 +5,15 @@ import logging
 
 from mcp.client import Client
 from pwc_cli.transport import ResponseError
+from pwc_mcp.catalog import PaperMarkdownChunk
 from pwc_mcp.server import build_server
 
 
 class StubCatalog:
+    def __init__(self):
+        self.resolve_calls = 0
+        self.read_calls = []
+
     def search_papers(self, **_kwargs):
         return {
             "next_page": 2,
@@ -57,9 +62,35 @@ class StubCatalog:
             "project_pages": ["https://example.test/transformer"],
         }
 
-    def read_paper(self, paper: str):
+    def resolve_paper(self, paper: str):
+        self.resolve_calls += 1
         assert paper == "1706.03762"
-        return "abcdefgh"
+        return paper
+
+    def read_paper_chunk(
+        self,
+        paper: str,
+        *,
+        offset: int = 0,
+        content_version: str | None = None,
+        limit: int = 65_536,
+        resolved: bool = False,
+    ):
+        assert paper == "1706.03762"
+        assert resolved is True
+        version = "a" * 64
+        assert content_version in {None, version}
+        self.read_calls.append((offset, content_version, limit))
+        raw = b"abcdefgh"
+        markdown = raw[offset : offset + limit].decode()
+        next_offset = offset + len(markdown) if offset + len(markdown) < len(raw) else None
+        return PaperMarkdownChunk(
+            paper=paper,
+            source="arxiv",
+            markdown=markdown,
+            content_version=version,
+            next_offset=next_offset,
+        )
 
     def list_papers(self, **_kwargs):
         return self.search_papers()
@@ -235,8 +266,10 @@ def test_catalog_failures_do_not_expose_or_log_user_queries(caplog):
 
 
 def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
+    catalog = StubCatalog()
+
     async def exercise():
-        async with Client(build_server(StubCatalog(), read_chunk_chars=5)) as client:
+        async with Client(build_server(catalog, read_chunk_bytes=5)) as client:
             info = await client.call_tool("get_paper_info", {"paper": "1706.03762"})
             first = await client.call_tool("read_paper", {"paper": "1706.03762"})
             second = await client.call_tool(
@@ -265,6 +298,8 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
         "truncated": False,
         "next_cursor": None,
     }
+    assert catalog.resolve_calls == 1
+    assert catalog.read_calls == [(0, None, 5), (5, "a" * 64, 5)]
 
 
 def test_read_paper_rejects_invalid_continuation_as_an_expected_error():

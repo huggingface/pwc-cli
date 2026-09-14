@@ -4,13 +4,36 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote, urlparse
 
-from pwc_cli.transport import Client, Response, ResponseError
+from pwc_cli.transport import Client, HTTPStatusError, Response, ResponseError
 
 PAPER_ID = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z][a-z0-9.-]*/\d{7}|\d+)", re.IGNORECASE)
 ARXIV_VERSION = re.compile(r"v\d+$", re.IGNORECASE)
+CONTENT_VERSION = re.compile(r"[0-9a-f]{64}")
+MARKDOWN_CHUNK_BYTES = 65_536
+MARKDOWN_CACHE_ENTRIES = 256
+MARKDOWN_CACHE_BYTES = 16 * 1024 * 1024
+MARKDOWN_CACHE_SECONDS = 3600
+
+
+@dataclass(frozen=True)
+class PaperMarkdownChunk:
+    paper: str
+    source: str
+    markdown: str
+    content_version: str
+    next_offset: int | None
+
+    @property
+    def truncated(self) -> bool:
+        return self.next_offset is not None
+
+
+class PaperVersionMismatchError(ResponseError):
+    pass
 
 
 class Transport(Protocol):
@@ -54,12 +77,57 @@ class _TTLCache:
                 self._values.popitem(last=False)
 
 
+class _MarkdownChunkCache:
+    def __init__(self):
+        self._values: OrderedDict[
+            object, tuple[float, int, PaperMarkdownChunk]
+        ] = OrderedDict()
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, key: object) -> PaperMarkdownChunk | None:
+        now = time.monotonic()
+        with self._lock:
+            cached = self._values.get(key)
+            if cached is None:
+                return None
+            expires_at, size, value = cached
+            if expires_at <= now:
+                self._bytes -= size
+                del self._values[key]
+                return None
+            self._values.move_to_end(key)
+            return value
+
+    def put(self, key: object, value: PaperMarkdownChunk) -> None:
+        size = len(value.markdown.encode("utf-8"))
+        if size > MARKDOWN_CACHE_BYTES:
+            return
+        with self._lock:
+            previous = self._values.pop(key, None)
+            if previous is not None:
+                self._bytes -= previous[1]
+            self._values[key] = (
+                time.monotonic() + MARKDOWN_CACHE_SECONDS,
+                size,
+                value,
+            )
+            self._bytes += size
+            while (
+                len(self._values) > MARKDOWN_CACHE_ENTRIES
+                or self._bytes > MARKDOWN_CACHE_BYTES
+            ):
+                _, (_, removed_size, _) = self._values.popitem(last=False)
+                self._bytes -= removed_size
+
+
 class CatalogClient:
     """Typed, cached catalog operations shared by every MCP tool."""
 
     def __init__(self, transport: Transport | None = None):
         self.transport = transport or Client(timeout=25)
         self.cache = _TTLCache()
+        self.markdown_cache = _MarkdownChunkCache()
 
     def _json(
         self,
@@ -182,6 +250,9 @@ class CatalogClient:
             raise ResponseError(f"Paper title is ambiguous: {candidate}; {choices}")
         raise ResponseError(f"Paper title not found: {candidate}")
 
+    def resolve_paper(self, paper: str) -> str:
+        return self._resolve_paper(paper)
+
     @staticmethod
     def _exact(
         reference: str,
@@ -240,6 +311,76 @@ class CatalogClient:
         return self._text(
             f"research/papers/{quote(reference, safe='.')}/read", ttl=3600
         )
+
+    def read_paper_chunk(
+        self,
+        paper: str,
+        *,
+        offset: int = 0,
+        content_version: str | None = None,
+        limit: int = MARKDOWN_CHUNK_BYTES,
+        resolved: bool = False,
+    ) -> PaperMarkdownChunk:
+        reference = paper if resolved else self._resolve_paper(paper)
+        source = "external" if reference.isdigit() else "arxiv"
+        cache_key = (reference, content_version, offset, limit)
+        if content_version is not None:
+            cached = self.markdown_cache.get(cache_key)
+            if cached is not None:
+                return cached
+        try:
+            response = self.transport.get(
+                f"research/papers/{quote(reference, safe='.')}/read",
+                {
+                    "offset": offset,
+                    "limit": limit,
+                    "content_version": content_version,
+                },
+            )
+        except HTTPStatusError as error:
+            if error.status == 409:
+                raise PaperVersionMismatchError(
+                    "Paper Markdown changed; restart reading from the beginning"
+                ) from error
+            raise
+
+        returned_version = response.headers.get("x-pwc-content-version", "")
+        truncated = response.headers.get("x-pwc-truncated")
+        next_text = response.headers.get("x-pwc-next-offset")
+        try:
+            markdown = response.body.decode("utf-8")
+            next_offset = int(next_text) if next_text is not None else None
+        except (UnicodeDecodeError, ValueError) as error:
+            raise ResponseError("Papers API returned an invalid Markdown chunk") from error
+        if (
+            CONTENT_VERSION.fullmatch(returned_version) is None
+            or truncated not in {"0", "1"}
+            or (content_version is not None and returned_version != content_version)
+            or (truncated == "1" and next_offset is None)
+            or (truncated == "0" and next_offset is not None)
+            or (next_offset is not None and next_offset <= offset)
+            or (
+                next_offset is not None
+                and next_offset - offset != len(response.body)
+            )
+        ):
+            detail = (
+                "Papers API Markdown offset did not advance"
+                if next_offset is not None and next_offset <= offset
+                else "Papers API returned an invalid Markdown chunk"
+            )
+            raise ResponseError(detail)
+        result = PaperMarkdownChunk(
+            paper=reference,
+            source=source,
+            markdown=markdown,
+            content_version=returned_version,
+            next_offset=next_offset,
+        )
+        self.markdown_cache.put(
+            (reference, returned_version, offset, limit), result
+        )
+        return result
 
     def list_papers(
         self,

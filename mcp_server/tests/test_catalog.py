@@ -41,16 +41,123 @@ def test_catalog_normalizes_paper_urls_and_caches_identical_reads():
     assert transport.calls == [("papers/1706.03762", {"include_resources": True})]
 
 
-def test_catalog_rejects_upstream_markdown_truncation():
-    class TruncatedTransport:
+def test_catalog_reads_one_version_bound_markdown_chunk_per_call():
+    version = "a" * 64
+
+    class ChunkTransport:
+        def __init__(self):
+            self.calls = []
+
         def get(self, path, params=None):
-            assert path == "research/papers/1706.03762/read"
-            return Response(b"partial", {"x-pwc-truncated": "1"})
+            self.calls.append((path, params))
+            if params["offset"] == 0:
+                return Response(
+                    "α first".encode(),
+                    {
+                        "x-pwc-truncated": "1",
+                        "x-pwc-content-version": version,
+                        "x-pwc-next-offset": "8",
+                    },
+                )
+            return Response(
+                b" terminal",
+                {
+                    "x-pwc-truncated": "0",
+                    "x-pwc-content-version": version,
+                },
+            )
 
-    catalog = CatalogClient(transport=TruncatedTransport())
+    transport = ChunkTransport()
+    catalog = CatalogClient(transport=transport)
+    first = catalog.read_paper_chunk("1706.03762", limit=65_536)
+    second = catalog.read_paper_chunk(
+        "1706.03762",
+        offset=first.next_offset,
+        content_version=first.content_version,
+        limit=65_536,
+        resolved=True,
+    )
 
-    with pytest.raises(ResponseError, match="incomplete Markdown"):
-        catalog.read_paper("1706.03762")
+    assert first.markdown == "α first"
+    assert first.next_offset == 8
+    assert second.markdown == " terminal"
+    assert second.next_offset is None
+    assert transport.calls == [
+        (
+            "research/papers/1706.03762/read",
+            {"offset": 0, "limit": 65_536, "content_version": None},
+        ),
+        (
+            "research/papers/1706.03762/read",
+            {"offset": 8, "limit": 65_536, "content_version": version},
+        ),
+    ]
+
+
+def test_catalog_caches_versioned_chunks_and_rejects_nonadvancing_offsets():
+    version = "b" * 64
+
+    class ChunkTransport:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, _path, _params=None):
+            self.calls += 1
+            return Response(
+                b"data",
+                {
+                    "x-pwc-truncated": "1",
+                    "x-pwc-content-version": version,
+                    "x-pwc-next-offset": "4",
+                },
+            )
+
+    transport = ChunkTransport()
+    catalog = CatalogClient(transport=transport)
+    with pytest.raises(ResponseError, match="did not advance"):
+        catalog.read_paper_chunk(
+            "1706.03762",
+            offset=4,
+            content_version=version,
+            resolved=True,
+        )
+    assert transport.calls == 1
+
+
+def test_catalog_versioned_chunk_cache_avoids_repeated_upstream_reads():
+    version = "c" * 64
+
+    class ChunkTransport:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, _path, _params=None):
+            self.calls += 1
+            return Response(
+                b"done",
+                {
+                    "x-pwc-truncated": "0",
+                    "x-pwc-content-version": version,
+                },
+            )
+
+    transport = ChunkTransport()
+    catalog = CatalogClient(transport=transport)
+    first = catalog.read_paper_chunk(
+        "1706.03762",
+        offset=8,
+        content_version=version,
+        resolved=True,
+    )
+    second = catalog.read_paper_chunk(
+        "1706.03762",
+        offset=8,
+        content_version=version,
+        resolved=True,
+    )
+
+    assert first == second
+    assert transport.calls == 1
 
 
 def test_catalog_resolves_exact_titles_and_rejects_ambiguous_titles():
