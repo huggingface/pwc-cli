@@ -146,6 +146,16 @@ class CatalogClient:
         self.cache.put(key, payload, ttl)
         return payload
 
+    def check_readiness(self) -> bool:
+        response = self.transport.get("tasks/", {"page": 1, "page_size": 1})
+        payload = response.json()
+        if not isinstance(payload, dict):
+            return False
+        rows = payload.get("results")
+        if rows is None:
+            rows = payload.get("items")
+        return isinstance(rows, list)
+
     def _text(self, path: str, *, ttl: int) -> str:
         key = ("text", path)
         cached = self.cache.get(key)
