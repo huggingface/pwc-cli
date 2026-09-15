@@ -7,11 +7,13 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 from collections import defaultdict, deque
 
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
+from pwc_cli.transport import ResponseError, TransportError
 from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -29,6 +31,7 @@ LOGGER = logging.getLogger("pwc_mcp.requests")
 logging.getLogger("mcp").setLevel(logging.CRITICAL + 1)
 PROTOCOL_VERSION = "2026-07-28"
 MAX_REQUEST_BODY_SIZE = 2 * 1024 * 1024
+MAX_RESPONSE_BODY_SIZE = 2 * 1024 * 1024
 KNOWN_TOOLS = {
     "search_papers",
     "list_papers",
@@ -57,14 +60,48 @@ def _csv_env(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-async def health(_request: Request) -> JSONResponse:
+class CatalogReadiness:
+    def __init__(self, catalog: CatalogClient | None, *, initially_ready: bool = False):
+        self.catalog = catalog
+        self.ready = initially_ready
+        self.probing = False
+        self.next_probe_at = 0.0
+        self.lock = threading.Lock()
+
+    def schedule(self) -> None:
+        if self.catalog is None:
+            return
+        now = time.monotonic()
+        with self.lock:
+            if self.probing or now < self.next_probe_at:
+                return
+            self.probing = True
+        asyncio.create_task(asyncio.to_thread(self._probe))
+
+    def _probe(self) -> None:
+        try:
+            assert self.catalog is not None
+            ready = self.catalog.check_readiness()
+        except (ResponseError, TransportError):
+            ready = False
+        with self.lock:
+            self.ready = ready
+            self.probing = False
+            self.next_probe_at = time.monotonic() + (30 if ready else 5)
+
+
+async def health(request: Request) -> JSONResponse:
+    readiness: CatalogReadiness = request.app.state.pwc_catalog_readiness
+    readiness.schedule()
+    ready = readiness.ready
     return JSONResponse(
         {
-            "status": "ok",
+            "status": "ok" if ready else "unavailable",
             "service": "pwc-mcp",
             "version": __version__,
             "protocol": PROTOCOL_VERSION,
-        }
+        },
+        status_code=200 if ready else 503,
     )
 
 
@@ -72,7 +109,7 @@ def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -
     client = scope.get("client")
     direct_address = str(client[0]) if client else "unknown"
     try:
-        trusted_hop = ipaddress.ip_address(direct_address).is_private
+        trusted_hop = ipaddress.ip_address(direct_address).is_loopback
     except ValueError:
         trusted_hop = False
     if trust_proxy_headers and trusted_hop:
@@ -84,6 +121,39 @@ def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -
 
 class RequestBodyTooLarge(Exception):
     pass
+
+
+class ResponseSizeLimitMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope.get("path") != "/mcp"
+            or scope.get("method") != "POST"
+        ):
+            await self.app(scope, receive, send)
+            return
+        messages: list[Message] = []
+        size = 0
+        oversized = False
+
+        async def capture(message: Message) -> None:
+            nonlocal size, oversized
+            if message["type"] == "http.response.body":
+                size += len(message.get("body", b""))
+                oversized = oversized or size > MAX_RESPONSE_BODY_SIZE
+            if not oversized:
+                messages.append(message)
+
+        await self.app(scope, receive, capture)
+        if oversized:
+            response = JSONResponse({"error": "response_too_large"}, status_code=503)
+            await response(scope, receive, send)
+            return
+        for message in messages:
+            await send(message)
 
 
 async def _body_and_replay(
@@ -154,6 +224,7 @@ class RateLimitMiddleware:
         request_limit: int,
         semantic_limit: int,
         concurrency_limit: int,
+        global_concurrency_limit: int,
         trust_proxy_headers: bool,
         identity_limit: int = 10_000,
     ):
@@ -161,6 +232,7 @@ class RateLimitMiddleware:
         self.request_limit = request_limit
         self.semantic_limit = semantic_limit
         self.concurrency_limit = concurrency_limit
+        self.global_concurrency_limit = global_concurrency_limit
         self.trust_proxy_headers = trust_proxy_headers
         self.identity_limit = identity_limit
         self.key = secrets.token_bytes(32)
@@ -169,6 +241,7 @@ class RateLimitMiddleware:
         self.active: dict[str, int] = defaultdict(int)
         self.lock = asyncio.Lock()
         self.next_cleanup_at = 0.0
+        self.global_active = 0
 
     def _identity(self, address: str) -> str:
         return hashlib.blake2b(
@@ -216,10 +289,12 @@ class RateLimitMiddleware:
         )
         now = time.monotonic()
         limited = False
+        saturated = False
         requests: deque[float] | None = None
         semantic_requests: deque[float] | None = None
         async with self.lock:
-            if (
+            saturated = self.global_active >= self.global_concurrency_limit
+            if not saturated and (
                 identity not in self.requests
                 and len(self.requests) >= self.identity_limit
             ):
@@ -227,7 +302,7 @@ class RateLimitMiddleware:
                     self._purge_stale_identities(now)
                     self.next_cleanup_at = now + 5
                 limited = len(self.requests) >= self.identity_limit
-            if not limited:
+            if not limited and not saturated:
                 requests = self.requests[identity]
                 semantic_requests = self.semantic_requests[identity]
                 self._trim(requests, now)
@@ -237,13 +312,22 @@ class RateLimitMiddleware:
                     or (semantic and len(semantic_requests) >= self.semantic_limit)
                     or self.active[identity] >= self.concurrency_limit
                 )
-            if not limited:
+            if not limited and not saturated:
                 assert requests is not None
                 assert semantic_requests is not None
                 requests.append(now)
                 if semantic:
                     semantic_requests.append(now)
                 self.active[identity] += 1
+                self.global_active += 1
+        if saturated:
+            response = JSONResponse(
+                {"error": "server_saturated"},
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )
+            await response(scope, replay, send)
+            return
         if limited:
             response = JSONResponse(
                 {"error": "rate_limit_exceeded"},
@@ -259,6 +343,7 @@ class RateLimitMiddleware:
                 self.active[identity] -= 1
                 if self.active[identity] == 0:
                     self.active.pop(identity, None)
+                self.global_active -= 1
 
 
 class OperationalTelemetryMiddleware:
@@ -307,6 +392,7 @@ def create_app(
     request_limit: int = 60,
     semantic_limit: int = 10,
     concurrency_limit: int = 4,
+    global_concurrency_limit: int = 32,
     trust_proxy_headers: bool = True,
 ) -> ASGIApp:
     hosts = allowed_hosts or _csv_env(
@@ -323,7 +409,10 @@ def create_app(
     )
     if "*" in origins:
         raise ValueError("PWC_MCP_ALLOWED_ORIGINS must not contain a wildcard")
-    server = build_server(catalog or CatalogClient())
+    catalog_client = CatalogClient() if catalog is None else None
+    resolved_catalog = catalog or catalog_client
+    assert resolved_catalog is not None
+    server = build_server(resolved_catalog)
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
         json_response=True,
@@ -337,13 +426,19 @@ def create_app(
         ),
     )
     app.routes.insert(0, Route("/health", health, methods=["GET"]))
+    app.state.pwc_catalog_readiness = CatalogReadiness(
+        catalog_client,
+        initially_ready=catalog is not None,
+    )
     wrapped: ASGIApp = RateLimitMiddleware(
         app,
         request_limit=request_limit,
         semantic_limit=semantic_limit,
         concurrency_limit=concurrency_limit,
+        global_concurrency_limit=global_concurrency_limit,
         trust_proxy_headers=trust_proxy_headers,
     )
+    wrapped = ResponseSizeLimitMiddleware(wrapped)
     wrapped = OperationalTelemetryMiddleware(wrapped)
     return CORSMiddleware(
         wrapped,
@@ -365,9 +460,9 @@ def main() -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     uvicorn.run(
         create_app(),
-        host="0.0.0.0",
+        host=os.environ.get("PWC_MCP_HOST", "127.0.0.1"),
         port=int(os.environ.get("PORT", "7860")),
-        proxy_headers=True,
+        proxy_headers=False,
         access_log=False,
     )
 

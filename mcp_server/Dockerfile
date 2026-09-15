@@ -4,6 +4,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PWC_MCP_HOST=0.0.0.0 \
     PORT=7860
 
 RUN useradd --create-home --uid 1000 app

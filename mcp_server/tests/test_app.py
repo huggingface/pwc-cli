@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import logging
 
-from pwc_mcp.app import create_app
+from pwc_mcp.app import (
+    MAX_RESPONSE_BODY_SIZE,
+    ResponseSizeLimitMiddleware,
+    _client_address,
+    create_app,
+)
+from starlette.applications import Starlette
+from starlette.datastructures import Headers
+from starlette.responses import Response
+from starlette.routing import Route
 from starlette.testclient import TestClient
 from test_server import StubCatalog
 
@@ -66,6 +75,21 @@ def test_rate_limit_is_content_free_and_returns_retry_metadata():
     assert limited.status_code == 429
     assert limited.headers["retry-after"] == "60"
     assert limited.json() == {"error": "rate_limit_exceeded"}
+
+
+def test_global_saturation_returns_retry_metadata():
+    app = create_app(
+        StubCatalog(),
+        allowed_hosts=["testserver"],
+        global_concurrency_limit=0,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/mcp", json={})
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json() == {"error": "server_saturated"}
 
 
 def test_semantic_limit_uses_body_tool_name_when_header_disagrees():
@@ -177,3 +201,34 @@ def test_one_http_endpoint_serves_modern_and_legacy_protocol_eras():
     assert modern.json()["result"]["cacheScope"] == "public"
     assert legacy.status_code == 200
     assert legacy.json()["result"]["protocolVersion"] == "2025-11-25"
+
+
+def test_proxy_identity_trusts_only_an_exact_loopback_peer():
+    headers = Headers({"x-forwarded-for": "203.0.113.9"})
+
+    assert _client_address(
+        {"client": ("127.0.0.1", 1234)}, headers, True
+    ) == "203.0.113.9"
+    assert _client_address(
+        {"client": ("::1", 1234)}, headers, True
+    ) == "203.0.113.9"
+    assert _client_address(
+        {"client": ("10.0.0.2", 1234)}, headers, True
+    ) == "10.0.0.2"
+    assert _client_address(
+        {"client": ("192.168.1.2", 1234)}, headers, True
+    ) == "192.168.1.2"
+
+
+def test_serialized_mcp_response_limit_fails_closed():
+    async def oversized(_request):
+        return Response(b"x" * (MAX_RESPONSE_BODY_SIZE + 1))
+
+    app = ResponseSizeLimitMiddleware(
+        Starlette(routes=[Route("/mcp", oversized, methods=["POST"])])
+    )
+    with TestClient(app) as client:
+        response = client.post("/mcp")
+
+    assert response.status_code == 503
+    assert response.json() == {"error": "response_too_large"}

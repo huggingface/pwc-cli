@@ -13,8 +13,8 @@ output with compact text fallbacks.
 uv run --project mcp_server pwc-mcp
 ```
 
-The default port is `7860`. Set `PORT` or `PWC_API_URL` to override the HTTP
-port or compatible PwC API respectively.
+The default listener is `127.0.0.1:7860`. Set `PWC_MCP_HOST`, `PORT`, or
+`PWC_API_URL` to override the bind address, HTTP port, or compatible PwC API.
 
 ```bash
 curl http://127.0.0.1:7860/health
@@ -34,15 +34,10 @@ curl http://127.0.0.1:7860/health
 - `get_benchmark`
 
 All tools are annotated read-only and idempotent. Search is deterministic;
-the caller controls keyword or semantic mode. `read_paper` returns complete
-stored Markdown when possible and an opaque continuation cursor for oversized
-documents.
-
-The server fails closed when a compatible catalog reports
-`X-PwC-Truncated: 1`; it never presents partial Markdown as a complete paper.
-End-to-end continuation for papers beyond the catalog's own response cap
-therefore requires a cursor-capable upstream read endpoint before the hosted
-beta is released.
+the caller controls keyword or semantic mode. `read_paper` fetches at most one
+64 KiB catalog chunk per call and returns a signed, one-hour continuation cursor
+when more Markdown remains. Continuations stay pinned to the resolved paper and
+content version, so a changed paper fails with an explicit restart response.
 
 ## Resources
 
@@ -56,8 +51,11 @@ beta is released.
 | Variable | Purpose |
 | --- | --- |
 | `PWC_API_URL` | Compatible catalog API; defaults to production PwC |
+| `PWC_MCP_HOST` | Listener address; defaults to loopback (`127.0.0.1`) |
 | `PWC_MCP_ALLOWED_HOSTS` | Comma-separated HTTP Host allowlist |
 | `PWC_MCP_ALLOWED_ORIGINS` | Comma-separated browser Origin allowlist |
+| `PWC_MCP_CURSOR_KEY_CURRENT` | Required secret used to sign continuation cursors |
+| `PWC_MCP_CURSOR_KEY_PREVIOUS` | Optional previous secret accepted during key rotation |
 | `PORT` | HTTP port; defaults to `7860` |
 | `LOG_LEVEL` | Content-free operational log level |
 
@@ -66,9 +64,10 @@ allowlist. The server does not log queries, paper references, request bodies,
 raw IP addresses, or authorization headers.
 
 The hosted defaults allow 60 total requests and 10 semantic searches per minute
-per client IP, with at most four concurrent requests. Tool inputs cap list
-results at 25, catalog calls time out after 25 seconds, and request/upstream
-response bodies are bounded to 2 MiB.
+per client IP, with at most four concurrent requests per IP and 32 globally.
+Tool inputs cap list results at 25, catalog calls time out after 25 seconds, and
+request, upstream, and serialized MCP response bodies are bounded to 2 MiB.
+Markdown chunks use a bounded 256-entry/16 MiB in-memory cache.
 
 ## Test
 
@@ -76,8 +75,7 @@ response bodies are bounded to 2 MiB.
 uv run --project mcp_server pytest mcp_server/tests
 ```
 
-Releases are deployed from immutable `pwc-mcp-*` tags to the
-`huggingface/paperswithcode-mcp` Docker Space after CLI, MCP, and container
-checks pass. Tag deployment remains locked until the repository variable
-`PWC_MCP_UPSTREAM_CURSOR_READY` is explicitly set to `true` after production
-catalog continuation is available.
+The canonical hosted service is deployed as an immutable VPS component and
+published through `https://paperswithcode.co/mcp`. The
+`huggingface/paperswithcode-mcp` Docker Space remains an optional fallback; its
+container explicitly binds to `0.0.0.0`.

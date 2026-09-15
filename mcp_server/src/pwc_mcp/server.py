@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from datetime import date
 from typing import Annotated, Any, Literal, Protocol
 
@@ -11,7 +13,13 @@ from pwc_cli.transport import ResponseError, TransportError
 from pydantic import Field
 
 from pwc_mcp import __version__
-from pwc_mcp.cursors import decode_cursor, encode_cursor
+from pwc_mcp.catalog import PaperMarkdownChunk, PaperVersionMismatchError
+from pwc_mcp.cursors import (
+    CURSOR_LIFETIME_SECONDS,
+    MAX_CHUNK_BYTES,
+    CursorCodec,
+    CursorState,
+)
 from pwc_mcp.models import (
     AreaReference,
     BenchmarkPage,
@@ -80,7 +88,17 @@ class Catalog(Protocol):
         self, paper: str, *, include_resources: bool
     ) -> dict[str, Any]: ...
 
-    def read_paper(self, paper: str) -> str: ...
+    def resolve_paper(self, paper: str) -> str: ...
+
+    def read_paper_chunk(
+        self,
+        paper: str,
+        *,
+        offset: int = 0,
+        content_version: str | None = None,
+        limit: int = MAX_CHUNK_BYTES,
+        resolved: bool = False,
+    ) -> PaperMarkdownChunk: ...
 
     def list_papers(
         self,
@@ -125,7 +143,16 @@ class Catalog(Protocol):
     ) -> dict[str, Any]: ...
 
 
-def build_server(catalog: Catalog, *, read_chunk_chars: int = 200_000) -> MCPServer:
+def build_server(
+    catalog: Catalog,
+    *,
+    read_chunk_bytes: int = MAX_CHUNK_BYTES,
+    cursor_codec: CursorCodec | None = None,
+) -> MCPServer:
+    codec = cursor_codec or CursorCodec(
+        os.environ.get("PWC_MCP_CURSOR_KEY_CURRENT", ""),
+        previous_secret=os.environ.get("PWC_MCP_CURSOR_KEY_PREVIOUS") or None,
+    )
     server = MCPServer(
         "pwc",
         title="Papers With Code",
@@ -184,20 +211,57 @@ def build_server(catalog: Catalog, *, read_chunk_chars: int = 200_000) -> MCPSer
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def read_paper(paper: Reference, cursor: str | None = None) -> PaperReadResult:
         """Read stored paper Markdown, continuing oversized documents with a cursor."""
-        markdown = _catalog_call(catalog.read_paper, paper)
+        reference = paper.strip()
         try:
-            offset = decode_cursor(cursor, paper) if cursor else 0
+            state = codec.decode(cursor, reference=reference) if cursor else None
         except ValueError as error:
-            raise ToolError("invalid continuation cursor") from error
-        if offset > len(markdown):
-            raise ToolError("continuation cursor is beyond the paper content")
-        end = min(offset + read_chunk_chars, len(markdown))
-        truncated = end < len(markdown)
+            raise ToolError(str(error)) from error
+        if state is None:
+            canonical = _catalog_call(catalog.resolve_paper, reference)
+            offset = 0
+            content_version = None
+            limit = read_chunk_bytes
+            expires_at = int(time.time()) + CURSOR_LIFETIME_SECONDS
+            source = "external" if canonical.isdigit() else "arxiv"
+        else:
+            canonical = state.paper
+            offset = state.offset
+            content_version = state.content_version
+            limit = state.limit
+            expires_at = state.expires_at
+            source = state.source
+        try:
+            chunk = catalog.read_paper_chunk(
+                canonical,
+                offset=offset,
+                content_version=content_version,
+                limit=limit,
+                resolved=True,
+            )
+        except PaperVersionMismatchError as error:
+            raise ToolError("paper changed; restart reading from the beginning") from error
+        except (ResponseError, TransportError) as error:
+            raise ToolError("the Papers With Code catalog request failed") from error
+        if chunk.paper != canonical or chunk.source != source:
+            raise ToolError("the Papers With Code catalog request failed")
+        next_cursor = None
+        if chunk.next_offset is not None:
+            next_cursor = codec.encode(
+                CursorState(
+                    reference=reference,
+                    paper=canonical,
+                    source=source,
+                    content_version=chunk.content_version,
+                    offset=chunk.next_offset,
+                    limit=limit,
+                    expires_at=expires_at,
+                )
+            )
         return PaperReadResult(
-            paper=paper,
-            markdown=markdown[offset:end],
-            truncated=truncated,
-            next_cursor=encode_cursor(paper, end) if truncated else None,
+            paper=reference,
+            markdown=chunk.markdown,
+            truncated=chunk.truncated,
+            next_cursor=next_cursor,
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
