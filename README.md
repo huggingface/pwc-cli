@@ -1,6 +1,6 @@
 # pwc CLI and Skill
 
-A fast, read-only command-line client for exploring the public [Papers with Code](https://paperswithcode.co) catalog, alongside a Skill for your favorite coding agent.
+A fast command-line client for exploring the public [Papers with Code](https://paperswithcode.co) catalog, alongside a Skill for your favorite coding agent.
 
 Let your coding agent use `pwc` to:
 
@@ -288,3 +288,57 @@ uv run python standalone_cli/scripts/check_contract.py
 ```
 
 The implementation lives in [`standalone_cli`](standalone_cli/).
+
+
+## Edit a paper with your agent
+
+Requires a server with the paper-edit API enabled. Sign in using the browser
+link and confirm the paper and code. This grants one hour of write access to
+that paper; each batch publishes immediately under your HF username.
+
+```bash
+pwc auth login --paper 123       # --no-browser for remote machines
+pwc paper edit export 123 --output edits.json
+# Add explicit operations to edits.json; current is reference material.
+pwc paper edit preview 123 --file edits.json
+pwc paper edit submit 123 --file edits.json
+pwc auth status --paper 123
+pwc auth logout --paper 123
+```
+
+For example, add the following to the exported `operations` array, substituting
+real existing task/dataset/metric identifiers. A metrics dictionary lets you
+submit multiple scores without repeating model and benchmark details:
+
+```json
+{
+  "section": "evaluations",
+  "payload": {
+    "task_id": 1,
+    "dataset_id": 2,
+    "model_name": "Example model",
+    "methodology": "Test split, zero-shot; Table 3",
+    "metrics": {"Accuracy": 90.5, "F1": 88.1},
+    "source_url": "https://arxiv.org/abs/2601.00001"
+  }
+}
+```
+
+Add `evaluation_id` alongside `section` to correct a row. Other supported
+sections are tasks, methods, repositories, project_pages, hf_artifacts, and
+source_url. Section replacements must retain unrelated entries. Evaluation
+updates preserve omitted fields. Existing benchmark/metric definitions are
+required; evaluation deletion and rank overrides are excluded.
+
+Batches contain at most 50 operations and 1 MiB. Invalid or stale batches write
+nothing. Retry uncertain network results with the exact same document and
+idempotency key. For a stale revision, export again and reconcile before retrying.
+Accounts share a 20-distinct-paper daily limit (UTC) and 30-publication-per-minute
+limit across the website and CLI; admins are exempt. `pwc skills add --force`
+installs the detailed agent workflow.
+
+Credentials are stored in mode-0600 files inside the mode-0700 directory
+`~/.config/pwc/edit-credentials`, keyed by API base URL and paper. Never copy
+these files into prompts or repositories. `PWC_API_URL` selects the target API;
+editing requires HTTPS, except on loopback development servers, and refuses
+redirects. Public read commands never load edit credentials.

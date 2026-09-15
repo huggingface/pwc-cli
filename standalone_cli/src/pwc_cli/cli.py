@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from pwc_cli import API_CONTRACT_VERSION, __version__
+from pwc_cli.edits import EditUsageError, add_commands
 from pwc_cli.skills import SkillInstallError, skills_add
 from pwc_cli.transport import Client, HTTPStatusError, ResponseError, TransportError
 
@@ -2354,7 +2355,7 @@ def _implementation_coverage(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = Parser(
         prog="pwc",
-        description="Read-only Papers With Code research CLI",
+        description="Papers With Code research and paper-editing CLI",
         epilog=(
             'Examples:\n  pwc search "small VLMs" --limit 10\n'
             "  pwc paper info 2501.01234\n"
@@ -2731,6 +2732,7 @@ def build_parser() -> argparse.ArgumentParser:
         "version", help="show CLI and API contract versions"
     )
     version_parser.set_defaults(handler=version)
+    add_commands(commands, paper_commands)
     return parser
 
 
@@ -2742,6 +2744,9 @@ def main(argv: list[str] | None = None) -> int:
     except TransportError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 3
+    except (EditUsageError, OSError, json.JSONDecodeError) as error:
+        print(f"pwc: {error}", file=sys.stderr)
+        return 2
     except UsageError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 2
