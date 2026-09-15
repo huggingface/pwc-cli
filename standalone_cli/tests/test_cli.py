@@ -2858,6 +2858,30 @@ def test_transport_is_anonymous_by_default(monkeypatch):
     assert requests[0].get_header("Authorization") is None
 
 
+def test_transport_timeout_is_configurable_without_changing_the_default(monkeypatch):
+    observed = []
+
+    class HTTPResponse(io.BytesIO):
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(_request, *, timeout):
+        observed.append(timeout)
+        return HTTPResponse(b"{}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    Client("https://example.test/api/v1", timeout=25).get("health")
+    Client("https://example.test/api/v1").get("health")
+
+    assert observed == [25, 30]
+
+
 def test_transport_encodes_repeated_query_parameters(monkeypatch):
     requests = []
 

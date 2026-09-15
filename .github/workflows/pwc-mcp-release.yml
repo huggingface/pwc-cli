@@ -1,0 +1,93 @@
+name: Publish pwc MCP
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/pwc-mcp-release.yml"
+      - "mcp_server/**"
+      - "standalone_cli/**"
+  push:
+    tags:
+      - "pwc-mcp-*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify hosted read-continuation prerequisite
+        if: startsWith(github.ref, 'refs/tags/pwc-mcp-')
+        env:
+          UPSTREAM_CURSOR_READY: ${{ vars.PWC_MCP_UPSTREAM_CURSOR_READY }}
+        run: |
+          if [ "$UPSTREAM_CURSOR_READY" != "true" ]; then
+            echo "Set PWC_MCP_UPSTREAM_CURSOR_READY=true only after the production catalog supports cursor reads."
+            exit 1
+          fi
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/pwc-mcp-')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          uv run --isolated python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          expected = os.environ["RELEASE_TAG"].removeprefix("pwc-mcp-")
+          actual = tomllib.loads(
+              pathlib.Path("mcp_server/pyproject.toml").read_text()
+          )["project"]["version"]
+          if actual != expected:
+              raise SystemExit(f"tag version {expected} does not match package {actual}")
+          PY
+      - name: Test CLI contract
+        run: |
+          uv run --project standalone_cli --with pytest pytest standalone_cli/tests
+          uv run python standalone_cli/scripts/check_contract.py
+      - name: Test MCP server
+        run: uv run --project mcp_server pytest mcp_server/tests
+      - name: Build Docker image
+        run: docker build --file mcp_server/Dockerfile --tag pwc-mcp:${GITHUB_SHA} .
+
+  deploy-space:
+    if: startsWith(github.ref, 'refs/tags/pwc-mcp-')
+    needs: test
+    runs-on: ubuntu-24.04
+    environment: hugging-face-space
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Prepare exact release source
+        run: |
+          mkdir -p space-release
+          cp mcp_server/space/README.md space-release/README.md
+          cp mcp_server/Dockerfile space-release/Dockerfile
+          cp -R standalone_cli space-release/standalone_cli
+          cp -R mcp_server space-release/mcp_server
+          rm -rf space-release/mcp_server/space
+      - name: Create or update Docker Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uvx --from 'huggingface_hub==1.23.0' hf repos create \
+            huggingface/paperswithcode-mcp \
+            --type space --sdk docker --public --exist-ok --flavor cpu-upgrade
+          uvx --from 'huggingface_hub==1.23.0' hf spaces settings \
+            huggingface/paperswithcode-mcp \
+            --hardware cpu-upgrade --sleep-time -1
+          uvx --from 'huggingface_hub==1.23.0' hf upload \
+            huggingface/paperswithcode-mcp space-release . \
+            --type space --delete '*' \
+            --commit-message "Deploy ${GITHUB_REF_NAME} (${GITHUB_SHA})"
+          uvx --from 'huggingface_hub==1.23.0' hf spaces wait \
+            huggingface/paperswithcode-mcp --timeout 15m
+      - name: Smoke test exact Space release
+        run: |
+          curl --fail --show-error --silent --retry 6 --retry-all-errors \
+            https://huggingface-paperswithcode-mcp.hf.space/health \
+            | grep -F '"status":"ok"'

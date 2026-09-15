@@ -1,0 +1,30 @@
+[project]
+name = "pwc-mcp"
+version = "0.1.0"
+description = "Read-only Papers With Code MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+dependencies = [
+  "mcp>=2.1,<3",
+  "pydantic>=2.11,<3",
+  "pwc-cli>=0.3.1,<0.4",
+  "starlette>=0.47,<1",
+  "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+pwc-mcp = "pwc_mcp.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pwc_mcp"]
+
+[tool.uv.sources]
+pwc-cli = {path = "../standalone_cli", editable = true}
+
+[dependency-groups]
+dev = ["httpx>=0.28,<1", "pytest>=8"]
