@@ -20,7 +20,7 @@ _DESCRIPTION = (
     "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, "
     "discovering recent and trending research, finding related work and paper "
     "lineage, browsing tasks, methods, conferences, organizations, frameworks, "
-    "and benchmark leaderboards "
+    "and benchmark leaderboards, and submitting authenticated paper edits "
     "through the public Papers With Code catalog. Use whenever the user asks to "
     "find papers, survey literature, compare research, inspect an arXiv paper, "
     "explore AI/ML taxonomy or conferences, discover benchmarks or "
@@ -28,8 +28,8 @@ _DESCRIPTION = (
 )
 
 _INTRODUCTION = """
-The `pwc` CLI is anonymous and read-only. It queries the public
-[Papers With Code](https://paperswithcode.co) catalog and requires no token.
+Research commands query the public [Papers With Code](https://paperswithcode.co) catalog anonymously.
+Paper editing requires explicit browser authorization through `pwc auth login --paper PAPER`.
 Run `pwc --help` or a nested `--help` command when the live parser and this
 skill disagree; the parser is authoritative.
 
@@ -44,7 +44,8 @@ recent work. Author references accept an exact normalized name, numeric ID, or
 
 Publication date ranges are inclusive: use `--start-date YYYY-MM-DD` and
 `--end-date YYYY-MM-DD` with `pwc search` or `pwc paper list`; the start date
-must not be later than `--end-date`.
+must not be later than `--end-date`. The combined flags are
+`--start-date YYYY-MM-DD --end-date YYYY-MM-DD`.
 
 Paper discovery commands accept `--implementation-coverage` to add official
 implementation status and total linked repository count columns. JSON and
@@ -170,7 +171,7 @@ def build_skill_md() -> str:
         f"{_INTRODUCTION}\n"
         "## Commands\n\n"
         f"{commands}\n"
-        f"{_WORKFLOW}"
+        f"{_WORKFLOW}\n{_EDIT_WORKFLOW}"
     )
 
 
@@ -230,3 +231,56 @@ def skills_add(args: argparse.Namespace, _client: object) -> int:
         link = _link_to(claude_root, installed, args.force)
         print(f"Linked '{SKILL_NAME}' for Claude at {link}")
     return 0
+
+
+_EDIT_WORKFLOW = """
+## Editing one paper
+
+Use this workflow only when the user requests edits. Research commands remain anonymous.
+
+1. Run `pwc auth login --paper PAPER`. Give the user the browser link and code;
+   they sign in with Hugging Face and authorize that paper for one hour. Use
+   `--no-browser` on a remote machine. Never extract, print, or copy credentials.
+2. Run `pwc paper edit export PAPER --output edits.json` (the output must not
+   already exist). It includes paper_id, version, idempotency_key, empty operations,
+   and current reference data. Change operations, not current. Preserve the
+   exported version and retry key. Documents may contain at most 50 operations
+   and 1 MiB of JSON.
+3. Add operations of the form `{"section":"tasks","payload":{"task_ids":[1,2]}}`.
+   A section operation explicitly replaces that section; preserve unrelated links
+   and tags. Omitted sections stay unchanged. Allowed sections and payload keys:
+   tasks/task_ids, methods/method_ids, repositories/repositories,
+   project_pages/project_pages, hf_artifacts/hf_models+hf_datasets+hf_spaces,
+   source_url/source_url (external papers only), and evaluations.
+   Repository/project-page entries contain url and is_official.
+4. For evaluations, an operation without evaluation_id creates a row. Include
+   task_id, dataset_id, metrics (a dictionary of existing metric names to scores),
+   model_name, and the evaluation setup where available. One row can contain
+   multiple metrics. Add evaluation_id to correct an existing row on this paper;
+   omitted update fields stay unchanged. Use source_url and methodology to cite
+   precise evidence when available; source references remain optional. Existing
+   benchmark/task/metric definitions are required. Do not invent missing IDs or
+   create benchmarks. Report unsupported results to the user. No evaluation
+   deletion, paper identity changes, organization edits, or rank overrides.
+5. Run `pwc paper edit preview PAPER --file edits.json`, inspect the before/after
+   changes, then `pwc paper edit submit PAPER --file edits.json`. Publication is
+   immediate: no per-batch browser approval. Respect the user's requested scope.
+   A batch succeeds completely or makes no changes. The response includes status
+   published and a link to the paper's history.
+6. Retry an uncertain network result using the exact same document and retry key.
+   A 409 means changed data or a reused key with different edits. Fetch a fresh
+   export, preserve others' edits, and reconcile. Ask the user if the same score
+   has conflicting corrections. Once you intentionally revise a previously
+   submitted batch, use a fresh export/key. A 403 may mean expired authorization,
+   suspension, or insufficient scope: read the error; do not broaden access.
+   A 429 indicates the shared account limit: 20 distinct papers per UTC day and
+   30 publications per minute. Do not work around account limits.
+7. `pwc auth status --paper PAPER` shows local expiry metadata (revocation is
+   checked by the server on use). `pwc auth logout --paper PAPER` revokes access.
+   If authorization expires, keep the prepared file and request browser login
+   again. Renewing authorization does not require discarding a valid edit document.
+
+Credentials are stored in owner-only files under ~/.config/pwc/edit-credentials,
+separately for each API base URL and paper. They never belong in a prompt, edit
+file, repository, or command argument. The CLI does not follow edit redirects.
+"""
