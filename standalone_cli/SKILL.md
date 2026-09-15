@@ -1,237 +1,157 @@
 ---
 name: pwc-cli
-description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, organizations, frameworks, and benchmark leaderboards through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or the `pwc-cli`. Prefer this skill for grounded AI/ML research even when the user does not explicitly ask for a CLI command."
+description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, organizations, frameworks, and benchmark leaderboards, and submitting authenticated paper edits through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or `pwc-cli`."
 ---
 
-Install:
+Generated with `pwc v0.4.0`. Run `pwc skills add --force` to regenerate.
 
-```bash
-pwc_repo=https://raw.githubusercontent.com/huggingface/pwc-cli/main
-curl -LsSf "$pwc_repo/standalone_cli/install.py" | python3
-```
+Research commands query the public [Papers With Code](https://paperswithcode.co) catalog anonymously.
+Paper editing requires explicit browser authorization through `pwc auth login --paper PAPER`.
+Run `pwc --help` or a nested `--help` command when the live parser and this
+skill disagree; the parser is authoritative.
 
-The `pwc` CLI is anonymous and read-only. It queries the public
-[Papers With Code](https://paperswithcode.co) catalog and requires no token.
-Run `pwc --help` or a nested `--help` command when the live parser and this skill
-disagree; the parser is authoritative.
+Use compact output for reading and discovery. Add `--json` for programmatic
+filtering, joining, or schema-dependent processing.
 
-Install or refresh this Skill from the locally installed CLI with
-`pwc skills add --force`. Use `--global` for `~/.agents/skills`, `--claude` to
-also link it for Claude Code, or `--dest PATH` for another harness.
+When the user identifies an author, prefer repeatable structured
+`pwc paper list --author AUTHOR` filters. Add `--search TEXT` for stated topic
+terms and explicit `--order-by date_published --order-dir desc` for newest or
+recent work. Author references accept an exact normalized name, numeric ID, or
+`@HF_USERNAME`; repeated authors use AND semantics.
 
-Use compact output for reading and discovery. Add `--json` when programmatic
-filtering, joining, or schema-dependent processing is useful.
-Use only flags documented for the exact subcommand; do not infer that sibling
-commands share flags. For `pwc paper list`, `pwc task list`, and
-`pwc method list`, use `--page-size`, never `--limit`.
+Publication date ranges are inclusive: use `--start-date YYYY-MM-DD` and
+`--end-date YYYY-MM-DD` with `pwc search` or `pwc paper list`; the start date
+must not be later than `--end-date`. The combined flags are
+`--start-date YYYY-MM-DD --end-date YYYY-MM-DD`.
+
+Paper discovery commands accept `--implementation-coverage` to add official
+implementation status and total linked repository count columns. JSON and
+`pwc paper info` always include both fields. Use
+`--has-official-implementation` with `pwc search` or `pwc paper list` to require
+a catalog-linked official repository; these filters fail closed if unconfirmed.
+
+Use `pwc benchmark --name NAME --max-parameters SIZE` to keep models at or
+below an inclusive parameter limit. SIZE accepts values such as `500M`, `1.5B`,
+`3B`, and raw integers. Models without one consistent parameter count are
+excluded from constrained results.
 
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
-exact paper title. Papers with Code supports external papers which are not on arXiv,
-hence those papers will have a numeric canonical ID.
-Quote titles containing spaces. Title matching is
-case-insensitive but exact; ambiguous titles fail with their matching IDs rather
-than silently selecting a paper.
+exact paper title. Quote titles containing spaces. Title matching is
+case-insensitive but exact; ambiguous titles fail with their matching IDs.
 
 ## Commands
 
-- `pwc search QUERY` — Search papers by title, topic, author, or arXiv ID. This is powered by hybrid/keyword/semantic search using pgvector. Defaults to hybrid.
-  `[--limit 1-100 --page 1-100 --mode hybrid|keyword|semantic
-  --start-date YYYY-MM-DD --end-date YYYY-MM-DD
-  --has-official-implementation --implementation-coverage --json]`
-- `pwc paper info PAPER` — Show metadata including tagged organizations, the
-  abstract, predecessors, and successors.
-  `--include-resources` adds Markdown sections for GitHub repositories, project pages,
-  and Hugging Face artifacts, with official links marked explicitly.
-  `--include-evals` fetches every evaluation for the resolved paper and adds an
-  Evaluations Markdown table (or structured `evaluations` in JSON output).
-  `[--include-resources --include-evals --json]`
-- `pwc paper read PAPER` — Print stored paper Markdown. The resolved paper must
-  have a modern arXiv record. `[--json]`
-- `pwc paper list` — List and filter the paper catalog in a paginated manner.
-  `[--page 1-100 --page-size 1-100 --search TEXT
-  --start-date YYYY-MM-DD --end-date YYYY-MM-DD
-  --task NAME --method NAME --conference NAME --framework NAME
-  --organization NAME --author AUTHOR --all-versions
-  --order-by trending|date_published|citation_count
-  --order-dir asc|desc
-  --include-resources --has-official-implementation
-  --implementation-coverage --json]`
-
-Date ranges are inclusive. When both bounds are supplied, the start date must
-not be after the end date.
-- `pwc paper recent` — List recently published papers.
-  `[--limit 1-100 --implementation-coverage --json]`
-- `pwc paper trending` — List papers with recent repository activity.
-  `[--limit 1-100 --max-age-days 1-365 --min-velocity FLOAT
-  --implementation-coverage --json]`
-- `pwc paper related PAPER` — Find embedding- and taxonomy-ranked related work.
-  `[--limit 1-20 --implementation-coverage --json]`
-- `pwc paper lineage list PAPER` — Render linked Markdown sections for a paper,
-  its predecessors, and its successors. `[--json]`
-- `pwc task --name NAME` — Show a task page in CLI form, including its area,
-  description, hierarchy, research trends, recommended frameworks, sister
-  tasks, subtasks, common methods, benchmarks, and trending papers. `NAME`
-  must exactly match a task name, slug, or ID. `[--json]`
-- `pwc task list` — List research tasks, optionally filtering by a
-  case-insensitive exact area name such as Vision, Audio, or General.
-  Rows include direct paper, benchmark, and evaluation counts for each task.
-  Interactive output groups visible top-level tasks into Markdown area sections;
-  `--group-by-area` forces that view when output is captured, while `--flat`
-  forces the paginated table.
-  `[--page 1-100 --page-size 1-100 --area NAME_OR_ID --level INTEGER
-  --visible-only --group-by-area|--flat
-  --order-by name|created_at|level|paper_count
-  --order-dir asc|desc --json]`
-- `pwc method list` — List research methods, optionally filtering by area or
-  introduction year. This subcommand has no `--search` or `--limit` flag; do
-  not infer flags from sibling list commands. To find methods by name or topic,
-  filter the bounded list with
-  `pwc method list --page-size 500 | rg -i -- 'QUERY'`.
-  `[--page 1-100 --page-size 1-500 --area NAME_OR_ID
-  --introduced-year YEAR
-  --order-by name|full_name|introduced_year|created_at|paper_count
-  --order-dir asc|desc --json]`
-- `pwc method --name NAME` — Show method metadata, its research area,
-  description, introduction year, source paper, and paper count. `NAME` must
-  exactly match a method name, full name, slug, or ID. `[--json]`
-- `pwc conference list` — List conferences with imported papers.
-  `[--year YEAR --json]`
-- `pwc conference --name NAME` — Show conference dates, venue, description,
-  links, tier, and paper count. `NAME` must exactly match a conference name,
-  slug, or ID. `[--json]`
-- `pwc organization list` — List research organizations and their paper and
-  trending metadata. `[--featured-only --json]`
-- `pwc organization --name NAME` — Show organization metadata and public links.
-  `NAME` must exactly match an organization name, slug, or ID. `[--json]`
-- `pwc framework list` — Flatten and list the framework catalog.
-  `[--domain NAME_OR_SLUG --category NAME_OR_SLUG --platform NAME --json]`
-- `pwc framework --name NAME` — Show framework guidance, platforms, links, and
-  introducing paper. `NAME` must exactly match a framework name, slug, or ID.
-  `[--json]`
-- `pwc benchmark list` — Find and rank benchmarks. When `--task` is supplied,
-  the default order is task-specific trending activity. Without filters,
-  interactive output groups top benchmarks under visible tasks by area;
-  `--group-by-area` forces Markdown and `--flat` forces the dataset table.
-  Task, search, pagination, ordering, and open-model filters take precedence
-  over `--group-by-area` and select task-scoped flat output.
-  Rows place the benchmark description and optional Hugging Face dataset URL
-  immediately after the benchmark name, followed by the slug and ID (plus the
-  full name when distinct in grouped output); pass the slug or ID to
-  `pwc benchmark --name IDENTIFIER` for leaderboard details.
-  `[--page 1-100 --page-size 1-100 --search TEXT --task TASK --area NAME_OR_ID
-  --benchmarks-per-task 1-10 --group-by-area|--flat
-  --include-descendants --min-eval-count INTEGER --is-open true|false
-  --order-by trending|name|full_name|created_at|paper_count
-  --order-dir asc|desc --json]`
-- `pwc benchmark --name NAME` — Show a benchmark's top models, scores, source
-  papers, publication dates, parameter counts, and open/closed status. `NAME` must exactly match
-  a benchmark name, full name, slug, or ID.
-  For multi-metric tradeoffs, require numeric metrics, apply repeatable
-  thresholds, sort by one metric, or select a Pareto frontier. Metric names are
-  case-insensitive.
-  `--max-parameters SIZE` keeps models at or below an inclusive parameter
-  limit; SIZE accepts values such as `500M`, `1.5B`, `3B`, and raw integers.
-  Models without one consistent parameter count are excluded.
-  `[--limit 1-100 --is-open true|false --max-parameters SIZE
-  --require-metrics METRIC[,METRIC]
-  --min METRIC=VALUE --max METRIC=VALUE
-  --sort METRIC[:asc|desc]
-  --pareto METRIC:higher,METRIC:lower --json]`
-- `pwc version` — Show the CLI and API contract versions.
-- `pwc skills add` — Install the version-matched CLI Skill.
-  `[--global --claude --dest SKILLS_DIRECTORY --force]`
+- `pwc search QUERY [--limit LIMIT] [--page PAGE] [--mode hybrid|keyword|semantic] [--start-date START_DATE] [--end-date END_DATE] [--has-official-implementation] [--implementation-coverage] [--json]` — search papers.
+- `pwc paper info PAPER [--include-resources] [--include-evals] [--json]` — show paper metadata including abstract.
+- `pwc paper read PAPER [--json]` — print stored paper Markdown.
+- `pwc paper list [--page PAGE] [--page-size PAGE_SIZE] [--search SEARCH] [--start-date START_DATE] [--end-date END_DATE] [--task TASK] [--method METHOD] [--conference CONFERENCE] [--framework FRAMEWORK] [--organization ORGANIZATION] [--author AUTHOR] [--all-versions] [--order-by trending|date_published|citation_count] [--order-dir asc|desc] [--include-resources] [--has-official-implementation] [--implementation-coverage] [--json]` — list and filter papers.
+- `pwc paper recent [--limit LIMIT] [--implementation-coverage] [--json]` — list recent papers.
+- `pwc paper trending [--limit LIMIT] [--max-age-days MAX_AGE_DAYS] [--min-velocity MIN_VELOCITY] [--implementation-coverage] [--json]` — list trending papers.
+- `pwc paper related PAPER [--limit LIMIT] [--implementation-coverage] [--json]` — list related papers.
+- `pwc paper lineage list PAPER [--json]` — list predecessors and successors.
+- `pwc paper edit export PAPER [--output OUTPUT]`.
+- `pwc paper edit preview PAPER [--file FILE]`.
+- `pwc paper edit submit PAPER [--file FILE]`.
+- `pwc task [--name NAME] [--json]` — inspect or list research tasks.
+- `pwc task list [--page PAGE] [--page-size PAGE_SIZE] [--group-by-area] [--flat] [--area AREA] [--level LEVEL] [--visible-only] [--order-by name|created_at|level|paper_count] [--order-dir asc|desc] [--json]` — list and filter research tasks.
+- `pwc method [--name NAME] [--json]` — inspect or list research methods.
+- `pwc method list [--page PAGE] [--page-size PAGE_SIZE] [--area AREA] [--introduced-year INTRODUCED_YEAR] [--order-by name|full_name|introduced_year|created_at|paper_count] [--order-dir asc|desc] [--json]` — list and filter research methods.
+- `pwc conference [--name NAME] [--json]` — inspect or list conferences.
+- `pwc conference list [--year YEAR] [--json]` — list conferences with imported papers.
+- `pwc organization [--name NAME] [--json]` — inspect or list research organizations.
+- `pwc organization list [--featured-only] [--json]` — list research organizations.
+- `pwc framework [--name NAME] [--json]` — inspect or list research frameworks.
+- `pwc framework list [--domain DOMAIN] [--category CATEGORY] [--platform PLATFORM] [--json]` — list research frameworks.
+- `pwc benchmark [--name NAME] [--limit LIMIT] [--is-open true|false] [--max-parameters SIZE] [--require-metrics METRIC[,METRIC]] [--min METRIC=VALUE] [--max METRIC=VALUE] [--sort METRIC[:ASC|DESC]] [--pareto METRIC:HIGHER,METRIC:LOWER] [--json]` — inspect benchmarks.
+- `pwc benchmark list [--page PAGE] [--page-size PAGE_SIZE] [--search SEARCH] [--task TASK] [--group-by-area] [--flat] [--area AREA] [--benchmarks-per-task BENCHMARKS_PER_TASK] [--include-descendants] [--min-eval-count MIN_EVAL_COUNT] [--is-open true|false] [--order-by trending|name|full_name|created_at|paper_count] [--order-dir asc|desc] [--json]` — list and filter benchmarks.
+- `pwc skills add [--global] [--claude] [--dest DEST] [--force]` — install the version-matched pwc CLI Skill.
+- `pwc version` — show CLI and API contract versions.
+- `pwc auth login [--paper PAPER] [--no-browser]`.
+- `pwc auth status [--paper PAPER]`.
+- `pwc auth logout [--paper PAPER]`.
 
 ## Research workflow
 
-1. Use `pwc benchmark list --task TASK` to discover active benchmarks for a given task,
-   then `pwc benchmark --name NAME` to inspect a specific leaderboard.
-   Add `--max-parameters SIZE` when the request constrains model size, including
-   on-device or edge-inference discovery.
-   For accuracy/latency or other multi-metric questions, use
-   `--require-metrics`, thresholds, or `--pareto`; do not infer a tradeoff from
-   a leaderboard sorted by one metric.
-2. Treat the row order from `pwc benchmark list --task TASK` as the primary
-   benchmark priority for an unqualified "best models for TASK" or SOTA request.
-   The order reflects support-weighted recent reporting activity. Inspect and lead
-   with the highest-ranked benchmark that has usable leaderboard results, and
-   preserve benchmark order when comparing several. Do not promote a familiar
-   lower-ranked benchmark merely because its name resembles the task. Deviate only
-   when the user's requested use case clearly favors a specialized benchmark, and
-   explain that reason explicitly.
-3. Use `pwc paper info` to inspect promising results. Add `--include-resources`
-   when linked GitHub repositories, project pages, or Hugging Face artifacts matter.
-   When the paper includes successors, always consider them more state-of-the-art.
-4. Use `pwc search` to search more broadly for a topic or a known paper.
-   Use the default hybrid mode first; use keyword mode for exact terminology
-   and semantic mode for conceptual matches.
-5. Go more in-depth with `pwc paper read`. Do not treat search snippets or
-   titles as sufficient support for detailed claims.
-6. Expand the literature with `pwc paper related` and use
+1. Use `pwc benchmark list --task TASK` to discover active benchmarks, then
+   `pwc benchmark --name NAME` to inspect a leaderboard. Add
+   `--max-parameters SIZE` when model size is part of the request.
+2. Use `pwc paper info` to inspect promising results. Add
+   `--include-resources` when repositories, project pages, or Hugging Face
+   artifacts matter.
+3. Use exact `pwc paper list --author`, `--task`, `--method`, `--conference`,
+   `--framework`, and `--organization` filters for known identities or catalog
+   associations. Combine them to require every association; do not substitute
+   a keyword search. Add `--search` for title or abstract topic terms.
+4. Use `pwc search` for broader discovery, then `pwc paper read` for primary
+   evidence.
+5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
-7. Explore the catalog taxonomy with `pwc task list --group-by-area`, inspect a
-   specific task with `pwc task --name NAME`, then use
-   a method, conference, organization, or framework with its `--name` command;
-   use each entity's `list` filters to narrow broad catalogs.
-8. Synthesize only after gathering enough primary evidence. Preserve paper
-   titles, identifiers, and URLs in the answer so claims remain traceable.
-9. Task and benchmark lists paginate at 100 rows per page. When filtering a
-   list with `rg`, use `| { rg -i -- 'QUERY' || test $? -eq 1; }`: it permits
-   only `rg`'s no-match status while `pipefail` still reports a failed CLI
-   command. Inspect the next page when stderr reports more results. Do not infer
-   domain-specific benchmarks from an unrelated global leaderboard.
-
-## Command selection
-
-- Use `pwc benchmark list --task TASK` for finding state-of-the-art (SOTA) for a given task.
-- If the task is not supported by PwC, use `pwc search` for relevance-ranked discovery.
-- Use `pwc paper info` to gather more info about a specific paper.
-- Use `pwc paper list` for structured filters, date windows, conferences, and
-  deterministic sorting. When the user identifies an author, prefer repeatable
-  exact `--author` filters; add `--search` for stated title or abstract terms,
-  and explicit date ordering for newest work. Author references accept a
-  normalized exact name, numeric ID, or `@HF_USERNAME`; repeats use AND
-  semantics. Use exact `--task`, `--method`, `--conference`, `--framework`, or
-  `--organization` filters for tagged or catalog-associated papers; combine
-  filters to require every association. Do not substitute a keyword search for
-  an organization, author, or taxonomy filter.
-- Use `pwc paper recent` for recency and `pwc paper trending` for current
-  repository activity; these are different signals.
-- Use area names directly with task and method lists, for example
-  `--area Vision`, `--area Audio`, or `--area General`. Area matching is
-  case-insensitive; numeric area IDs are also accepted.
-- Use `pwc conference list --year YEAR` for a specific conference edition year.
-- Use `--include-resources` for linked repositories, project pages, and Hugging
-  Face artifacts. Add `--json` when their structured metadata also matters.
-- Use `--include-evals` with `pwc paper info` when benchmark scores reported by
-  the paper matter.
-- Use `--implementation-coverage` on paper discovery commands to add official
-  implementation status and the total linked repository count. JSON and paper
-  info always include both fields. A false status means only that the catalog
-  has no linked official repository.
-- Use `--has-official-implementation` with search or paper list to require a
-  catalog-linked official repository. The CLI fails closed if the API does not
-  confirm this filter.
-- Use `--all-versions` only when individual arXiv versions are relevant.
-- Use `--is-open true` to restrict benchmark results to open models.
-- Paginate when stderr reports more results. Do not silently treat the first
-  page as the complete catalog.
+6. Preserve paper titles, identifiers, and URLs so claims remain traceable.
 
 ## Output and limits
 
-- Interactive list and search output uses aligned text columns. Benchmark lists
-  remain aligned when piped or captured; other captured lists use lossless TSV
-  for agent and script processing. Paper info uses labeled metadata and Markdown
-  sections. Benchmark details use an aligned table interactively and Markdown
-  when piped or captured.
-- `--json` wraps responses as
-  `{"schema_version":"v1","data":...}` for stable agent consumption.
+- Interactive output is optimized for people. Benchmark lists remain aligned
+  when captured; other captured list output uses lossless TSV. Add `--json` for
+  structured agent or script consumption.
 - Stable exit codes are `0` success, `2` invalid usage, `3` network/server
   failure, and `4` invalid API response.
 - `PWC_API_URL` may select another compatible v1 endpoint. The default is
   `https://paperswithcode.co/api/v1`.
 - Catalog-filtered paper lists fail closed unless the server confirms every
   requested filter; never treat results from an older server as filtered.
+- Parameter-filtered benchmark details fail closed unless the server confirms
+  parameter-filter support and every returned model satisfies the limit.
 
-The standalone parser contains no authentication, mutation, ingestion,
-publication, image, CRON, embedding, or infrastructure commands. Do not
-substitute repository-maintenance commands into a public or sandbox workflow.
+The research commands contain no authentication, catalog mutation, ingestion,
+publication, image, embedding, CRON, or infrastructure-maintenance operations.
+
+
+## Editing one paper
+
+Use this workflow only when the user requests edits. Research commands remain anonymous.
+
+1. Run `pwc auth login --paper PAPER`. Give the user the browser link and code;
+   they sign in with Hugging Face and authorize that paper for one hour. Use
+   `--no-browser` on a remote machine. Never extract, print, or copy credentials.
+2. Run `pwc paper edit export PAPER --output edits.json` (the output must not
+   already exist). It includes paper_id, version, idempotency_key, empty operations,
+   and current reference data. Change operations, not current. Preserve the
+   exported version and retry key. Documents may contain at most 50 operations
+   and 1 MiB of JSON.
+3. Add operations of the form `{"section":"tasks","payload":{"task_ids":[1,2]}}`.
+   A section operation explicitly replaces that section; preserve unrelated links
+   and tags. Omitted sections stay unchanged. Allowed sections and payload keys:
+   tasks/task_ids, methods/method_ids, repositories/repositories,
+   project_pages/project_pages, hf_artifacts/hf_models+hf_datasets+hf_spaces,
+   source_url/source_url (external papers only), and evaluations.
+   Repository/project-page entries contain url and is_official.
+4. For evaluations, an operation without evaluation_id creates a row. Include
+   task_id, dataset_id, metrics (a dictionary of existing metric names to scores),
+   model_name, and the evaluation setup where available. One row can contain
+   multiple metrics. Add evaluation_id to correct an existing row on this paper;
+   omitted update fields stay unchanged. Use source_url and methodology to cite
+   precise evidence when available; source references remain optional. Existing
+   benchmark/task/metric definitions are required. Do not invent missing IDs or
+   create benchmarks. Report unsupported results to the user. No evaluation
+   deletion, paper identity changes, organization edits, or rank overrides.
+5. Run `pwc paper edit preview PAPER --file edits.json`, inspect the before/after
+   changes, then `pwc paper edit submit PAPER --file edits.json`. Publication is
+   immediate: no per-batch browser approval. Respect the user's requested scope.
+   A batch succeeds completely or makes no changes. The response includes status
+   published and a link to the paper's history.
+6. Retry an uncertain network result using the exact same document and retry key.
+   A 409 means changed data or a reused key with different edits. Fetch a fresh
+   export, preserve others' edits, and reconcile. Ask the user if the same score
+   has conflicting corrections. Once you intentionally revise a previously
+   submitted batch, use a fresh export/key. A 403 may mean expired authorization,
+   suspension, or insufficient scope: read the error; do not broaden access.
+   A 429 indicates the shared account limit: 20 distinct papers per UTC day and
+   30 publications per minute. Do not work around account limits.
+7. `pwc auth status --paper PAPER` shows local expiry metadata (revocation is
+   checked by the server on use). `pwc auth logout --paper PAPER` revokes access.
+   If authorization expires, keep the prepared file and request browser login
+   again. Renewing authorization does not require discarding a valid edit document.
+
+Credentials are stored in owner-only files under ~/.config/pwc/edit-credentials,
+separately for each API base URL and paper. They never belong in a prompt, edit
+file, repository, or command argument. The CLI does not follow edit redirects.

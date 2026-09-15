@@ -11,6 +11,8 @@ sys.path.insert(0, str(REPOSITORY / "standalone_cli" / "src"))
 
 from pwc_cli.cli import build_parser  # noqa: E402
 
+EDIT_COMMANDS = ("auth login", "auth status", "auth logout", "paper edit export", "paper edit preview", "paper edit submit")
+
 COMMANDS = (
     "search",
     "paper info",
@@ -66,13 +68,16 @@ def parser_commands() -> set[str]:
 
 
 def main() -> int:
-    expected = set(COMMANDS)
+    expected = set(COMMANDS) | set(EDIT_COMMANDS)
     if parser_commands() != expected:
         raise SystemExit("standalone parser command inventory drifted")
     guide = (
         REPOSITORY / "backend" / "chat_sandbox_worker" / "CLI_GUIDE.md"
     ).read_text()
     skill = (REPOSITORY / "standalone_cli" / "SKILL.md").read_text()
+    for command in EDIT_COMMANDS:
+        if f"pwc {command}" not in skill:
+            raise SystemExit(f"missing edit command: {command}")
     for command in RESEARCH_COMMANDS:
         if command == "version":
             continue
