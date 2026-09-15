@@ -23,13 +23,13 @@ installer = importlib.util.module_from_spec(INSTALLER_SPEC)
 INSTALLER_SPEC.loader.exec_module(installer)
 
 
-def test_complete_parser_omits_catalog_mutation_and_auth_commands():
+def test_complete_parser_omits_administrative_commands():
     help_text = build_parser().format_help()
     assert (
-        "{search,paper,task,method,conference,organization,framework,benchmark,skills,version}"
+        "{search,paper,task,method,conference,organization,framework,benchmark,skills,version,auth}"
         in help_text
     )
-    for command in ("auth", "add-external", "cron", "embedding", "github-issue"):
+    for command in ("add-external", "cron", "embedding", "github-issue"):
         assert command not in help_text
     assert build_parser().parse_args(["paper", "lineage", "list", "2501.1"]).paper
     assert (
@@ -85,7 +85,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.3.1`" in skill
+    assert "Generated with `pwc v0.4.0`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2255,7 +2255,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.3.1\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.0\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
