@@ -43,7 +43,7 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "protocol": "2026-07-28",
     }
     assert rejected.status_code == 403
@@ -206,18 +206,15 @@ def test_one_http_endpoint_serves_modern_and_legacy_protocol_eras():
 def test_proxy_identity_trusts_only_an_exact_loopback_peer():
     headers = Headers({"x-forwarded-for": "203.0.113.9"})
 
-    assert _client_address(
-        {"client": ("127.0.0.1", 1234)}, headers, True
-    ) == "203.0.113.9"
-    assert _client_address(
-        {"client": ("::1", 1234)}, headers, True
-    ) == "203.0.113.9"
-    assert _client_address(
-        {"client": ("10.0.0.2", 1234)}, headers, True
-    ) == "10.0.0.2"
-    assert _client_address(
-        {"client": ("192.168.1.2", 1234)}, headers, True
-    ) == "192.168.1.2"
+    assert (
+        _client_address({"client": ("127.0.0.1", 1234)}, headers, True) == "203.0.113.9"
+    )
+    assert _client_address({"client": ("::1", 1234)}, headers, True) == "203.0.113.9"
+    assert _client_address({"client": ("10.0.0.2", 1234)}, headers, True) == "10.0.0.2"
+    assert (
+        _client_address({"client": ("192.168.1.2", 1234)}, headers, True)
+        == "192.168.1.2"
+    )
 
 
 def test_serialized_mcp_response_limit_fails_closed():
@@ -232,3 +229,27 @@ def test_serialized_mcp_response_limit_fails_closed():
 
     assert response.status_code == 503
     assert response.json() == {"error": "response_too_large"}
+
+
+def test_hybrid_search_counts_toward_the_semantic_limit():
+    app = create_app(
+        StubCatalog(),
+        allowed_hosts=["testserver"],
+        semantic_limit=1,
+    )
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "search_papers",
+            "arguments": {"query": "attention", "mode": "hybrid"},
+        },
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/mcp", json=body)
+        limited = client.post("/mcp", json=body)
+
+    assert first.status_code != 429
+    assert limited.status_code == 429

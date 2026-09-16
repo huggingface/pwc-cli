@@ -1,14 +1,27 @@
+"""MCP tools that mirror every read-only ``pwc`` research command.
+
+Each tool maps one CLI command and exposes each of its research flags as a
+typed parameter, then runs the CLI handler in-process through the catalog.
+``TOOL_COMMANDS``, ``PARAMETER_NAMES``, ``ENTITY_PARAMETERS`` and
+``MCP_ONLY_PARAMETERS`` are the parity contract that ``tests/test_parity.py``
+checks against the CLI parser.
+"""
+
 from __future__ import annotations
 
 import os
 import time
+from collections.abc import Mapping
 from datetime import date
+from functools import cache
 from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pwc_cli import queries
+from pwc_cli.cli import UsageError
 from pwc_cli.transport import ResponseError, TransportError
 from pydantic import Field
 
@@ -30,12 +43,14 @@ from pwc_mcp.models import (
     PaperLineageResult,
     PaperPage,
     PaperReadResult,
+    QueryResult,
     TaskDetail,
     TaskResult,
     benchmark_summary,
     catalog_reference,
     evaluation,
     paper_detail,
+    paper_evaluation,
     paper_reference,
     paper_summary,
 )
@@ -46,11 +61,139 @@ READ_ONLY = ToolAnnotations(
     idempotent_hint=True,
     open_world_hint=True,
 )
-Page = Annotated[int, Field(ge=1, le=100)]
-Limit = Annotated[int, Field(ge=1, le=25)]
-Reference = Annotated[str, Field(min_length=1, max_length=500)]
+# Hosted ceiling on rows per response (SPEC.md); the CLI allows up to 100.
+MAX_ROWS = 25
+
+# One read-only CLI command per tool.
+TOOL_COMMANDS: dict[str, tuple[str, ...]] = {
+    "search_papers": ("search",),
+    "get_paper_info": ("paper", "info"),
+    "read_paper": ("paper", "read"),
+    "list_papers": ("paper", "list"),
+    "list_recent_papers": ("paper", "recent"),
+    "list_trending_papers": ("paper", "trending"),
+    "get_related_papers": ("paper", "related"),
+    "get_paper_lineage": ("paper", "lineage", "list"),
+    "get_task": ("task",),
+    "list_tasks": ("task", "list"),
+    "get_method": ("method",),
+    "list_methods": ("method", "list"),
+    "get_conference": ("conference",),
+    "list_conferences": ("conference", "list"),
+    "get_organization": ("organization",),
+    "list_organizations": ("organization", "list"),
+    "get_framework": ("framework",),
+    "list_frameworks": ("framework", "list"),
+    "get_benchmark": ("benchmark",),
+    "list_benchmarks": ("benchmark", "list"),
+}
+# CLI destinations that keep their established MCP parameter name.
+PARAMETER_NAMES: dict[str, str] = {
+    "start_date": "published_after",
+    "end_date": "published_before",
+    "page_size": "limit",
+    "author": "authors",
+    "order_dir": "order_direction",
+    "min_eval_count": "minimum_evaluations",
+    "include_evals": "include_evaluations",
+}
+# ``--name`` selects the tool's entity and is exposed under the entity's name.
+ENTITY_PARAMETERS: dict[str, str] = {
+    "get_task": "task",
+    "get_method": "method",
+    "get_conference": "conference",
+    "get_organization": "organization",
+    "get_framework": "framework",
+    "get_benchmark": "benchmark",
+}
+# Parameters with no CLI flag; ``read_paper`` continues with a signed cursor.
+MCP_ONLY_PARAMETERS: dict[str, frozenset[str]] = {"read_paper": frozenset({"cursor"})}
+_CLI_DESTINATIONS = {mcp: cli for cli, mcp in PARAMETER_NAMES.items()}
+
+
+@cache
+def _cli_destinations(tool: str) -> frozenset[str]:
+    return frozenset(queries.query_options(TOOL_COMMANDS[tool]))
+
+
+def cli_options(tool: str, **parameters: Any) -> dict[str, Any]:
+    """Translate MCP parameters into the CLI destinations of ``tool``.
+
+    A parameter keeps its name when the command has that flag (``--limit``),
+    and otherwise follows ``PARAMETER_NAMES`` (``limit`` -> ``--page-size``).
+    """
+    entity = ENTITY_PARAMETERS.get(tool)
+    destinations = _cli_destinations(tool)
+    options: dict[str, Any] = {}
+    for name, value in parameters.items():
+        if name in MCP_ONLY_PARAMETERS.get(tool, frozenset()):
+            continue
+        if name == entity:
+            destination = "name"
+        elif name in destinations:
+            destination = name
+        else:
+            destination = _CLI_DESTINATIONS.get(name, name)
+        options[destination] = value
+    return options
+
+
+Page = Annotated[int, Field(ge=1, le=100, description="Result page, starting at 1.")]
+Limit = Annotated[
+    int, Field(ge=1, le=MAX_ROWS, description="Rows per response, at most 25.")
+]
+Reference = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=500,
+        description="arXiv ID, numeric PwC ID, arXiv/Hugging Face/PwC URL, or exact title.",
+    ),
+]
 Query = Annotated[str, Field(min_length=1, max_length=500)]
-AuthorList = Annotated[list[str], Field(max_length=10)]
+Entity = Annotated[str, Field(min_length=1, max_length=500)]
+IsoDate = Annotated[
+    str, Field(max_length=10, description="Inclusive publication date, YYYY-MM-DD.")
+]
+AuthorList = Annotated[
+    list[str],
+    Field(
+        max_length=10,
+        description="Exact author names, numeric IDs, or @HF_USERNAME; every author must match.",
+    ),
+]
+Area = Annotated[str, Field(description="Case-insensitive exact area name or area ID.")]
+Direction = Literal["asc", "desc"]
+ParameterSize = Annotated[
+    str,
+    Field(
+        max_length=32,
+        description="Inclusive model-size limit such as 500M, 1.5B, 3B, or a raw integer.",
+    ),
+]
+MetricNames = Annotated[
+    list[str],
+    Field(
+        min_length=1, description="Metric names that every returned row must report."
+    ),
+]
+MetricBounds = Annotated[
+    dict[str, float], Field(description="Metric name to numeric threshold.")
+]
+SortMetric = Annotated[
+    str,
+    Field(
+        max_length=200,
+        description="METRIC or METRIC:asc|desc; default direction is desc.",
+    ),
+]
+ParetoObjectives = Annotated[
+    list[str],
+    Field(
+        min_length=2,
+        description="Two or more METRIC:higher or METRIC:lower objectives; keeps the Pareto frontier.",
+    ),
+]
 
 
 def _validate_date_range(start: str | None, end: str | None) -> None:
@@ -63,31 +206,40 @@ def _validate_date_range(start: str | None, end: str | None) -> None:
         raise ToolError("published_after must be on or before published_before")
 
 
-def _catalog_call(function: Any, *args: Any, **kwargs: Any) -> Any:
-    """Turn upstream failures into deliberately generic, non-content-bearing errors."""
-    try:
-        return function(*args, **kwargs)
-    except (ResponseError, TransportError) as error:
-        raise ToolError("the Papers With Code catalog request failed") from error
+def _dicts(values: Any) -> list[dict[str, Any]]:
+    return [value for value in values or [] if isinstance(value, dict)]
+
+
+def _next_page(data: Any) -> int | None:
+    value = data.get("next_page") if isinstance(data, dict) else None
+    return int(value) if value is not None else None
+
+
+def _paper_page(data: Any) -> PaperPage:
+    """Project a paper listing; recent/trending endpoints return a bare list."""
+    if isinstance(data, list):
+        rows: Any = data
+    elif isinstance(data, dict):
+        rows = data.get("results")
+    else:
+        raise TypeError("paper listing did not contain a result document")
+    return PaperPage(
+        items=[paper_summary(item) for item in _dicts(rows)],
+        next_page=_next_page(data),
+        data=data,
+    )
+
+
+def _grouped_benchmarks(areas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        benchmark
+        for area in areas
+        for task in _dicts(area.get("tasks"))
+        for benchmark in _dicts(task.get("benchmarks"))
+    ]
 
 
 class Catalog(Protocol):
-    def search_papers(
-        self,
-        *,
-        query: str,
-        mode: str = "keyword",
-        page: int = 1,
-        limit: int = 10,
-        published_after: str | None = None,
-        published_before: str | None = None,
-        has_official_implementation: bool = False,
-    ) -> dict[str, Any]: ...
-
-    def get_paper_info(
-        self, paper: str, *, include_resources: bool
-    ) -> dict[str, Any]: ...
-
     def resolve_paper(self, paper: str) -> str: ...
 
     def read_paper_chunk(
@@ -100,47 +252,7 @@ class Catalog(Protocol):
         resolved: bool = False,
     ) -> PaperMarkdownChunk: ...
 
-    def list_papers(
-        self,
-        *,
-        search: str | None = None,
-        task: str | None = None,
-        method: str | None = None,
-        conference: str | None = None,
-        framework: str | None = None,
-        organization: str | None = None,
-        authors: list[str] | None = None,
-        published_after: str | None = None,
-        published_before: str | None = None,
-        order_by: str = "date_published",
-        order_direction: str = "desc",
-        page: int = 1,
-        limit: int = 10,
-    ) -> dict[str, Any]: ...
-
-    def get_related_papers(self, paper: str, *, limit: int) -> dict[str, Any]: ...
-
-    def get_paper_lineage(self, paper: str) -> dict[str, Any]: ...
-
-    def get_task(self, task: str) -> dict[str, Any]: ...
-
-    def get_method(self, method: str) -> dict[str, Any]: ...
-
-    def list_benchmarks(
-        self,
-        *,
-        search: str | None = None,
-        task: str | None = None,
-        include_descendants: bool = False,
-        minimum_evaluations: int | None = None,
-        is_open: bool | None = None,
-        page: int = 1,
-        limit: int = 10,
-    ) -> dict[str, Any]: ...
-
-    def get_benchmark(
-        self, benchmark: str, *, limit: int, is_open: bool | None
-    ) -> dict[str, Any]: ...
+    def query(self, command: tuple[str, ...], options: Mapping[str, Any]) -> Any: ...
 
 
 def build_server(
@@ -156,7 +268,10 @@ def build_server(
     server = MCPServer(
         "pwc",
         title="Papers With Code",
-        description="Read-only access to papers, tasks, methods, and benchmarks.",
+        description=(
+            "Read-only access to papers, tasks, methods, conferences, organizations, "
+            "frameworks, and benchmarks; every pwc CLI research command and flag."
+        ),
         version=__version__,
         website_url="https://paperswithcode.co",
         cache_hints={
@@ -167,57 +282,86 @@ def build_server(
         },
     )
 
+    def run(tool: str, **parameters: Any) -> Any:
+        """Run the tool's CLI command; surface usage errors, hide upstream detail."""
+        try:
+            return catalog.query(TOOL_COMMANDS[tool], cli_options(tool, **parameters))
+        except UsageError as error:
+            raise ToolError(str(error)) from error
+        except (ResponseError, TransportError) as error:
+            raise ToolError("the Papers With Code catalog request failed") from error
+
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def search_papers(
         query: Query,
-        mode: Literal["keyword", "semantic"] = "keyword",
+        mode: Literal["hybrid", "keyword", "semantic"] = "keyword",
         page: Page = 1,
         limit: Limit = 10,
-        published_after: str | None = None,
-        published_before: str | None = None,
+        published_after: IsoDate | None = None,
+        published_before: IsoDate | None = None,
         has_official_implementation: bool = False,
     ) -> PaperPage:
-        """Search papers by title, topic, author, or arXiv ID."""
+        """Search papers by title, topic, author, or arXiv ID (`pwc search`)."""
         _validate_date_range(published_after, published_before)
-        payload = _catalog_call(
-            catalog.search_papers,
-            query=query,
-            mode=mode,
-            page=page,
-            limit=limit,
-            published_after=published_after,
-            published_before=published_before,
-            has_official_implementation=has_official_implementation,
-        )
-        return PaperPage(
-            items=[
-                paper_summary(item)
-                for item in payload.get("results") or []
-                if isinstance(item, dict)
-            ],
-            next_page=(
-                int(payload["next_page"])
-                if payload.get("next_page") is not None
-                else None
-            ),
+        return _paper_page(
+            run(
+                "search_papers",
+                query=query,
+                mode=mode,
+                page=page,
+                limit=limit,
+                published_after=published_after,
+                published_before=published_before,
+                has_official_implementation=has_official_implementation,
+            )
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_paper_info(paper: Reference) -> PaperInfoResult:
-        """Get metadata for an arXiv ID, PwC ID, URL, or exact paper title."""
-        payload = _catalog_call(catalog.get_paper_info, paper, include_resources=True)
-        return PaperInfoResult(paper=paper_detail(payload))
+    def get_paper_info(
+        paper: Reference,
+        include_resources: bool = True,
+        include_evaluations: bool = False,
+    ) -> PaperInfoResult:
+        """Get paper metadata, abstract, tasks, methods, lineage, repositories, Hugging Face artifacts, and optionally every evaluation (`pwc paper info`)."""
+        data = run(
+            "get_paper_info",
+            paper=paper,
+            include_resources=include_resources,
+            include_evaluations=include_evaluations,
+        )
+        if not isinstance(data, dict):
+            raise TypeError("paper response did not contain a paper")
+        evaluations = data.get("evaluations")
+        return PaperInfoResult(
+            paper=paper_detail(data),
+            evaluation_count=(
+                int(evaluations.get("count") or 0)
+                if isinstance(evaluations, dict)
+                else None
+            ),
+            evaluations=(
+                [paper_evaluation(item) for item in _dicts(evaluations.get("results"))]
+                if isinstance(evaluations, dict)
+                else None
+            ),
+            data=data,
+        )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def read_paper(paper: Reference, cursor: str | None = None) -> PaperReadResult:
-        """Read stored paper Markdown, continuing oversized documents with a cursor."""
+        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`)."""
         reference = paper.strip()
         try:
             state = codec.decode(cursor, reference=reference) if cursor else None
         except ValueError as error:
             raise ToolError(str(error)) from error
         if state is None:
-            canonical = _catalog_call(catalog.resolve_paper, reference)
+            try:
+                canonical = catalog.resolve_paper(reference)
+            except (ResponseError, TransportError) as error:
+                raise ToolError(
+                    "the Papers With Code catalog request failed"
+                ) from error
             offset = 0
             content_version = None
             limit = read_chunk_bytes
@@ -239,7 +383,9 @@ def build_server(
                 resolved=True,
             )
         except PaperVersionMismatchError as error:
-            raise ToolError("paper changed; restart reading from the beginning") from error
+            raise ToolError(
+                "paper changed; restart reading from the beginning"
+            ) from error
         except (ResponseError, TransportError) as error:
             raise ToolError("the Papers With Code catalog request failed") from error
         if chunk.paper != canonical or chunk.source != source:
@@ -273,96 +419,94 @@ def build_server(
         framework: str | None = None,
         organization: str | None = None,
         authors: AuthorList | None = None,
-        published_after: str | None = None,
-        published_before: str | None = None,
-        order_by: Literal[
-            "date_published", "citation_count", "title"
-        ] = "date_published",
-        order_direction: Literal["asc", "desc"] = "desc",
+        published_after: IsoDate | None = None,
+        published_before: IsoDate | None = None,
+        all_versions: bool = False,
+        order_by: Literal["trending", "date_published", "citation_count"] = "trending",
+        order_direction: Direction = "desc",
+        include_resources: bool = False,
+        has_official_implementation: bool = False,
         page: Page = 1,
-        limit: Limit = 10,
+        limit: Limit = 20,
     ) -> PaperPage:
-        """List and filter papers in a deterministic catalog order."""
+        """List and filter papers by exact catalog associations in a deterministic order (`pwc paper list`)."""
         _validate_date_range(published_after, published_before)
-        payload = _catalog_call(
-            catalog.list_papers,
-            search=search,
-            task=task,
-            method=method,
-            conference=conference,
-            framework=framework,
-            organization=organization,
-            authors=authors or [],
-            published_after=published_after,
-            published_before=published_before,
-            order_by=order_by,
-            order_direction=order_direction,
-            page=page,
-            limit=limit,
-        )
-        return PaperPage(
-            items=[
-                paper_summary(item)
-                for item in payload.get("results") or []
-                if isinstance(item, dict)
-            ],
-            next_page=(
-                int(payload["next_page"])
-                if payload.get("next_page") is not None
-                else None
-            ),
+        return _paper_page(
+            run(
+                "list_papers",
+                search=search,
+                task=task,
+                method=method,
+                conference=conference,
+                framework=framework,
+                organization=organization,
+                authors=authors or None,
+                published_after=published_after,
+                published_before=published_before,
+                all_versions=all_versions,
+                order_by=order_by,
+                order_direction=order_direction,
+                include_resources=include_resources,
+                has_official_implementation=has_official_implementation,
+                page=page,
+                limit=limit,
+            )
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_related_papers(paper: Reference, limit: Limit = 10) -> PaperPage:
-        """Find catalog papers related to one paper."""
-        payload = _catalog_call(catalog.get_related_papers, paper, limit=limit)
-        return PaperPage(
-            items=[
-                paper_summary(item)
-                for item in payload.get("results") or []
-                if isinstance(item, dict)
-            ],
-            next_page=None,
+    def list_recent_papers(limit: Limit = 10) -> PaperPage:
+        """List the most recently added papers (`pwc paper recent`)."""
+        return _paper_page(run("list_recent_papers", limit=limit))
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def list_trending_papers(
+        limit: Limit = 20,
+        max_age_days: Annotated[int, Field(ge=1, le=365)] = 180,
+        min_velocity: float | None = None,
+    ) -> PaperPage:
+        """List trending papers by repository velocity (`pwc paper trending`)."""
+        return _paper_page(
+            run(
+                "list_trending_papers",
+                limit=limit,
+                max_age_days=max_age_days,
+                min_velocity=min_velocity,
+            )
         )
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def get_related_papers(
+        paper: Reference, limit: Annotated[int, Field(ge=1, le=20)] = 4
+    ) -> PaperPage:
+        """Find catalog papers related to one paper (`pwc paper related`)."""
+        return _paper_page(run("get_related_papers", paper=paper, limit=limit))
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_paper_lineage(paper: Reference) -> PaperLineageResult:
-        """Get explicit predecessor and successor relationships for a paper."""
-        payload = _catalog_call(catalog.get_paper_lineage, paper)
-        current = payload.get("paper")
+        """Get explicit predecessor and successor papers (`pwc paper lineage list`)."""
+        data = run("get_paper_lineage", paper=paper)
+        current = data.get("paper") if isinstance(data, dict) else None
         if not isinstance(current, dict):
             raise TypeError("lineage response did not contain a paper")
         return PaperLineageResult(
             paper=paper_reference(current),
             predecessors=[
-                paper_reference(item)
-                for item in payload.get("predecessors") or []
-                if isinstance(item, dict)
+                paper_reference(item) for item in _dicts(data.get("predecessors"))
             ],
             successors=[
-                paper_reference(item)
-                for item in payload.get("successors") or []
-                if isinstance(item, dict)
+                paper_reference(item) for item in _dicts(data.get("successors"))
             ],
+            data=data,
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_task(task: Reference) -> TaskResult:
-        """Get an exact task by ID, slug, or name, including its benchmarks."""
-        payload = _catalog_call(catalog.get_task, task)
-        item = payload.get("task")
+    def get_task(task: Entity) -> TaskResult:
+        """Get one exact task by name, slug, or ID with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`)."""
+        data = run("get_task", task=task)
+        item = data.get("task") if isinstance(data, dict) else None
         if not isinstance(item, dict):
             raise TypeError("task response did not contain a task")
-        area_item = payload.get("area")
-        area = (
-            AreaReference(
-                id=str(area_item.get("id") or ""),
-                name=str(area_item.get("name") or "Unknown area"),
-            )
-            if isinstance(area_item, dict)
-            else None
-        )
+        area_item = data.get("area")
         return TaskResult(
             task=TaskDetail(
                 id=str(item.get("id") or ""),
@@ -371,30 +515,59 @@ def build_server(
                 description=(
                     str(item["description"]) if item.get("description") else None
                 ),
-                paper_count=int(item.get("paper_count") or 0),
-                area=area,
-                parents=[
-                    catalog_reference(value)
-                    for value in payload.get("parents") or []
-                    if isinstance(value, dict)
-                ],
-                children=[
-                    catalog_reference(value)
-                    for value in payload.get("children") or []
-                    if isinstance(value, dict)
-                ],
+                paper_count=int(
+                    item.get("paper_count") or data.get("paper_count") or 0
+                ),
+                area=(
+                    AreaReference(
+                        id=str(area_item.get("id") or ""),
+                        name=str(area_item.get("name") or "Unknown area"),
+                    )
+                    if isinstance(area_item, dict)
+                    else None
+                ),
+                parents=[catalog_reference(v) for v in _dicts(data.get("parents"))],
+                children=[catalog_reference(v) for v in _dicts(data.get("children"))],
                 benchmarks=[
-                    benchmark_summary(value)
-                    for value in payload.get("benchmarks") or []
-                    if isinstance(value, dict)
+                    benchmark_summary(v) for v in _dicts(data.get("benchmarks"))
                 ],
+            ),
+            data=data,
+        )
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def list_tasks(
+        area: Area | None = None,
+        level: int | None = None,
+        visible_only: bool = False,
+        group_by_area: bool = False,
+        order_by: Literal["name", "created_at", "level", "paper_count"] = "name",
+        order_direction: Direction = "asc",
+        page: Page = 1,
+        limit: Limit | None = None,
+    ) -> QueryResult:
+        """List and filter research tasks, or group the visible top-level taxonomy by area (`pwc task list`)."""
+        return QueryResult(
+            data=run(
+                "list_tasks",
+                area=area,
+                level=level,
+                visible_only=visible_only,
+                group_by_area=group_by_area,
+                order_by=order_by,
+                order_direction=order_direction,
+                page=page,
+                limit=limit if limit is not None or group_by_area else MAX_ROWS,
             )
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_method(method: Reference) -> MethodResult:
-        """Get an exact method by ID, slug, full name, or name."""
-        item = _catalog_call(catalog.get_method, method)
+    def get_method(method: Entity) -> MethodResult:
+        """Get one exact method by name, full name, slug, or ID (`pwc method --name`)."""
+        data = run("get_method", method=method)
+        item = data.get("method") if isinstance(data, dict) else None
+        if not isinstance(item, dict):
+            raise TypeError("method response did not contain a method")
         return MethodResult(
             method=MethodDetail(
                 id=str(item.get("id") or ""),
@@ -419,7 +592,107 @@ def build_server(
                     str(item["source_title"]) if item.get("source_title") else None
                 ),
                 paper_count=int(item.get("paper_count") or 0),
+            ),
+            data=data,
+        )
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def list_methods(
+        area: Area | None = None,
+        introduced_year: int | None = None,
+        order_by: Literal[
+            "name", "full_name", "introduced_year", "created_at", "paper_count"
+        ] = "name",
+        order_direction: Direction = "asc",
+        page: Page = 1,
+        limit: Limit = MAX_ROWS,
+    ) -> QueryResult:
+        """List and filter research methods (`pwc method list`)."""
+        return QueryResult(
+            data=run(
+                "list_methods",
+                area=area,
+                introduced_year=introduced_year,
+                order_by=order_by,
+                order_direction=order_direction,
+                page=page,
+                limit=limit,
             )
+        )
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def get_conference(conference: Entity) -> QueryResult:
+        """Get one exact conference by name, slug, or ID (`pwc conference --name`)."""
+        return QueryResult(data=run("get_conference", conference=conference))
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def list_conferences(year: int | None = None) -> QueryResult:
+        """List conferences with imported papers (`pwc conference list`)."""
+        return QueryResult(data=run("list_conferences", year=year))
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def get_organization(organization: Entity) -> QueryResult:
+        """Get one exact research organization by name, slug, or ID (`pwc organization --name`)."""
+        return QueryResult(data=run("get_organization", organization=organization))
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def list_organizations(featured_only: bool = False) -> QueryResult:
+        """List research organizations (`pwc organization list`)."""
+        return QueryResult(data=run("list_organizations", featured_only=featured_only))
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def get_framework(framework: Entity) -> QueryResult:
+        """Get one exact research framework by name, slug, or ID (`pwc framework --name`)."""
+        return QueryResult(data=run("get_framework", framework=framework))
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def list_frameworks(
+        domain: str | None = None,
+        category: str | None = None,
+        platform: str | None = None,
+    ) -> QueryResult:
+        """List research frameworks by domain, category, or platform (`pwc framework list`)."""
+        return QueryResult(
+            data=run(
+                "list_frameworks", domain=domain, category=category, platform=platform
+            )
+        )
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def get_benchmark(
+        benchmark: Entity,
+        limit: Limit = 20,
+        is_open: bool | None = None,
+        max_parameters: ParameterSize | None = None,
+        require_metrics: MetricNames | None = None,
+        minimum_metrics: MetricBounds | None = None,
+        maximum_metrics: MetricBounds | None = None,
+        sort_metric: SortMetric | None = None,
+        pareto: ParetoObjectives | None = None,
+    ) -> BenchmarkResult:
+        """Get one exact benchmark and its leaderboard, with model-size, metric threshold, sort, and Pareto filters (`pwc benchmark --name`)."""
+        data = run(
+            "get_benchmark",
+            benchmark=benchmark,
+            limit=limit,
+            is_open=is_open,
+            max_parameters=max_parameters,
+            require_metrics=require_metrics,
+            minimum_metrics=minimum_metrics,
+            maximum_metrics=maximum_metrics,
+            sort_metric=sort_metric,
+            pareto=pareto,
+        )
+        item = data.get("benchmark") if isinstance(data, dict) else None
+        if not isinstance(item, dict):
+            raise TypeError("benchmark response did not contain a benchmark")
+        matched = data.get("matched_count")
+        return BenchmarkResult(
+            benchmark=benchmark_summary(item),
+            evaluation_count=int(data.get("count") or 0),
+            matched_count=int(matched) if matched is not None else None,
+            evaluations=[evaluation(value) for value in _dicts(data.get("results"))],
+            data=data,
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -429,54 +702,41 @@ def build_server(
         include_descendants: bool = False,
         minimum_evaluations: int | None = None,
         is_open: bool | None = None,
+        group_by_area: bool = False,
+        area: Area | None = None,
+        benchmarks_per_task: Annotated[int, Field(ge=1, le=10)] = 3,
+        order_by: Literal["trending", "name", "full_name", "created_at", "paper_count"]
+        | None = None,
+        order_direction: Direction = "asc",
         page: Page = 1,
-        limit: Limit = 10,
+        limit: Limit | None = None,
     ) -> BenchmarkPage:
-        """List benchmark datasets with optional task and availability filters."""
-        payload = _catalog_call(
-            catalog.list_benchmarks,
+        """List and filter benchmarks, ranked by trend for a task, or grouped by area and task (`pwc benchmark list`)."""
+        grouped = group_by_area or area is not None
+        data = run(
+            "list_benchmarks",
             search=search,
             task=task,
             include_descendants=include_descendants,
             minimum_evaluations=minimum_evaluations,
             is_open=is_open,
+            group_by_area=group_by_area,
+            area=area,
+            benchmarks_per_task=benchmarks_per_task,
+            order_by=order_by,
+            order_direction=order_direction,
             page=page,
-            limit=limit,
+            limit=limit if limit is not None or grouped else MAX_ROWS,
         )
+        if not isinstance(data, dict):
+            raise TypeError("benchmark listing did not contain a result document")
+        rows = _dicts(data.get("results"))
+        if grouped:
+            rows = _grouped_benchmarks(rows)
         return BenchmarkPage(
-            items=[
-                benchmark_summary(item)
-                for item in payload.get("results") or []
-                if isinstance(item, dict)
-            ],
-            next_page=(
-                int(payload["next_page"])
-                if payload.get("next_page") is not None
-                else None
-            ),
-        )
-
-    @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_benchmark(
-        benchmark: Reference,
-        limit: Limit = 10,
-        is_open: bool | None = None,
-    ) -> BenchmarkResult:
-        """Get an exact benchmark and its top evaluation rows."""
-        payload = _catalog_call(
-            catalog.get_benchmark, benchmark, limit=limit, is_open=is_open
-        )
-        item = payload.get("benchmark")
-        if not isinstance(item, dict):
-            raise TypeError("benchmark response did not contain a benchmark")
-        return BenchmarkResult(
-            benchmark=benchmark_summary(item),
-            evaluation_count=int(payload.get("count") or 0),
-            evaluations=[
-                evaluation(value)
-                for value in payload.get("results") or []
-                if isinstance(value, dict)
-            ],
+            items=[benchmark_summary(item) for item in rows],
+            next_page=_next_page(data),
+            data=data,
         )
 
     @server.resource(

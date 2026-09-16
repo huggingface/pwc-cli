@@ -23,7 +23,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import CatalogClient
-from pwc_mcp.server import Catalog, build_server
+from pwc_mcp.server import TOOL_COMMANDS, Catalog, build_server
 
 LOGGER = logging.getLogger("pwc_mcp.requests")
 # MCP SDK diagnostics can include peer-supplied tool names and resource URIs.
@@ -32,18 +32,7 @@ logging.getLogger("mcp").setLevel(logging.CRITICAL + 1)
 PROTOCOL_VERSION = "2026-07-28"
 MAX_REQUEST_BODY_SIZE = 2 * 1024 * 1024
 MAX_RESPONSE_BODY_SIZE = 2 * 1024 * 1024
-KNOWN_TOOLS = {
-    "search_papers",
-    "list_papers",
-    "get_paper_info",
-    "read_paper",
-    "get_related_papers",
-    "get_paper_lineage",
-    "get_task",
-    "get_method",
-    "list_benchmarks",
-    "get_benchmark",
-}
+KNOWN_TOOLS = frozenset(TOOL_COMMANDS)
 KNOWN_PROTOCOLS = {
     PROTOCOL_VERSION,
     "2025-11-25",
@@ -206,7 +195,8 @@ def _tool_and_semantic(headers: Headers, body: bytes) -> tuple[str | None, bool]
             mode = arguments.get("mode")
     tool = body_tool or header_tool
     tool = tool if tool in KNOWN_TOOLS else None
-    return tool, tool == "search_papers" and mode == "semantic"
+    # Hybrid retrieval also runs the dense embedding search upstream.
+    return tool, tool == "search_papers" and mode in {"semantic", "hybrid"}
 
 
 def _protocol_label(headers: Headers) -> str:

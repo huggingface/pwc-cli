@@ -8,8 +8,9 @@ coding agents and a hosted Model Context Protocol server.
 
 The [`mcp_server`](mcp_server) package exposes an anonymous, read-only,
 agent-native interface over Streamable HTTP. It supports MCP `2026-07-28` and
-legacy 2025-era clients from one endpoint, with tools for papers, related work,
-lineage, tasks, methods, benchmarks, and leaderboard evaluations.
+legacy 2025-era clients from one endpoint, with one tool per `pwc` research
+command: papers, related work, lineage, tasks, methods, conferences,
+organizations, frameworks, benchmarks, and filtered leaderboard evaluations.
 
 Run it locally with:
 

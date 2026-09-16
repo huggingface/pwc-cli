@@ -3,19 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from pwc_mcp.server import TOOL_COMMANDS
+
 SKILL = Path(__file__).parents[1] / "SKILL.md"
-EXPECTED_TOOLS = {
-    "search_papers",
-    "list_papers",
-    "get_paper_info",
-    "read_paper",
-    "get_related_papers",
-    "get_paper_lineage",
-    "get_task",
-    "get_method",
-    "list_benchmarks",
-    "get_benchmark",
-}
+EXPECTED_TOOLS = set(TOOL_COMMANDS)
 
 
 def test_mcp_skill_has_valid_agent_skills_frontmatter() -> None:

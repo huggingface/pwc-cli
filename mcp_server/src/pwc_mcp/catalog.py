@@ -4,10 +4,12 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote, urlparse
 
+from pwc_cli import queries
 from pwc_cli.transport import Client, HTTPStatusError, Response, ResponseError
 
 PAPER_ID = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z][a-z0-9.-]*/\d{7}|\d+)", re.IGNORECASE)
@@ -17,6 +19,27 @@ MARKDOWN_CHUNK_BYTES = 65_536
 MARKDOWN_CACHE_ENTRIES = 256
 MARKDOWN_CACHE_BYTES = 16 * 1024 * 1024
 MARKDOWN_CACHE_SECONDS = 3600
+# Search and paper listings change quickly; taxonomy is stable; the rest sits
+# between (SPEC.md: one minute, ten minutes, and five minutes respectively).
+VOLATILE_PATHS = frozenset(
+    {"papers/", "papers/search", "papers/recent", "papers/trending"}
+)
+TAXONOMY_PREFIXES = (
+    "tasks/",
+    "methods/",
+    "areas/",
+    "conferences/",
+    "organizations/",
+    "frameworks/",
+)
+
+
+def cache_ttl(path: str) -> int:
+    if path in VOLATILE_PATHS:
+        return 60
+    if path.startswith(TAXONOMY_PREFIXES):
+        return 600
+    return 300
 
 
 @dataclass(frozen=True)
@@ -79,9 +102,9 @@ class _TTLCache:
 
 class _MarkdownChunkCache:
     def __init__(self):
-        self._values: OrderedDict[
-            object, tuple[float, int, PaperMarkdownChunk]
-        ] = OrderedDict()
+        self._values: OrderedDict[object, tuple[float, int, PaperMarkdownChunk]] = (
+            OrderedDict()
+        )
         self._bytes = 0
         self._lock = threading.Lock()
 
@@ -129,6 +152,21 @@ class CatalogClient:
         self.cache = _TTLCache()
         self.markdown_cache = _MarkdownChunkCache()
 
+    def _response(
+        self,
+        path: str,
+        params: Mapping[str, object | None] | None = None,
+        *,
+        ttl: int,
+    ) -> Response:
+        key = ("response", path, _freeze(dict(params or {})))
+        cached = self.cache.get(key)
+        if isinstance(cached, Response):
+            return cached
+        response = self.transport.get(path, dict(params or {}))
+        self.cache.put(key, response, ttl)
+        return response
+
     def _json(
         self,
         path: str,
@@ -136,14 +174,9 @@ class CatalogClient:
         *,
         ttl: int,
     ) -> dict[str, Any]:
-        key = ("json", path, _freeze(params or {}))
-        cached = self.cache.get(key)
-        if isinstance(cached, dict):
-            return cached
-        payload = self.transport.get(path, params).json()
+        payload = self._response(path, params, ttl=ttl).json()
         if not isinstance(payload, dict):
             raise ResponseError("API returned an unexpected response shape")
-        self.cache.put(key, payload, ttl)
         return payload
 
     def check_readiness(self) -> bool:
@@ -263,65 +296,6 @@ class CatalogClient:
     def resolve_paper(self, paper: str) -> str:
         return self._resolve_paper(paper)
 
-    @staticmethod
-    def _exact(
-        reference: str,
-        items: list[dict[str, Any]],
-        label: str,
-        fields: tuple[str, ...] = ("name", "slug", "id"),
-    ) -> dict[str, Any]:
-        target = reference.strip().casefold()
-        for field in fields:
-            for item in items:
-                if str(item.get(field) or "").strip().casefold() == target:
-                    return item
-        raise ResponseError(f"{label} not found: {reference}")
-
-    def search_papers(
-        self,
-        *,
-        query: str,
-        mode: str = "keyword",
-        page: int = 1,
-        limit: int = 10,
-        published_after: str | None = None,
-        published_before: str | None = None,
-        has_official_implementation: bool = False,
-    ) -> dict[str, Any]:
-        params: dict[str, object | None] = {
-            "q": query,
-            "mode": mode,
-            "page": page,
-            "page_size": limit,
-            "start_date": published_after,
-            "end_date": published_before,
-            "has_official_implementation": (
-                True if has_official_implementation else None
-            ),
-        }
-        payload = self._json("papers/search", params, ttl=60)
-        if has_official_implementation and (payload.get("applied_filters") or {}).get(
-            "has_official_implementation"
-        ) not in {True, "true"}:
-            raise ResponseError(
-                "Papers API did not confirm has_official_implementation"
-            )
-        return payload
-
-    def get_paper_info(self, paper: str, *, include_resources: bool) -> dict[str, Any]:
-        reference = self._resolve_paper(paper)
-        return self._json(
-            f"papers/{quote(reference, safe='.')}",
-            {"include_resources": include_resources},
-            ttl=300,
-        )
-
-    def read_paper(self, paper: str) -> str:
-        reference = self._resolve_paper(paper)
-        return self._text(
-            f"research/papers/{quote(reference, safe='.')}/read", ttl=3600
-        )
-
     def read_paper_chunk(
         self,
         paper: str,
@@ -361,7 +335,9 @@ class CatalogClient:
             markdown = response.body.decode("utf-8")
             next_offset = int(next_text) if next_text is not None else None
         except (UnicodeDecodeError, ValueError) as error:
-            raise ResponseError("Papers API returned an invalid Markdown chunk") from error
+            raise ResponseError(
+                "Papers API returned an invalid Markdown chunk"
+            ) from error
         if (
             CONTENT_VERSION.fullmatch(returned_version) is None
             or truncated not in {"0", "1"}
@@ -369,10 +345,7 @@ class CatalogClient:
             or (truncated == "1" and next_offset is None)
             or (truncated == "0" and next_offset is not None)
             or (next_offset is not None and next_offset <= offset)
-            or (
-                next_offset is not None
-                and next_offset - offset != len(response.body)
-            )
+            or (next_offset is not None and next_offset - offset != len(response.body))
         ):
             detail = (
                 "Papers API Markdown offset did not advance"
@@ -387,166 +360,30 @@ class CatalogClient:
             content_version=returned_version,
             next_offset=next_offset,
         )
-        self.markdown_cache.put(
-            (reference, returned_version, offset, limit), result
-        )
+        self.markdown_cache.put((reference, returned_version, offset, limit), result)
         return result
 
-    def list_papers(
-        self,
-        *,
-        search: str | None = None,
-        task: str | None = None,
-        method: str | None = None,
-        conference: str | None = None,
-        framework: str | None = None,
-        organization: str | None = None,
-        authors: list[str] | None = None,
-        published_after: str | None = None,
-        published_before: str | None = None,
-        order_by: str = "date_published",
-        order_direction: str = "desc",
-        page: int = 1,
-        limit: int = 10,
-    ) -> dict[str, Any]:
-        requested = {
-            key: value
-            for key, value in {
-                "task": task,
-                "method": method,
-                "conference": conference,
-                "framework": framework,
-                "organization": organization,
-                "start_date": published_after,
-                "end_date": published_before,
-            }.items()
-            if value is not None
-        }
-        params: dict[str, object | None] = {
-            "search": search,
-            **requested,
-            "author": authors or None,
-            "latest_only": True,
-            "order_by": order_by,
-            "order_dir": order_direction,
-            "page": page,
-            "page_size": limit,
-        }
-        payload = self._json("papers/", params, ttl=60)
-        applied = payload.get("applied_filters")
-        if requested and (
-            not isinstance(applied, dict)
-            or any(
-                str(applied.get(key, "")).casefold() != str(value).casefold()
-                for key, value in requested.items()
-            )
-        ):
-            raise ResponseError("Papers API did not confirm requested catalog filters")
-        return payload
+    def query(self, command: tuple[str, ...], options: Mapping[str, Any]) -> Any:
+        """Run one read-only ``pwc`` command in-process against the cached catalog.
 
-    def get_related_papers(self, paper: str, *, limit: int) -> dict[str, Any]:
-        reference = self._resolve_paper(paper)
-        return self._json(
-            f"papers/{quote(reference, safe='.')}/related",
-            {"limit": limit},
-            ttl=300,
-        )
+        Paper references are resolved first so URLs, legacy IDs, and exact
+        titles behave exactly as they do for ``read_paper``; the CLI then
+        receives the canonical identifier and applies its own validation,
+        fail-closed filter checks, and JSON payload shape.
+        """
+        resolved = dict(options)
+        if resolved.get("paper") is not None:
+            resolved["paper"] = self._resolve_paper(str(resolved["paper"]))
+        return queries.query(tuple(command), resolved, _CachedTransport(self))
 
-    def get_paper_lineage(self, paper: str) -> dict[str, Any]:
-        reference = self._resolve_paper(paper)
-        return self._json(
-            f"research/papers/{quote(reference, safe='.')}/lineage", ttl=300
-        )
 
-    def get_task(self, task: str) -> dict[str, Any]:
-        if task.strip().isdigit():
-            task_id = task.strip()
-        else:
-            candidates = self._rows(
-                self._json(
-                    "tasks/",
-                    {"q": task, "page": 1, "page_size": 100},
-                    ttl=600,
-                )
-            )
-            task_id = str(self._exact(task, candidates, "Task").get("id"))
-        return self._json(f"tasks/{quote(task_id, safe='')}/page", ttl=600)
+class _CachedTransport:
+    """``pwc_cli.transport.Client`` stand-in that serves CLI handlers from the cache."""
 
-    def get_method(self, method: str) -> dict[str, Any]:
-        if method.strip().isdigit():
-            method_id = method.strip()
-        else:
-            candidates = self._rows(
-                self._json(
-                    "methods/",
-                    {"q": method, "page": 1, "page_size": 100},
-                    ttl=600,
-                )
-            )
-            matched = self._exact(
-                method,
-                candidates,
-                "Method",
-                fields=("name", "full_name", "slug", "id"),
-            )
-            method_id = str(matched.get("id") or matched.get("slug"))
-        return self._json(f"methods/{quote(method_id, safe='')}", ttl=600)
+    def __init__(self, catalog: CatalogClient):
+        self.catalog = catalog
 
-    def list_benchmarks(
-        self,
-        *,
-        search: str | None = None,
-        task: str | None = None,
-        include_descendants: bool = False,
-        minimum_evaluations: int | None = None,
-        is_open: bool | None = None,
-        page: int = 1,
-        limit: int = 10,
-    ) -> dict[str, Any]:
-        return self._json(
-            "datasets/",
-            {
-                "q": search,
-                "task": task,
-                "include_descendants": include_descendants,
-                "min_eval_count": minimum_evaluations,
-                "is_open": is_open,
-                "ordering": "-paper_count",
-                "page": page,
-                "page_size": limit,
-            },
-            ttl=300,
-        )
-
-    def get_benchmark(
-        self, benchmark: str, *, limit: int, is_open: bool | None
-    ) -> dict[str, Any]:
-        candidates = self._rows(
-            self._json(
-                "datasets/",
-                {"q": benchmark, "page": 1, "page_size": 100},
-                ttl=300,
-            )
-        )
-        matched = self._exact(
-            benchmark,
-            candidates,
-            "Benchmark",
-            fields=("name", "full_name", "slug", "id"),
-        )
-        benchmark_id = str(matched.get("id"))
-        evaluations = self._json(
-            f"datasets/{quote(benchmark_id, safe='')}/evaluations/",
-            {
-                "page": 1,
-                "page_size": limit,
-                "ordering": "best_rank",
-                "is_open": is_open,
-            },
-            ttl=300,
-        )
-        return {
-            "benchmark": matched,
-            "count": evaluations.get("count") or 0,
-            "results": evaluations.get("results") or [],
-        }
+    def get(
+        self, path: str, params: Mapping[str, object | None] | None = None
+    ) -> Response:
+        return self.catalog._response(path, params, ttl=cache_ttl(path))
