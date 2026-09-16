@@ -89,7 +89,10 @@ explicit restart response.
 | `LOG_LEVEL` | Content-free operational log level |
 
 Native clients may omit `Origin`. Browser requests must match the configured
-allowlist. The server does not log queries, paper references, request bodies,
+allowlist. A first-party client on the same host may send
+`X-PwC-MCP-Client: <token>` to name its rate-limit identity (for example one
+hashed chat session); the header counts only on a direct loopback connection
+without `X-Forwarded-For`, so proxied public traffic cannot use it. The server does not log queries, paper references, request bodies,
 raw IP addresses, or authorization headers.
 
 The hosted defaults allow 60 total requests and 10 semantic or hybrid searches per minute

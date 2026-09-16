@@ -85,7 +85,8 @@ than selecting one result.
   Cache immutable, versioned Markdown chunks for one hour within both a
   256-entry and 16 MiB ceiling.
 - Bind to loopback on the VPS, trust forwarded identity only from an exact
-  loopback peer, and expose cached catalog readiness without making `/health`
+  loopback peer, let a direct loopback client without `X-Forwarded-For` name
+  its own rate-limit identity with `X-PwC-MCP-Client`, and expose cached catalog readiness without making `/health`
   wait on an upstream call.
 
 ## Release

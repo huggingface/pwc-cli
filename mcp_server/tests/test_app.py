@@ -217,6 +217,29 @@ def test_proxy_identity_trusts_only_an_exact_loopback_peer():
     )
 
 
+def test_loopback_first_party_clients_may_name_their_rate_limit_identity():
+    tagged = Headers({"x-pwc-mcp-client": "chat-0123abcd"})
+    assert (
+        _client_address({"client": ("127.0.0.1", 1)}, tagged, True)
+        == "client:chat-0123abcd"
+    )
+    assert (
+        _client_address({"client": ("::1", 1)}, tagged, True) == "client:chat-0123abcd"
+    )
+    # Proxied traffic always carries X-Forwarded-For, which wins over the tag.
+    proxied = Headers(
+        {"x-pwc-mcp-client": "chat-0123abcd", "x-forwarded-for": "203.0.113.9"}
+    )
+    assert _client_address({"client": ("127.0.0.1", 1)}, proxied, True) == "203.0.113.9"
+    # Remote peers, disabled trust, and malformed tags fall back to the address.
+    assert _client_address({"client": ("10.0.0.2", 1)}, tagged, True) == "10.0.0.2"
+    assert _client_address({"client": ("127.0.0.1", 1)}, tagged, False) == "127.0.0.1"
+    bad = Headers({"x-pwc-mcp-client": "spaces are/not ok"})
+    assert _client_address({"client": ("127.0.0.1", 1)}, bad, True) == "127.0.0.1"
+    long = Headers({"x-pwc-mcp-client": "a" * 129})
+    assert _client_address({"client": ("127.0.0.1", 1)}, long, True) == "127.0.0.1"
+
+
 def test_serialized_mcp_response_limit_fails_closed():
     async def oversized(_request):
         return Response(b"x" * (MAX_RESPONSE_BODY_SIZE + 1))

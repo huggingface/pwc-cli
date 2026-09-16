@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -94,6 +95,14 @@ async def health(request: Request) -> JSONResponse:
     )
 
 
+# A first-party client on the same host (the chat gateway) may name the
+# rate-limit identity of a request, for example one hashed chat session. The
+# header counts only on a direct loopback connection that carries no proxy
+# header: nginx always adds X-Forwarded-For, so public traffic cannot use it.
+CLIENT_IDENTITY_HEADER = "x-pwc-mcp-client"
+CLIENT_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
 def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -> str:
     client = scope.get("client")
     direct_address = str(client[0]) if client else "unknown"
@@ -105,6 +114,9 @@ def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -
         forwarded = headers.get("x-forwarded-for")
         if forwarded:
             return forwarded.split(",", 1)[0].strip()
+        identity = headers.get(CLIENT_IDENTITY_HEADER, "")
+        if CLIENT_IDENTITY.fullmatch(identity):
+            return f"client:{identity}"
     return direct_address
 
 
