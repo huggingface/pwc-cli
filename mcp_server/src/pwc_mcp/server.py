@@ -63,6 +63,33 @@ READ_ONLY = ToolAnnotations(
 )
 # Hosted ceiling on rows per response (SPEC.md); the CLI allows up to 100.
 MAX_ROWS = 25
+# CLI lookup failures the caller can act on (an unknown or ambiguous name, an
+# unconfirmed filter). Transport, HTTP, and response-shape failures stay generic.
+CLIENT_FACING_ERRORS = (
+    "Task not found",
+    "Method not found",
+    "Benchmark not found",
+    "Conference not found",
+    "Organization not found",
+    "Framework not found",
+    "Area not found",
+    "Paper title not found",
+    "Paper title is ambiguous",
+    "Paper reference cannot be empty",
+    "Too many results to resolve paper title",
+    "Papers API did not confirm",
+)
+GENERIC_ERROR = "the Papers With Code catalog request failed"
+
+
+def catalog_error_message(error: Exception) -> str:
+    """Return the CLI's own lookup message when it is actionable, else a generic one."""
+    if isinstance(error, ResponseError) and not isinstance(error, TransportError):
+        message = str(error)
+        if message.startswith(CLIENT_FACING_ERRORS):
+            return message
+    return GENERIC_ERROR
+
 
 # One read-only CLI command per tool.
 TOOL_COMMANDS: dict[str, tuple[str, ...]] = {
@@ -289,7 +316,7 @@ def build_server(
         except UsageError as error:
             raise ToolError(str(error)) from error
         except (ResponseError, TransportError) as error:
-            raise ToolError("the Papers With Code catalog request failed") from error
+            raise ToolError(catalog_error_message(error)) from error
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def search_papers(
@@ -301,7 +328,7 @@ def build_server(
         published_before: IsoDate | None = None,
         has_official_implementation: bool = False,
     ) -> PaperPage:
-        """Search papers by title, topic, author, or arXiv ID (`pwc search`)."""
+        """Search papers by title, topic, author, or arXiv ID (`pwc search`). Broad discovery only: for best, top, or state-of-the-art model questions start with get_task, list_benchmarks, and get_benchmark, which return leaderboard evidence that search cannot."""
         _validate_date_range(published_after, published_before)
         return _paper_page(
             run(
@@ -359,9 +386,7 @@ def build_server(
             try:
                 canonical = catalog.resolve_paper(reference)
             except (ResponseError, TransportError) as error:
-                raise ToolError(
-                    "the Papers With Code catalog request failed"
-                ) from error
+                raise ToolError(catalog_error_message(error)) from error
             offset = 0
             content_version = None
             limit = read_chunk_bytes
@@ -387,7 +412,7 @@ def build_server(
                 "paper changed; restart reading from the beginning"
             ) from error
         except (ResponseError, TransportError) as error:
-            raise ToolError("the Papers With Code catalog request failed") from error
+            raise ToolError(catalog_error_message(error)) from error
         if chunk.paper != canonical or chunk.source != source:
             raise ToolError("the Papers With Code catalog request failed")
         next_cursor = None
@@ -501,7 +526,7 @@ def build_server(
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_task(task: Entity) -> TaskResult:
-        """Get one exact task by name, slug, or ID with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`)."""
+        """Get one exact task by name, slug, or ID with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`). Start here for any question about the best or state-of-the-art models for a task, then inspect a leaderboard with get_benchmark."""
         data = run("get_task", task=task)
         item = data.get("task") if isinstance(data, dict) else None
         if not isinstance(item, dict):
@@ -670,7 +695,7 @@ def build_server(
         sort_metric: SortMetric | None = None,
         pareto: ParetoObjectives | None = None,
     ) -> BenchmarkResult:
-        """Get one exact benchmark and its leaderboard, with model-size, metric threshold, sort, and Pareto filters (`pwc benchmark --name`)."""
+        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit."""
         data = run(
             "get_benchmark",
             benchmark=benchmark,
@@ -711,7 +736,7 @@ def build_server(
         page: Page = 1,
         limit: Limit | None = None,
     ) -> BenchmarkPage:
-        """List and filter benchmarks, ranked by trend for a task, or grouped by area and task (`pwc benchmark list`)."""
+        """List benchmarks for a task ranked by trend, filter them, or group them by area and task (`pwc benchmark list`). Follow with get_benchmark on the most relevant leaderboard."""
         grouped = group_by_area or area is not None
         data = run(
             "list_benchmarks",

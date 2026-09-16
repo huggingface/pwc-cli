@@ -5,7 +5,7 @@ import logging
 
 from mcp.client import Client
 from pwc_cli.cli import UsageError
-from pwc_cli.transport import ResponseError
+from pwc_cli.transport import HTTPStatusError, ResponseError
 from pwc_mcp.catalog import PaperMarkdownChunk
 from pwc_mcp.server import TOOL_COMMANDS, build_server
 
@@ -312,7 +312,7 @@ def test_catalog_failures_do_not_expose_or_log_user_queries(caplog):
 
     class FailingCatalog(StubCatalog):
         def query(self, command, options):
-            raise ResponseError(f"Paper title not found: {secret_query}")
+            raise ResponseError(f"API returned invalid JSON for {secret_query}")
 
     with caplog.at_level(logging.INFO):
         (result,) = _call(
@@ -325,6 +325,35 @@ def test_catalog_failures_do_not_expose_or_log_user_queries(caplog):
         "the Papers With Code catalog request failed"
     )
     assert secret_query not in caplog.text
+
+
+def test_lookup_failures_return_the_cli_hint_without_logging_it(caplog):
+    class MissingCatalog(StubCatalog):
+        def query(self, command, options):
+            raise ResponseError(
+                "Task not found: language-modelling; closest results: Language Modeling"
+            )
+
+    class TransportCatalog(StubCatalog):
+        def query(self, command, options):
+            raise HTTPStatusError(404, "not found: language-modelling")
+
+    with caplog.at_level(logging.INFO):
+        (missing,) = _call(
+            MissingCatalog(), [("get_task", {"task": "language-modelling"})]
+        )
+        (transport,) = _call(
+            TransportCatalog(), [("get_task", {"task": "language-modelling"})]
+        )
+
+    assert missing.content[0].text == (
+        "Error executing tool get_task: "
+        "Task not found: language-modelling; closest results: Language Modeling"
+    )
+    assert transport.content[0].text == (
+        "Error executing tool get_task: the Papers With Code catalog request failed"
+    )
+    assert "language-modelling" not in caplog.text
 
 
 def test_cli_usage_errors_are_returned_verbatim():
