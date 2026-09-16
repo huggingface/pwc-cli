@@ -13,30 +13,37 @@ server.
   the MCP contract.
 - Serve anonymous, read-only requests. Search is deterministic and contains no
   embedded language model.
-- Use stateless Streamable HTTP at `/mcp`, supporting MCP `2026-07-28` and
-  legacy 2025 clients on the same endpoint. Expose `/health` for operations.
+- Use stateless Streamable HTTP at `/mcp`, advertising stock-client MCP
+  `2025-11-25` while also supporting experimental `2026-07-28` discovery.
+  Expose `/health`, `/.well-known/mcp`, and a generated `/docs` schema.
 
 ## Public contract
 
-Expose exactly these tools:
+Expose these tools:
 
 - `search_papers`
 - `list_papers`
 - `get_paper_info`
 - `read_paper`
 - `get_related_papers`
+- `get_trending_papers`
+- `get_paper_evaluations`
 - `get_paper_lineage`
 - `get_task`
+- `list_tasks`
 - `get_method`
+- `list_methods`
 - `list_benchmarks`
 - `get_benchmark`
 
-Expose these resource templates and no prompts:
+Expose these resource templates:
 
 - `pwc://papers/{paper}`
 - `pwc://papers/{paper}/markdown`
 - `pwc://tasks/{task}`
 - `pwc://benchmarks/{benchmark}`
+
+Expose the `find_papers`, `compare_leaderboard`, and `survey_task` prompts.
 
 Responses use stable, MCP-specific versioned structured outputs with a text
 fallback. `read_paper` performs one upstream read of at most 64 KiB per call and

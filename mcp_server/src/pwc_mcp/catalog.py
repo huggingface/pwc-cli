@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote, urlparse
 
-from pwc_cli.transport import Client, HTTPStatusError, Response, ResponseError
+from pwc_cli.transport import (
+    Client,
+    HTTPStatusError,
+    Response,
+    ResponseError,
+    TransportError,
+)
 
 PAPER_ID = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z][a-z0-9.-]*/\d{7}|\d+)", re.IGNORECASE)
 ARXIV_VERSION = re.compile(r"v\d+$", re.IGNORECASE)
@@ -34,6 +40,32 @@ class PaperMarkdownChunk:
 
 class PaperVersionMismatchError(ResponseError):
     pass
+
+
+class CatalogError(ResponseError):
+    code = "catalog_error"
+
+
+class NotFoundError(CatalogError):
+    code = "not_found"
+
+
+class AmbiguousError(CatalogError):
+    code = "ambiguous"
+
+    def __init__(self, label: str, reference: str, candidates: list[dict[str, str]]):
+        super().__init__(f"{label} is ambiguous: {reference}")
+        self.label = label
+        self.reference = reference
+        self.candidates = candidates
+
+
+class NoMarkdownError(CatalogError):
+    code = "no_markdown"
+
+
+class UpstreamTimeoutError(CatalogError):
+    code = "upstream_timeout"
 
 
 class Transport(Protocol):
@@ -79,9 +111,9 @@ class _TTLCache:
 
 class _MarkdownChunkCache:
     def __init__(self):
-        self._values: OrderedDict[
-            object, tuple[float, int, PaperMarkdownChunk]
-        ] = OrderedDict()
+        self._values: OrderedDict[object, tuple[float, int, PaperMarkdownChunk]] = (
+            OrderedDict()
+        )
         self._bytes = 0
         self._lock = threading.Lock()
 
@@ -135,12 +167,27 @@ class CatalogClient:
         params: dict[str, object | None] | None = None,
         *,
         ttl: int,
+        accept_list: bool = False,
     ) -> dict[str, Any]:
         key = ("json", path, _freeze(params or {}))
         cached = self.cache.get(key)
         if isinstance(cached, dict):
             return cached
-        payload = self.transport.get(path, params).json()
+        try:
+            payload = self.transport.get(path, params).json()
+        except HTTPStatusError as error:
+            if error.status == 404:
+                raise NotFoundError("Catalog entity not found") from error
+            raise
+        except (TimeoutError, TransportError) as error:
+            if (
+                "timed out" in str(error).casefold()
+                or "timeout" in str(error).casefold()
+            ):
+                raise UpstreamTimeoutError("Catalog request timed out") from error
+            raise
+        if accept_list and isinstance(payload, list):
+            payload = {"results": payload, "count": len(payload)}
         if not isinstance(payload, dict):
             raise ResponseError("API returned an unexpected response shape")
         self.cache.put(key, payload, ttl)
@@ -172,7 +219,9 @@ class CatalogClient:
 
     @staticmethod
     def _rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
-        values = payload.get("results") or payload.get("items")
+        values = payload.get("results")
+        if values is None:
+            values = payload.get("items")
         if not isinstance(values, list):
             raise ResponseError("API response did not contain a result list")
         return [item for item in values if isinstance(item, dict)]
@@ -249,16 +298,24 @@ class CatalogClient:
             if not isinstance(next_page, int) or next_page <= page:
                 break
             page = next_page
-        else:
-            raise ResponseError("Too many results to resolve paper title safely")
         if len(exact) == 1:
             return next(iter(exact))
         if exact:
-            choices = "; ".join(
-                f"{item.get('title')} ({paper})" for paper, item in exact.items()
+            raise AmbiguousError(
+                "Paper title",
+                candidate,
+                [
+                    {
+                        "id": paper,
+                        "name": str(item.get("title") or candidate),
+                        "reference": str(
+                            item.get("arxiv_id") or item.get("id") or paper
+                        ),
+                    }
+                    for paper, item in exact.items()
+                ],
             )
-            raise ResponseError(f"Paper title is ambiguous: {candidate}; {choices}")
-        raise ResponseError(f"Paper title not found: {candidate}")
+        raise NotFoundError(f"Paper title not found: {candidate}")
 
     def resolve_paper(self, paper: str) -> str:
         return self._resolve_paper(paper)
@@ -272,10 +329,29 @@ class CatalogClient:
     ) -> dict[str, Any]:
         target = reference.strip().casefold()
         for field in fields:
-            for item in items:
-                if str(item.get(field) or "").strip().casefold() == target:
-                    return item
-        raise ResponseError(f"{label} not found: {reference}")
+            matches = [
+                item
+                for item in items
+                if str(item.get(field) or "").strip().casefold() == target
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise AmbiguousError(
+                    label,
+                    reference,
+                    [
+                        {
+                            "id": str(item.get("id") or ""),
+                            "name": str(
+                                item.get("full_name") or item.get("name") or "Unknown"
+                            ),
+                            "slug": str(item.get("slug") or ""),
+                        }
+                        for item in matches[:10]
+                    ],
+                )
+        raise NotFoundError(f"{label} not found: {reference}")
 
     def search_papers(
         self,
@@ -352,6 +428,17 @@ class CatalogClient:
                 raise PaperVersionMismatchError(
                     "Paper Markdown changed; restart reading from the beginning"
                 ) from error
+            if error.status == 404:
+                raise NoMarkdownError(
+                    "No stored Markdown is available for this paper"
+                ) from error
+            raise
+        except (TimeoutError, TransportError) as error:
+            if (
+                "timed out" in str(error).casefold()
+                or "timeout" in str(error).casefold()
+            ):
+                raise UpstreamTimeoutError("Catalog request timed out") from error
             raise
 
         returned_version = response.headers.get("x-pwc-content-version", "")
@@ -361,7 +448,9 @@ class CatalogClient:
             markdown = response.body.decode("utf-8")
             next_offset = int(next_text) if next_text is not None else None
         except (UnicodeDecodeError, ValueError) as error:
-            raise ResponseError("Papers API returned an invalid Markdown chunk") from error
+            raise ResponseError(
+                "Papers API returned an invalid Markdown chunk"
+            ) from error
         if (
             CONTENT_VERSION.fullmatch(returned_version) is None
             or truncated not in {"0", "1"}
@@ -369,10 +458,7 @@ class CatalogClient:
             or (truncated == "1" and next_offset is None)
             or (truncated == "0" and next_offset is not None)
             or (next_offset is not None and next_offset <= offset)
-            or (
-                next_offset is not None
-                and next_offset - offset != len(response.body)
-            )
+            or (next_offset is not None and next_offset - offset != len(response.body))
         ):
             detail = (
                 "Papers API Markdown offset did not advance"
@@ -387,9 +473,7 @@ class CatalogClient:
             content_version=returned_version,
             next_offset=next_offset,
         )
-        self.markdown_cache.put(
-            (reference, returned_version, offset, limit), result
-        )
+        self.markdown_cache.put((reference, returned_version, offset, limit), result)
         return result
 
     def list_papers(
@@ -450,6 +534,37 @@ class CatalogClient:
             f"papers/{quote(reference, safe='.')}/related",
             {"limit": limit},
             ttl=300,
+            accept_list=True,
+        )
+
+    def get_trending_papers(
+        self, *, limit: int, max_age_days: int, min_velocity: float | None
+    ) -> dict[str, Any]:
+        return self._json(
+            "papers/trending",
+            {
+                "limit": limit,
+                "max_age_days": max_age_days,
+                "min_velocity": min_velocity,
+            },
+            ttl=60,
+            accept_list=True,
+        )
+
+    def get_paper_evaluations(self, paper: str, *, limit: int) -> dict[str, Any]:
+        detail = self.get_paper_info(paper, include_resources=False)
+        paper_id = detail.get("id")
+        if not paper_id:
+            raise NotFoundError(f"Paper not found: {paper}")
+        return self._json(
+            "evaluations/",
+            {
+                "page": 1,
+                "page_size": limit,
+                "paper_id": paper_id,
+                "ordering": "-benchmark_popularity",
+            },
+            ttl=300,
         )
 
     def get_paper_lineage(self, paper: str) -> dict[str, Any]:
@@ -469,8 +584,80 @@ class CatalogClient:
                     ttl=600,
                 )
             )
-            task_id = str(self._exact(task, candidates, "Task").get("id"))
+            if not candidates:
+                for token in re.findall(r"[a-z0-9]+", task.casefold()):
+                    if len(token) < 3:
+                        continue
+                    candidates.extend(
+                        self._rows(
+                            self._json(
+                                "tasks/",
+                                {"q": token, "page": 1, "page_size": 100},
+                                ttl=600,
+                            )
+                        )
+                    )
+            try:
+                matched = self._exact(task, candidates, "Task")
+            except NotFoundError as error:
+                if not candidates:
+                    raise
+                unique = {str(item.get("id")): item for item in candidates}
+                tokens = re.findall(r"[a-z0-9]+", task.casefold())
+                noun = tokens[-1] if tokens else ""
+                ranked = sorted(
+                    unique.values(),
+                    key=lambda item: (
+                        noun
+                        not in str(
+                            item.get("name") or item.get("slug") or ""
+                        ).casefold(),
+                        -sum(
+                            token
+                            in str(
+                                item.get("name") or item.get("slug") or ""
+                            ).casefold()
+                            for token in tokens
+                        ),
+                        -int(item.get("paper_count") or 0),
+                    ),
+                )
+                raise AmbiguousError(
+                    "Task name",
+                    task,
+                    [
+                        {
+                            "id": str(item.get("id") or ""),
+                            "name": str(item.get("name") or "Unknown"),
+                            "slug": str(item.get("slug") or ""),
+                        }
+                        for item in ranked[:10]
+                    ],
+                ) from error
+            task_id = str(matched.get("id"))
         return self._json(f"tasks/{quote(task_id, safe='')}/page", ttl=600)
+
+    def list_tasks(
+        self, *, search: str | None, page: int, limit: int
+    ) -> dict[str, Any]:
+        payload = self._json(
+            "tasks/",
+            {"q": search, "page": page, "page_size": limit},
+            ttl=600,
+        )
+        if search and not self._rows(payload):
+            tokens = [
+                token
+                for token in re.findall(r"[a-z0-9]+", search.casefold())
+                if len(token) >= 3
+            ]
+            if tokens:
+                payload = self._json(
+                    "tasks/",
+                    {"q": tokens[-1], "page": page, "page_size": limit},
+                    ttl=600,
+                )
+        return payload
 
     def get_method(self, method: str) -> dict[str, Any]:
         if method.strip().isdigit():
@@ -491,6 +678,15 @@ class CatalogClient:
             )
             method_id = str(matched.get("id") or matched.get("slug"))
         return self._json(f"methods/{quote(method_id, safe='')}", ttl=600)
+
+    def list_methods(
+        self, *, search: str | None, page: int, limit: int
+    ) -> dict[str, Any]:
+        return self._json(
+            "methods/",
+            {"q": search, "page": page, "page_size": limit},
+            ttl=600,
+        )
 
     def list_benchmarks(
         self,
@@ -528,12 +724,34 @@ class CatalogClient:
                 ttl=300,
             )
         )
-        matched = self._exact(
-            benchmark,
-            candidates,
-            "Benchmark",
-            fields=("name", "full_name", "slug", "id"),
-        )
+        try:
+            matched = self._exact(
+                benchmark,
+                candidates,
+                "Benchmark",
+                fields=("name", "full_name", "slug", "id"),
+            )
+        except NotFoundError as error:
+            if not candidates:
+                raise
+            ranked = sorted(
+                candidates,
+                key=lambda item: -int(item.get("paper_count") or 0),
+            )
+            raise AmbiguousError(
+                "Benchmark name",
+                benchmark,
+                [
+                    {
+                        "id": str(item.get("id") or ""),
+                        "name": str(
+                            item.get("full_name") or item.get("name") or "Unknown"
+                        ),
+                        "slug": str(item.get("slug") or ""),
+                    }
+                    for item in ranked[:10]
+                ],
+            ) from error
         benchmark_id = str(matched.get("id"))
         evaluations = self._json(
             f"datasets/{quote(benchmark_id, safe='')}/evaluations/",

@@ -43,12 +43,34 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.1.0",
-        "protocol": "2026-07-28",
+        "version": "0.2.0",
+        "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == "https://chatgpt.com"
+
+
+def test_discovery_docs_and_bare_get_are_client_friendly():
+    app = create_app(StubCatalog(), allowed_hosts=["testserver"])
+
+    with TestClient(app) as client:
+        discovery = client.get("/.well-known/mcp")
+        docs = client.get("/docs")
+        bare_get = client.get("/mcp")
+
+    assert discovery.status_code == 200
+    assert discovery.json()["transport"]["url"] == "/mcp"
+    assert discovery.json()["protocol_version"] == "2025-11-25"
+    assert docs.status_code == 200
+    assert {tool["name"] for tool in docs.json()["tools"]} >= {
+        "search_papers",
+        "get_paper_info",
+        "get_benchmark",
+    }
+    assert docs.json()["tools"][0]["inputSchema"]["type"] == "object"
+    assert bare_get.status_code == 405
+    assert bare_get.headers["allow"] == "POST"
 
 
 def test_wildcard_browser_origin_is_rejected_at_startup():
@@ -206,18 +228,15 @@ def test_one_http_endpoint_serves_modern_and_legacy_protocol_eras():
 def test_proxy_identity_trusts_only_an_exact_loopback_peer():
     headers = Headers({"x-forwarded-for": "203.0.113.9"})
 
-    assert _client_address(
-        {"client": ("127.0.0.1", 1234)}, headers, True
-    ) == "203.0.113.9"
-    assert _client_address(
-        {"client": ("::1", 1234)}, headers, True
-    ) == "203.0.113.9"
-    assert _client_address(
-        {"client": ("10.0.0.2", 1234)}, headers, True
-    ) == "10.0.0.2"
-    assert _client_address(
-        {"client": ("192.168.1.2", 1234)}, headers, True
-    ) == "192.168.1.2"
+    assert (
+        _client_address({"client": ("127.0.0.1", 1234)}, headers, True) == "203.0.113.9"
+    )
+    assert _client_address({"client": ("::1", 1234)}, headers, True) == "203.0.113.9"
+    assert _client_address({"client": ("10.0.0.2", 1234)}, headers, True) == "10.0.0.2"
+    assert (
+        _client_address({"client": ("192.168.1.2", 1234)}, headers, True)
+        == "192.168.1.2"
+    )
 
 
 def test_serialized_mcp_response_limit_fails_closed():

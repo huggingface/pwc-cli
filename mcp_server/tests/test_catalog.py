@@ -4,7 +4,12 @@ import json
 
 import pytest
 from pwc_cli.transport import Response, ResponseError
-from pwc_mcp.catalog import CatalogClient
+from pwc_mcp.catalog import (
+    AmbiguousError,
+    CatalogClient,
+    NotFoundError,
+    UpstreamTimeoutError,
+)
 
 
 class StubTransport:
@@ -173,8 +178,53 @@ def test_catalog_resolves_exact_titles_and_rejects_ambiguous_titles():
     )
     catalog = CatalogClient(transport=transport)
 
-    with pytest.raises(ResponseError, match="ambiguous"):
+    with pytest.raises(AmbiguousError, match="ambiguous") as captured:
         catalog.get_paper_lineage("Same Title")
+    assert [candidate["reference"] for candidate in captured.value.candidates] == [
+        "1111.11111",
+        "2222.22222",
+    ]
+
+
+def test_catalog_reports_a_typed_missing_title():
+    catalog = CatalogClient(transport=StubTransport({"papers/search": {"results": []}}))
+
+    with pytest.raises(NotFoundError, match="Paper title not found"):
+        catalog.get_related_papers("A Paper That Does Not Exist", limit=5)
+
+
+def test_catalog_reports_a_typed_upstream_timeout():
+    class TimeoutTransport:
+        def get(self, _path, _params=None):
+            raise TimeoutError("timed out")
+
+    catalog = CatalogClient(transport=TimeoutTransport())
+
+    with pytest.raises(UpstreamTimeoutError):
+        catalog.search_papers(query="transformers")
+
+
+def test_catalog_rejects_ambiguous_taxonomy_names_with_candidates():
+    catalog = CatalogClient(
+        transport=StubTransport(
+            {
+                "datasets/": {
+                    "results": [
+                        {"id": "1", "name": "ImageNet", "slug": "imagenet-a"},
+                        {"id": "2", "name": "ImageNet", "slug": "imagenet-b"},
+                    ]
+                }
+            }
+        )
+    )
+
+    with pytest.raises(AmbiguousError) as captured:
+        catalog.get_benchmark("ImageNet", limit=10, is_open=None)
+
+    assert [candidate["slug"] for candidate in captured.value.candidates] == [
+        "imagenet-a",
+        "imagenet-b",
+    ]
 
 
 def test_catalog_resolves_pwc_urls_and_dotted_legacy_arxiv_ids():

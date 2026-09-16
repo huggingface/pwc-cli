@@ -3,9 +3,10 @@
 Anonymous, read-only Model Context Protocol access to the public
 [Papers With Code](https://paperswithcode.co) catalog.
 
-The server uses MCP `2026-07-28` over Streamable HTTP and serves legacy
-2025-era clients on the same `/mcp` endpoint. It returns versioned structured
-output with compact text fallbacks.
+The server uses stock-client MCP `2025-11-25` over Streamable HTTP and also
+serves the experimental `2026-07-28` discovery protocol on the same `/mcp`
+endpoint. It returns versioned structured output with compact Markdown
+fallbacks.
 
 ## Run locally
 
@@ -27,13 +28,19 @@ curl http://127.0.0.1:7860/health
 - `get_paper_info`
 - `read_paper`
 - `get_related_papers`
+- `get_trending_papers`
+- `get_paper_evaluations`
 - `get_paper_lineage`
 - `get_task`
+- `list_tasks`
 - `get_method`
+- `list_methods`
 - `list_benchmarks`
 - `get_benchmark`
 
-All tools are annotated read-only and idempotent. Search is deterministic;
+All tools are annotated read-only and idempotent. Expected failures use typed
+messages (`not_found`, `ambiguous`, `no_markdown`, and `upstream_timeout`), with
+candidate IDs and slugs for ambiguous references. Search is deterministic;
 the caller controls keyword or semantic mode. `read_paper` fetches at most one
 64 KiB catalog chunk per call and returns a signed, one-hour continuation cursor
 when more Markdown remains. Continuations stay pinned to the resolved paper and
@@ -68,6 +75,10 @@ per client IP, with at most four concurrent requests per IP and 32 globally.
 Tool inputs cap list results at 25, catalog calls time out after 25 seconds, and
 request, upstream, and serialized MCP response bodies are bounded to 2 MiB.
 Markdown chunks use a bounded 256-entry/16 MiB in-memory cache.
+
+`GET /.well-known/mcp` exposes connection metadata and `GET /docs` publishes
+the live input/output schema for every tool. A bare `GET /mcp` returns `405`;
+MCP requests use `POST /mcp`. Rate limits return `429` with `Retry-After`.
 
 ## Test
 

@@ -4,7 +4,7 @@ description: "Papers With Code MCP tools for searching and reading AI/ML papers,
 compatibility: "Requires an MCP client connected to https://paperswithcode.co/mcp with the Papers With Code tools available."
 ---
 
-Generated for `pwc-mcp v0.1.0` and MCP protocol `2026-07-28`.
+Generated for `pwc-mcp v0.2.0` and MCP protocol `2025-11-25`.
 
 The tools query the public [Papers With Code](https://paperswithcode.co) catalog
 anonymously and are read-only. If live tool discovery and this skill disagree,
@@ -36,12 +36,16 @@ matching IDs.
 ## Tools
 
 - `search_papers({"query": QUERY, "limit": LIMIT, "page": PAGE, "mode": "keyword"|"semantic", "published_after": START_DATE, "published_before": END_DATE, "has_official_implementation": BOOLEAN})` — search papers. Omit optional arguments when they are not needed.
-- `get_paper_info({"paper": PAPER})` — show paper metadata, abstract, tasks, methods, repositories, and project pages.
+- `get_paper_info({"paper": PAPER, "include_resources": BOOLEAN, "repo_limit": LIMIT})` — show paper metadata, repository count, and official code by default; optionally add capped repositories, project pages, and Hugging Face models/datasets.
 - `read_paper({"paper": PAPER})` — read one stored paper Markdown chunk. If `truncated` is true, call `read_paper` again with the same `paper` and the returned `next_cursor`; repeat until `truncated` is false. Treat the cursor as opaque and use it within one hour.
 - `list_papers({"page": PAGE, "limit": LIMIT, "search": SEARCH, "published_after": START_DATE, "published_before": END_DATE, "task": TASK, "method": METHOD, "conference": CONFERENCE, "framework": FRAMEWORK, "organization": ORGANIZATION, "authors": [AUTHOR], "order_by": "date_published"|"citation_count"|"title", "order_direction": "asc"|"desc"})` — list and filter papers. Omit optional arguments when they are not needed.
 - `get_related_papers({"paper": PAPER, "limit": LIMIT})` — list related papers.
+- `get_trending_papers({"limit": LIMIT, "max_age_days": DAYS, "min_velocity": VELOCITY})` — list trending papers.
+- `get_paper_evaluations({"paper": PAPER, "limit": LIMIT})` — list benchmark evaluations reported by a paper.
 - `get_paper_lineage({"paper": PAPER})` — list explicit predecessors and successors.
-- `get_task({"task": TASK})` — inspect one exact task by ID, slug, or name, including its area, parents, children, and benchmarks.
+- `list_tasks({"search": SEARCH, "page": PAGE, "limit": LIMIT})` — discover task slugs and IDs.
+- `get_task({"task": TASK, "benchmark_limit": LIMIT})` — inspect one exact task by ID or slug with a capped benchmark list.
+- `list_methods({"search": SEARCH, "page": PAGE, "limit": LIMIT})` — discover method slugs and IDs.
 - `get_method({"method": METHOD})` — inspect one exact method by ID, slug, full name, or name.
 - `list_benchmarks({"page": PAGE, "limit": LIMIT, "search": SEARCH, "task": TASK, "include_descendants": BOOLEAN, "minimum_evaluations": MINIMUM_EVALUATIONS, "is_open": BOOLEAN})` — list and filter benchmarks. Omit optional arguments when they are not needed.
 - `get_benchmark({"benchmark": BENCHMARK, "limit": LIMIT, "is_open": BOOLEAN})` — inspect one exact benchmark and its leading evaluation rows.
@@ -51,7 +55,7 @@ when the user asks for more results than one response contains; do not infer
 that a missing item does not exist until the relevant pages have been checked.
 
 The MCP server does not expose standalone CLI commands for paper editing,
-authentication, skill installation, version display, taxonomy enumeration, or
+authentication, skill installation, version display, or
 advanced benchmark metric/parameter/Pareto filtering. Do not invent equivalent
 tools. Use the separate `pwc` CLI only when it is available and the user needs
 one of those capabilities.
@@ -60,8 +64,10 @@ one of those capabilities.
 
 1. Use `list_benchmarks({"task": TASK})` to discover active benchmarks, then
    `get_benchmark({"benchmark": NAME})` to inspect a leaderboard.
-2. Use `get_paper_info({"paper": PAPER})` to inspect promising results. Its
-   response includes repositories and project pages.
+2. Use `get_paper_info({"paper": PAPER})` to inspect promising results. The
+   default response includes official repositories and a repository count; pass
+   `include_resources: true` for other repositories, project pages, and Hugging
+   Face artifacts.
 3. Use exact `list_papers` `authors`, `task`, `method`, `conference`,
    `framework`, and `organization` arguments for known identities or catalog
    associations. Combine them to require every association; do not substitute

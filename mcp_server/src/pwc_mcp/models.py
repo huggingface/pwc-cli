@@ -5,6 +5,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 
+def _absolute_url(value: object) -> str | None:
+    if not value:
+        return None
+    url = str(value)
+    if url.startswith("/"):
+        return f"https://paperswithcode.co{url}"
+    return url
+
+
 class OutputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -33,6 +42,10 @@ class CatalogReference(OutputModel):
     slug: str | None = None
 
 
+class TaxonomyReference(CatalogReference):
+    url: str
+
+
 class RepositoryReference(OutputModel):
     url: str
     is_official: bool
@@ -48,10 +61,13 @@ class PaperDetail(OutputModel):
     citation_count: int | None = None
     url: str | None = None
     pdf_url: str | None = None
+    code_repository_count: int
     tasks: list[CatalogReference]
     methods: list[CatalogReference]
     repositories: list[RepositoryReference]
     project_pages: list[str]
+    hf_models: list[str]
+    hf_datasets: list[str]
 
 
 class PaperInfoResult(OutputModel):
@@ -89,6 +105,7 @@ class BenchmarkSummary(OutputModel):
     id: str
     name: str
     slug: str | None = None
+    url: str | None = None
     full_name: str | None = None
     description: str | None = None
     hf_url: str | None = None
@@ -99,11 +116,13 @@ class TaskDetail(OutputModel):
     id: str
     name: str
     slug: str
+    url: str
     description: str | None = None
     paper_count: int
     area: AreaReference | None = None
     parents: list[CatalogReference]
     children: list[CatalogReference]
+    benchmark_count: int
     benchmarks: list[BenchmarkSummary]
 
 
@@ -116,6 +135,7 @@ class MethodDetail(OutputModel):
     id: str
     name: str
     slug: str
+    url: str
     full_name: str | None = None
     description: str | None = None
     introduced_year: int | None = None
@@ -128,6 +148,12 @@ class MethodDetail(OutputModel):
 class MethodResult(OutputModel):
     schema_version: Literal["v1"] = "v1"
     method: MethodDetail
+
+
+class TaxonomyPage(OutputModel):
+    schema_version: Literal["v1"] = "v1"
+    items: list[TaxonomyReference]
+    next_page: int | None = None
 
 
 class BenchmarkPage(OutputModel):
@@ -155,6 +181,13 @@ class BenchmarkResult(OutputModel):
     evaluations: list[Evaluation]
 
 
+class EvaluationPage(OutputModel):
+    schema_version: Literal["v1"] = "v1"
+    paper: str
+    evaluation_count: int
+    evaluations: list[Evaluation]
+
+
 def paper_summary(item: dict[str, Any]) -> PaperSummary:
     return PaperSummary(
         id=str(item.get("id") or ""),
@@ -167,7 +200,7 @@ def paper_summary(item: dict[str, Any]) -> PaperSummary:
             if item.get("citation_count") is not None
             else None
         ),
-        url=str(item.get("url_abs") or item.get("source_url") or "") or None,
+        url=_absolute_url(item.get("url_abs") or item.get("source_url")),
         has_official_implementation=item.get("has_official_implementation") is True,
         code_repository_count=int(item.get("code_repository_count") or 0),
     )
@@ -181,16 +214,29 @@ def catalog_reference(item: dict[str, Any]) -> CatalogReference:
     )
 
 
-def paper_detail(item: dict[str, Any]) -> PaperDetail:
+def taxonomy_reference(item: dict[str, Any], *, kind: str) -> TaxonomyReference:
+    reference = catalog_reference(item)
+    slug = reference.slug or reference.id
+    return TaxonomyReference(
+        **reference.model_dump(),
+        url=f"https://paperswithcode.co/{kind}/{slug}",
+    )
+
+
+def paper_detail(
+    item: dict[str, Any], *, include_resources: bool, repo_limit: int
+) -> PaperDetail:
     repositories = []
     for repository in item.get("repositories") or []:
         if isinstance(repository, dict) and repository.get("url"):
-            repositories.append(
-                RepositoryReference(
-                    url=str(repository["url"]),
-                    is_official=repository.get("is_official") is True,
-                )
+            repository = RepositoryReference(
+                url=str(repository["url"]),
+                is_official=repository.get("is_official") is True,
             )
+            if include_resources or repository.is_official:
+                repositories.append(repository)
+    repositories.sort(key=lambda repository: not repository.is_official)
+    repositories = repositories[:repo_limit]
     project_pages = []
     for page in item.get("project_pages") or []:
         url = page.get("url") if isinstance(page, dict) else page
@@ -208,8 +254,9 @@ def paper_detail(item: dict[str, Any]) -> PaperDetail:
             if item.get("citation_count") is not None
             else None
         ),
-        url=str(item.get("url_abs") or item.get("source_url") or "") or None,
-        pdf_url=str(item["url_pdf"]) if item.get("url_pdf") else None,
+        url=_absolute_url(item.get("url_abs") or item.get("source_url")),
+        pdf_url=_absolute_url(item.get("url_pdf")),
+        code_repository_count=int(item.get("code_repository_count") or 0),
         tasks=[
             catalog_reference(task)
             for task in item.get("tasks") or []
@@ -221,7 +268,13 @@ def paper_detail(item: dict[str, Any]) -> PaperDetail:
             if isinstance(method, dict)
         ],
         repositories=repositories,
-        project_pages=project_pages,
+        project_pages=project_pages[:repo_limit] if include_resources else [],
+        hf_models=[str(value) for value in item.get("hf_models") or []][:repo_limit]
+        if include_resources
+        else [],
+        hf_datasets=[str(value) for value in item.get("hf_datasets") or []][:repo_limit]
+        if include_resources
+        else [],
     )
 
 
@@ -238,10 +291,18 @@ def paper_reference(item: dict[str, Any]) -> PaperReference:
 
 
 def benchmark_summary(item: dict[str, Any]) -> BenchmarkSummary:
+    slug = str(item["slug"]) if item.get("slug") else None
     return BenchmarkSummary(
         id=str(item.get("id") or ""),
         name=str(item.get("name") or item.get("slug") or "Unknown benchmark"),
-        slug=str(item["slug"]) if item.get("slug") else None,
+        slug=slug,
+        url=(
+            str(item.get("url_abs"))
+            if item.get("url_abs")
+            else f"https://paperswithcode.co/dataset/{slug}"
+            if slug
+            else None
+        ),
         full_name=str(item["full_name"]) if item.get("full_name") else None,
         description=str(item["description"]) if item.get("description") else None,
         hf_url=str(item["hf_url"]) if item.get("hf_url") else None,
@@ -254,7 +315,7 @@ def evaluation(item: dict[str, Any]) -> Evaluation:
     return Evaluation(
         id=str(item.get("id") or ""),
         model_name=str(item.get("model_name") or "Unknown model"),
-        metrics={str(key): value for key, value in metrics.items()}
+        metrics={str(key): _metric_value(value) for key, value in metrics.items()}
         if isinstance(metrics, dict)
         else {},
         best_rank=int(item["best_rank"]) if item.get("best_rank") is not None else None,
@@ -271,3 +332,57 @@ def evaluation(item: dict[str, Any]) -> Evaluation:
             else None
         ),
     )
+
+
+def _metric_value(value: Any) -> float | int | str | None:
+    if value is None or isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return str(value)
+
+
+def merged_evaluations(items: list[dict[str, Any]]) -> list[Evaluation]:
+    """Return one row per paper/model/setup with all reported metrics combined."""
+    merged: dict[tuple[str, ...], dict[str, Any]] = {}
+    parameter_counts: dict[tuple[str, ...], set[int | None]] = {}
+    for item in items:
+        key = tuple(
+            str(item.get(field) or "")
+            for field in ("paper_id", "task_id", "dataset_id", "model_name", "harness")
+        )
+        count = item.get("num_parameters")
+        valid_count = (
+            count
+            if isinstance(count, int) and not isinstance(count, bool) and count > 0
+            else None
+        )
+        parameter_counts.setdefault(key, set()).add(valid_count)
+        current = merged.get(key)
+        if current is None:
+            merged[key] = {**item, "metrics": dict(item.get("metrics") or {})}
+            continue
+        current["metrics"].update(item.get("metrics") or {})
+        ranks = [
+            rank
+            for rank in (current.get("best_rank"), item.get("best_rank"))
+            if isinstance(rank, int)
+        ]
+        current["best_rank"] = min(ranks) if ranks else None
+    for key, counts in parameter_counts.items():
+        merged[key]["num_parameters"] = next(iter(counts)) if len(counts) == 1 else None
+    return [
+        evaluation(item)
+        for item in sorted(
+            merged.values(),
+            key=lambda item: (
+                item.get("best_rank")
+                if isinstance(item.get("best_rank"), int)
+                else 10**9,
+                str(item.get("model_name") or "").casefold(),
+            ),
+        )
+    ]

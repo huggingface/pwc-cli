@@ -29,7 +29,8 @@ LOGGER = logging.getLogger("pwc_mcp.requests")
 # MCP SDK diagnostics can include peer-supplied tool names and resource URIs.
 # OperationalTelemetryMiddleware is the server's sole request log surface.
 logging.getLogger("mcp").setLevel(logging.CRITICAL + 1)
-PROTOCOL_VERSION = "2026-07-28"
+PROTOCOL_VERSION = "2025-11-25"
+EXPERIMENTAL_PROTOCOL_VERSION = "2026-07-28"
 MAX_REQUEST_BODY_SIZE = 2 * 1024 * 1024
 MAX_RESPONSE_BODY_SIZE = 2 * 1024 * 1024
 KNOWN_TOOLS = {
@@ -38,19 +39,78 @@ KNOWN_TOOLS = {
     "get_paper_info",
     "read_paper",
     "get_related_papers",
+    "get_trending_papers",
+    "get_paper_evaluations",
     "get_paper_lineage",
     "get_task",
+    "list_tasks",
     "get_method",
+    "list_methods",
     "list_benchmarks",
     "get_benchmark",
 }
 KNOWN_PROTOCOLS = {
     PROTOCOL_VERSION,
-    "2025-11-25",
+    EXPERIMENTAL_PROTOCOL_VERSION,
     "2025-06-18",
     "2025-03-26",
     "2024-11-05",
 }
+
+
+async def well_known_mcp(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "name": "Papers With Code",
+            "description": "Anonymous read-only AI research catalog",
+            "transport": {"type": "streamable-http", "url": "/mcp"},
+            "protocol_version": PROTOCOL_VERSION,
+            "supported_protocol_versions": sorted(KNOWN_PROTOCOLS, reverse=True),
+            "documentation_url": "/docs",
+        }
+    )
+
+
+def _docs_schema(server) -> dict:
+    tools = []
+    for tool in server._tool_manager.list_tools():
+        tools.append(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": tool.parameters,
+                "outputSchema": tool.output_schema,
+            }
+        )
+    return {
+        "name": "Papers With Code MCP",
+        "version": __version__,
+        "protocol_version": PROTOCOL_VERSION,
+        "endpoint": "/mcp",
+        "tools": tools,
+    }
+
+
+class MCPMethodMiddleware:
+    """Avoid opening an SSE response for unsupported bare GET requests."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] == "http"
+            and scope.get("path") == "/mcp"
+            and scope.get("method") == "GET"
+        ):
+            response = JSONResponse(
+                {"error": "method_not_allowed", "allowed": ["POST"]},
+                status_code=405,
+                headers={"Allow": "POST"},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 def _csv_env(name: str, default: list[str]) -> list[str]:
@@ -426,6 +486,13 @@ def create_app(
         ),
     )
     app.routes.insert(0, Route("/health", health, methods=["GET"]))
+    docs_schema = _docs_schema(server)
+
+    async def docs(_request: Request) -> JSONResponse:
+        return JSONResponse(docs_schema)
+
+    app.routes.insert(1, Route("/docs", docs, methods=["GET"]))
+    app.routes.insert(2, Route("/.well-known/mcp", well_known_mcp, methods=["GET"]))
     app.state.pwc_catalog_readiness = CatalogReadiness(
         catalog_client,
         initially_ready=catalog is not None,
@@ -438,6 +505,7 @@ def create_app(
         global_concurrency_limit=global_concurrency_limit,
         trust_proxy_headers=trust_proxy_headers,
     )
+    wrapped = MCPMethodMiddleware(wrapped)
     wrapped = ResponseSizeLimitMiddleware(wrapped)
     wrapped = OperationalTelemetryMiddleware(wrapped)
     return CORSMiddleware(

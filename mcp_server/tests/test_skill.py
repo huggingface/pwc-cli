@@ -10,9 +10,13 @@ EXPECTED_TOOLS = {
     "get_paper_info",
     "read_paper",
     "get_related_papers",
+    "get_trending_papers",
+    "get_paper_evaluations",
     "get_paper_lineage",
     "get_task",
+    "list_tasks",
     "get_method",
+    "list_methods",
     "list_benchmarks",
     "get_benchmark",
 }
