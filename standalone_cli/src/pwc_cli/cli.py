@@ -305,20 +305,34 @@ def _paper_rows(
     _print_table(tuple(headers), rows, right_align=tuple(right_align))
 
 
+def _emit_json(args: argparse.Namespace, data: Any) -> int:
+    """Emit one versioned JSON document, or hand it to an in-process caller.
+
+    ``pwc_cli.queries`` sets ``args.result_sink`` so embedders such as the MCP
+    server receive exactly the ``data`` that ``--json`` would print, without
+    touching stdout.
+    """
+    sink = getattr(args, "result_sink", None)
+    if sink is not None:
+        sink.append(data)
+        return 0
+    print(
+        json.dumps(
+            {"schema_version": API_CONTRACT_VERSION, "data": data},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
 def _emit_page(
     payload: Any,
     args: argparse.Namespace,
     renderer: Callable[[list[dict[str, Any]]], None],
 ) -> int:
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": payload},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, payload)
     items, total = _rows(payload)
     renderer(items)
     page = getattr(args, "page", 1)
@@ -386,7 +400,8 @@ def search(args: argparse.Namespace, client: Client) -> int:
 def paper_info(args: argparse.Namespace, client: Client) -> int:
     paper = _resolve_paper(args.paper, client)
     payload = client.get(
-        f"papers/{paper}", {"include_resources": args.include_resources}
+        f"papers/{quote(paper, safe='.')}",
+        {"include_resources": args.include_resources},
     ).json()
     evaluations = None
     if args.include_evals:
@@ -396,14 +411,7 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
         evaluations = _paper_evaluations(client, paper_id)
         payload = {**payload, "evaluations": evaluations}
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": payload},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, payload)
     organizations = ", ".join(
         str(item.get("name") or item.get("slug"))
         for item in payload.get("organizations") or []
@@ -513,20 +521,10 @@ def _paper_info_lineage_markdown(item: dict[str, Any]) -> str:
 
 def paper_read(args: argparse.Namespace, client: Client) -> int:
     paper = _resolve_paper(args.paper, client)
-    response = client.get(f"research/papers/{paper}/read")
+    response = client.get(f"research/papers/{quote(paper, safe='.')}/read")
     markdown = response.body.decode("utf-8", errors="replace")
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "schema_version": API_CONTRACT_VERSION,
-                    "data": {"paper": paper, "markdown": markdown},
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, {"paper": paper, "markdown": markdown})
     sys.stdout.write(markdown)
     if markdown and not markdown.endswith("\n"):
         sys.stdout.write("\n")
@@ -678,7 +676,9 @@ def paper_trending(args: argparse.Namespace, client: Client) -> int:
 def paper_related(args: argparse.Namespace, client: Client) -> int:
     paper = _resolve_paper(args.paper, client)
     return _emit_paper_page(
-        client.get(f"papers/{paper}/related", {"limit": args.limit}).json(),
+        client.get(
+            f"papers/{quote(paper, safe='.')}/related", {"limit": args.limit}
+        ).json(),
         args,
     )
 
@@ -699,16 +699,11 @@ def _lineage_markdown(item: dict[str, Any]) -> str:
 
 def paper_lineage(args: argparse.Namespace, client: Client) -> int:
     paper_reference = _resolve_paper(args.paper, client)
-    payload = client.get(f"research/papers/{paper_reference}/lineage").json()
+    payload = client.get(
+        f"research/papers/{quote(paper_reference, safe='.')}/lineage"
+    ).json()
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": payload},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, payload)
     paper = payload.get("paper") or {}
     print("# Paper lineage")
     for title, items in (
@@ -761,7 +756,7 @@ def _ordering(field: str, direction: str) -> str:
 
 def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
     if args.page != 1 or args.page_size != 50 or args.level is not None:
-        raise ResponseError(
+        raise UsageError(
             "--group-by-area cannot be combined with pagination or --level; "
             "use --flat for the complete task endpoint"
         )
@@ -810,14 +805,7 @@ def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
         grouped.append({**area, "tasks": tasks})
     data = {"results": grouped}
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": data},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, data)
 
     for area_index, area in enumerate(grouped):
         if area_index:
@@ -1047,14 +1035,7 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
         "papers": papers[:10],
     }
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": data},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, data)
 
     interactive = sys.stdout.isatty()
     markdown = not interactive
@@ -1238,14 +1219,7 @@ def method_detail(args: argparse.Namespace, client: Client) -> int:
     )
     data = {"method": method, "area": area}
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": data},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, data)
 
     _entity_heading(method.get("name") or method.get("slug"))
     metadata = []
@@ -1314,14 +1288,7 @@ def conference_detail(args: argparse.Namespace, client: Client) -> int:
     slug = str(summary.get("slug") or summary.get("id"))
     conference = client.get(f"conferences/{quote(slug, safe='')}").json()
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": conference},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, conference)
 
     _entity_heading(conference.get("name") or conference.get("slug"))
     metadata = []
@@ -1392,14 +1359,7 @@ def organization_detail(args: argparse.Namespace, client: Client) -> int:
     slug = str(summary.get("slug") or summary.get("id"))
     organization = client.get(f"organizations/{quote(slug, safe='')}").json()
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": organization},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, organization)
 
     _entity_heading(organization.get("name") or organization.get("slug"))
     metadata = []
@@ -1488,14 +1448,7 @@ def framework_detail(args: argparse.Namespace, client: Client) -> int:
     items = _framework_catalog_items(client.get("frameworks/").json())
     framework = _exact_entity_match(args.name, items, label="Framework")
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": framework},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, framework)
 
     _entity_heading(framework.get("name") or framework.get("slug"))
     metadata = [
@@ -1695,7 +1648,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
         return _emit_page(payload, args, render_trends)
 
     if args.order_by == "trending":
-        raise ResponseError("--order-by trending requires --task")
+        raise UsageError("--order-by trending requires --task")
     ordering = f"-{args.order_by}" if args.order_dir == "desc" else args.order_by
     payload = client.get(
         "datasets/",
@@ -1768,14 +1721,7 @@ def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
 
     grouped = {"results": areas}
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": grouped},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, grouped)
 
     for area_index, area in enumerate(areas):
         if area_index:
@@ -2232,14 +2178,7 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
         "results": rows,
     }
     if args.json:
-        print(
-            json.dumps(
-                {"schema_version": API_CONTRACT_VERSION, "data": data},
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-        return 0
+        return _emit_json(args, data)
 
     interactive = sys.stdout.isatty()
     title = (
@@ -2352,8 +2291,11 @@ def _implementation_coverage(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = Parser(
+def build_parser(
+    *, parser_class: type[argparse.ArgumentParser] = Parser
+) -> argparse.ArgumentParser:
+    """Build the pwc parser; subparsers inherit ``parser_class``."""
+    parser = parser_class(
         prog="pwc",
         description="Papers With Code research and paper-editing CLI",
         epilog=(

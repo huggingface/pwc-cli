@@ -22,22 +22,51 @@ curl http://127.0.0.1:7860/health
 
 ## Tools
 
-- `search_papers`
-- `list_papers`
-- `get_paper_info`
-- `read_paper`
-- `get_related_papers`
-- `get_paper_lineage`
-- `get_task`
-- `get_method`
-- `list_benchmarks`
-- `get_benchmark`
+Every read-only `pwc` CLI research command is one tool, and every research flag
+of that command is a tool parameter, so results match `pwc ... --json`. Each
+result carries `schema_version` and `data`, the complete CLI JSON payload, next
+to typed projections such as `items` or `evaluations`.
+
+| Tool | CLI command |
+| --- | --- |
+| `search_papers` | `pwc search` |
+| `get_paper_info` | `pwc paper info` |
+| `read_paper` | `pwc paper read` (64 KiB chunks with a continuation cursor) |
+| `list_papers` | `pwc paper list` |
+| `list_recent_papers` | `pwc paper recent` |
+| `list_trending_papers` | `pwc paper trending` |
+| `get_related_papers` | `pwc paper related` |
+| `get_paper_lineage` | `pwc paper lineage list` |
+| `get_task` | `pwc task --name` |
+| `list_tasks` | `pwc task list` |
+| `get_method` | `pwc method --name` |
+| `list_methods` | `pwc method list` |
+| `get_conference` | `pwc conference --name` |
+| `list_conferences` | `pwc conference list` |
+| `get_organization` | `pwc organization --name` |
+| `list_organizations` | `pwc organization list` |
+| `get_framework` | `pwc framework --name` |
+| `list_frameworks` | `pwc framework list` |
+| `get_benchmark` | `pwc benchmark --name` |
+| `list_benchmarks` | `pwc benchmark list` |
+
+Parameter names follow the CLI flags except for the established MCP names
+`published_after`/`published_before` (`--start-date`/`--end-date`), `limit`
+(`--page-size`), `authors` (`--author`), `order_direction` (`--order-dir`),
+`minimum_evaluations` (`--min-eval-count`), and `include_evaluations`
+(`--include-evals`). Terminal-only flags (`--json`,
+`--implementation-coverage`, `--flat`) have no parameter because MCP output is
+always structured. Hosted differences from the CLI: `limit` is capped at 25,
+`search_papers` defaults to `keyword` mode, `get_paper_info` includes
+resources by default, and `read_paper` is chunked.
+`tests/test_parity.py` fails when the CLI parser and the tool schemas drift.
 
 All tools are annotated read-only and idempotent. Search is deterministic;
-the caller controls keyword or semantic mode. `read_paper` fetches at most one
-64 KiB catalog chunk per call and returns a signed, one-hour continuation cursor
-when more Markdown remains. Continuations stay pinned to the resolved paper and
-content version, so a changed paper fails with an explicit restart response.
+the caller controls keyword, hybrid, or semantic mode. `read_paper` fetches at
+most one 64 KiB catalog chunk per call and returns a signed, one-hour
+continuation cursor when more Markdown remains. Continuations stay pinned to
+the resolved paper and content version, so a changed paper fails with an
+explicit restart response.
 
 ## Resources
 
@@ -60,10 +89,13 @@ content version, so a changed paper fails with an explicit restart response.
 | `LOG_LEVEL` | Content-free operational log level |
 
 Native clients may omit `Origin`. Browser requests must match the configured
-allowlist. The server does not log queries, paper references, request bodies,
+allowlist. A first-party client on the same host may send
+`X-PwC-MCP-Client: <token>` to name its rate-limit identity (for example one
+hashed chat session); the header counts only on a direct loopback connection
+without `X-Forwarded-For`, so proxied public traffic cannot use it. The server does not log queries, paper references, request bodies,
 raw IP addresses, or authorization headers.
 
-The hosted defaults allow 60 total requests and 10 semantic searches per minute
+The hosted defaults allow 60 total requests and 10 semantic or hybrid searches per minute
 per client IP, with at most four concurrent requests per IP and 32 globally.
 Tool inputs cap list results at 25, catalog calls time out after 25 seconds, and
 request, upstream, and serialized MCP response bodies are bounded to 2 MiB.

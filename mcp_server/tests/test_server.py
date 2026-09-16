@@ -4,63 +4,168 @@ import asyncio
 import logging
 
 from mcp.client import Client
-from pwc_cli.transport import ResponseError
+from pwc_cli.cli import UsageError
+from pwc_cli.transport import HTTPStatusError, ResponseError
 from pwc_mcp.catalog import PaperMarkdownChunk
-from pwc_mcp.server import build_server
+from pwc_mcp.server import TOOL_COMMANDS, build_server
+
+PAPER_ROW = {
+    "id": "755",
+    "arxiv_id": "1706.03762",
+    "title": "Attention Is All You Need",
+    "authors": ["Ashish Vaswani"],
+    "published": "2017-06-12",
+    "citation_count": 190_373,
+    "url_abs": "https://arxiv.org/abs/1706.03762v7",
+    "has_official_implementation": True,
+    "code_repository_count": 595,
+}
+PAPER_PAGE = {"next_page": 2, "results": [PAPER_ROW]}
+PAPER_INFO = {
+    **PAPER_ROW,
+    "abstract": "A transformer architecture.",
+    "url_pdf": "https://arxiv.org/pdf/1706.03762v7.pdf",
+    "tasks": [
+        {"id": "6", "name": "Machine Translation", "slug": "machine-translation"}
+    ],
+    "methods": [{"id": "1", "name": "Transformer", "slug": "transformer"}],
+    "repositories": [
+        {"url": "https://github.com/tensorflow/tensor2tensor", "is_official": True}
+    ],
+    "project_pages": ["https://example.test/transformer"],
+    "hf_models": ["https://huggingface.co/google-t5/t5-base"],
+    "hf_datasets": [],
+    "hf_spaces": [],
+}
+PAPER_EVALUATION = {
+    "id": "40",
+    "dataset_name": "WMT2014 English-German",
+    "task_name": "Machine Translation",
+    "model_name": "Transformer Big",
+    "metrics": {"BLEU score": 28.4},
+    "best_metric": "BLEU score",
+    "best_rank": 3,
+    "is_open": True,
+    "num_parameters": 213_000_000,
+    "result_url": "https://example.test/result",
+}
+EVALUATION_ROW = {
+    "id": "10",
+    "model_name": "ExampleNet",
+    "harness": "timm",
+    "metrics": {"Accuracy": 90.1},
+    "best_metric": "Accuracy",
+    "best_rank": 1,
+    "task_name": "Image Classification",
+    "paper_id": "755",
+    "paper_title": "Attention Is All You Need",
+    "paper_arxiv_id": "1706.03762",
+    "paper_published_date": "2017-06-12",
+    "is_open": True,
+    "num_parameters": 1000,
+}
+BENCHMARK = {
+    "id": "72",
+    "name": "ImageNet-1k",
+    "slug": "imagenet-1k",
+    "paper_count": 124,
+}
+TASK = {
+    "id": "1",
+    "name": "Image Classification",
+    "slug": "image-classification",
+    "description": "Assign a class to an image.",
+    "paper_count": 2343,
+}
+METHOD = {
+    "id": "2",
+    "name": "Transformer",
+    "slug": "transformer",
+    "full_name": "Transformer",
+    "description": "Attention-based architecture.",
+    "introduced_year": 2017,
+    "source_paper_id": "755",
+    "source_url": "/paper/1706.03762",
+    "source_title": "Attention Is All You Need",
+    "paper_count": 13505,
+}
+CONFERENCE = {"slug": "cvpr-2025", "name": "CVPR 2025", "year": 2025, "paper_count": 3}
+ORGANIZATION = {"id": "4", "slug": "nvidia", "name": "NVIDIA", "paper_count": 900}
+FRAMEWORK = {"id": "7", "slug": "vllm", "name": "vLLM", "platforms": ["gpu"]}
+GROUPED_BENCHMARKS = {
+    "results": [
+        {
+            "id": "1",
+            "name": "Vision",
+            "tasks": [
+                {
+                    "slug": "image-classification",
+                    "benchmarks": [
+                        {
+                            "id": "72",
+                            "name": "ImageNet-1k",
+                            "slug": "imagenet-1k",
+                            "evaluation_count": 124,
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+}
+
+PAYLOADS = {
+    ("search",): PAPER_PAGE,
+    ("paper", "list"): PAPER_PAGE,
+    # The recent and trending endpoints return a bare list of papers.
+    ("paper", "recent"): [PAPER_ROW],
+    ("paper", "trending"): [PAPER_ROW],
+    ("paper", "related"): {"results": [PAPER_ROW]},
+    ("paper", "lineage", "list"): {
+        "paper": {
+            "id": 755,
+            "reference": "1706.03762",
+            "title": "Attention Is All You Need",
+        },
+        "predecessors": [],
+        "successors": [{"id": 900, "reference": "2001.00001", "title": "A Follow-up"}],
+    },
+    ("task",): {
+        "task": TASK,
+        "area": {"id": "1", "name": "Vision"},
+        "parents": [],
+        "children": [],
+        "benchmarks": [BENCHMARK],
+        "common_methods": [METHOD],
+        "papers": [PAPER_ROW],
+        "paper_count": 2343,
+    },
+    ("task", "list"): {"count": 1, "results": [TASK]},
+    ("method",): {"method": METHOD, "area": {"id": "1", "name": "Vision"}},
+    ("method", "list"): {"count": 1, "results": [METHOD]},
+    ("conference",): CONFERENCE,
+    ("conference", "list"): {"count": 1, "results": [CONFERENCE]},
+    ("organization",): ORGANIZATION,
+    ("organization", "list"): {"count": 1, "results": [ORGANIZATION]},
+    ("framework",): FRAMEWORK,
+    ("framework", "list"): {"count": 1, "results": [FRAMEWORK]},
+    ("benchmark",): {
+        "benchmark": {"id": "72", "name": "ImageNet-1k", "slug": "imagenet-1k"},
+        "count": 1,
+        "matched_count": 1,
+        "results": [EVALUATION_ROW],
+    },
+    ("benchmark", "list"): {"next_page": None, "results": [BENCHMARK]},
+}
 
 
 class StubCatalog:
+    """Records the CLI command and options each tool requests."""
+
     def __init__(self):
+        self.queries: list[tuple[tuple[str, ...], dict]] = []
         self.resolve_calls = 0
         self.read_calls = []
-
-    def search_papers(self, **_kwargs):
-        return {
-            "next_page": 2,
-            "results": [
-                {
-                    "id": "755",
-                    "arxiv_id": "1706.03762",
-                    "title": "Attention Is All You Need",
-                    "authors": ["Ashish Vaswani"],
-                    "published": "2017-06-12",
-                    "citation_count": 190_373,
-                    "url_abs": "https://arxiv.org/abs/1706.03762v7",
-                    "has_official_implementation": True,
-                    "code_repository_count": 595,
-                }
-            ],
-        }
-
-    def get_paper_info(self, paper: str, *, include_resources: bool):
-        assert paper == "1706.03762"
-        assert include_resources is True
-        return {
-            "id": "755",
-            "arxiv_id": "1706.03762",
-            "title": "Attention Is All You Need",
-            "abstract": "A transformer architecture.",
-            "authors": ["Ashish Vaswani"],
-            "published": "2017-06-12",
-            "citation_count": 190_373,
-            "url_abs": "https://arxiv.org/abs/1706.03762v7",
-            "url_pdf": "https://arxiv.org/pdf/1706.03762v7.pdf",
-            "tasks": [
-                {
-                    "id": "6",
-                    "name": "Machine Translation",
-                    "slug": "machine-translation",
-                }
-            ],
-            "methods": [{"id": "1", "name": "Transformer", "slug": "transformer"}],
-            "repositories": [
-                {
-                    "url": "https://github.com/tensorflow/tensor2tensor",
-                    "is_official": True,
-                }
-            ],
-            "project_pages": ["https://example.test/transformer"],
-        }
 
     def resolve_paper(self, paper: str):
         self.resolve_calls += 1
@@ -83,7 +188,9 @@ class StubCatalog:
         self.read_calls.append((offset, content_version, limit))
         raw = b"abcdefgh"
         markdown = raw[offset : offset + limit].decode()
-        next_offset = offset + len(markdown) if offset + len(markdown) < len(raw) else None
+        next_offset = (
+            offset + len(markdown) if offset + len(markdown) < len(raw) else None
+        )
         return PaperMarkdownChunk(
             paper=paper,
             source="arxiv",
@@ -92,105 +199,39 @@ class StubCatalog:
             next_offset=next_offset,
         )
 
-    def list_papers(self, **_kwargs):
-        return self.search_papers()
+    def query(self, command, options):
+        self.queries.append((tuple(command), dict(options)))
+        if command == ("paper", "info"):
+            payload = dict(PAPER_INFO)
+            if options.get("include_evals"):
+                payload["evaluations"] = {"count": 1, "results": [PAPER_EVALUATION]}
+            return payload
+        if command == ("benchmark", "list") and (
+            options.get("group_by_area") or options.get("area")
+        ):
+            return GROUPED_BENCHMARKS
+        return PAYLOADS[tuple(command)]
 
-    def get_related_papers(self, paper: str, *, limit: int):
-        assert paper == "1706.03762"
-        assert limit == 2
-        return self.search_papers()
+    def options(self, command):
+        return next(options for called, options in self.queries if called == command)
 
-    def get_paper_lineage(self, paper: str):
-        assert paper == "1706.03762"
-        return {
-            "paper": {
-                "id": 755,
-                "reference": "1706.03762",
-                "title": "Attention Is All You Need",
-            },
-            "predecessors": [],
-            "successors": [
-                {"id": 900, "reference": "2001.00001", "title": "A Follow-up"}
-            ],
-        }
 
-    def get_task(self, task: str):
-        assert task == "image-classification"
-        return {
-            "task": {
-                "id": "1",
-                "name": "Image Classification",
-                "slug": "image-classification",
-                "description": "Assign a class to an image.",
-                "paper_count": 2343,
-            },
-            "area": {"id": "1", "name": "Vision"},
-            "parents": [],
-            "children": [],
-            "benchmarks": [
-                {
-                    "id": "72",
-                    "name": "ImageNet-1k",
-                    "slug": "imagenet-1k",
-                    "paper_count": 124,
-                }
-            ],
-        }
+def _call(catalog, requests, **server_options):
+    async def exercise():
+        async with Client(build_server(catalog, **server_options)) as client:
+            results = []
+            for name, arguments in requests:
+                results.append(await client.call_tool(name, arguments))
+            return results
 
-    def get_method(self, method: str):
-        assert method == "transformer"
-        return {
-            "id": "2",
-            "name": "Transformer",
-            "slug": "transformer",
-            "full_name": "Transformer",
-            "description": "Attention-based architecture.",
-            "introduced_year": 2017,
-            "source_paper_id": "755",
-            "source_url": "/paper/1706.03762",
-            "source_title": "Attention Is All You Need",
-            "paper_count": 13505,
-        }
-
-    def list_benchmarks(self, **_kwargs):
-        return {
-            "next_page": None,
-            "results": [
-                {
-                    "id": "72",
-                    "name": "ImageNet-1k",
-                    "slug": "imagenet-1k",
-                    "paper_count": 124,
-                }
-            ],
-        }
-
-    def get_benchmark(self, benchmark: str, *, limit: int, is_open: bool | None):
-        assert benchmark == "imagenet-1k"
-        assert limit in {5, 10}
-        assert is_open in {True, None}
-        return {
-            "benchmark": {"id": "72", "name": "ImageNet-1k", "slug": "imagenet-1k"},
-            "count": 1,
-            "results": [
-                {
-                    "id": "10",
-                    "model_name": "ExampleNet",
-                    "metrics": {"Accuracy": 90.1},
-                    "best_rank": 1,
-                    "paper_id": "755",
-                    "paper_title": "Attention Is All You Need",
-                    "paper_arxiv_id": "1706.03762",
-                    "is_open": True,
-                    "num_parameters": 1000,
-                }
-            ],
-        }
+    return asyncio.run(exercise())
 
 
 def test_search_papers_is_a_read_only_structured_tool():
+    catalog = StubCatalog()
+
     async def exercise():
-        async with Client(build_server(StubCatalog())) as client:
+        async with Client(build_server(catalog)) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
             result = await client.call_tool(
                 "search_papers",
@@ -202,6 +243,12 @@ def test_search_papers_is_a_read_only_structured_tool():
 
     assert tools["search_papers"].annotations.read_only_hint is True
     assert tools["search_papers"].input_schema["properties"]["limit"]["maximum"] == 25
+    assert tools["search_papers"].input_schema["properties"]["mode"]["enum"] == [
+        "hybrid",
+        "keyword",
+        "semantic",
+    ]
+    assert result.is_error is False
     assert result.structured_content == {
         "schema_version": "v1",
         "items": [
@@ -218,14 +265,30 @@ def test_search_papers_is_a_read_only_structured_tool():
             }
         ],
         "next_page": 2,
+        "data": PAPER_PAGE,
     }
-    assert result.is_error is False
+    assert catalog.queries == [
+        (
+            ("search",),
+            {
+                "query": "transformer",
+                "mode": "keyword",
+                "page": 1,
+                "limit": 1,
+                "start_date": None,
+                "end_date": None,
+                "has_official_implementation": False,
+            },
+        )
+    ]
 
 
 def test_search_rejects_invalid_ranges_before_calling_the_catalog():
-    async def exercise():
-        async with Client(build_server(StubCatalog())) as client:
-            return await client.call_tool(
+    catalog = StubCatalog()
+    (result,) = _call(
+        catalog,
+        [
+            (
                 "search_papers",
                 {
                     "query": "transformer",
@@ -233,29 +296,28 @@ def test_search_rejects_invalid_ranges_before_calling_the_catalog():
                     "published_before": "2026-08-01",
                 },
             )
-
-    result = asyncio.run(exercise())
+        ],
+    )
 
     assert result.is_error is True
     assert result.content[0].text == (
         "Error executing tool search_papers: "
         "published_after must be on or before published_before"
     )
+    assert catalog.queries == []
 
 
 def test_catalog_failures_do_not_expose_or_log_user_queries(caplog):
     secret_query = "private unreleased project heliotrope"
 
     class FailingCatalog(StubCatalog):
-        def search_papers(self, **_kwargs):
-            raise ResponseError(f"Paper title not found: {secret_query}")
-
-    async def exercise():
-        async with Client(build_server(FailingCatalog())) as client:
-            return await client.call_tool("search_papers", {"query": secret_query})
+        def query(self, command, options):
+            raise ResponseError(f"API returned invalid JSON for {secret_query}")
 
     with caplog.at_level(logging.INFO):
-        result = asyncio.run(exercise())
+        (result,) = _call(
+            FailingCatalog(), [("search_papers", {"query": secret_query})]
+        )
 
     assert result.is_error is True
     assert result.content[0].text == (
@@ -265,12 +327,62 @@ def test_catalog_failures_do_not_expose_or_log_user_queries(caplog):
     assert secret_query not in caplog.text
 
 
+def test_lookup_failures_return_the_cli_hint_without_logging_it(caplog):
+    class MissingCatalog(StubCatalog):
+        def query(self, command, options):
+            raise ResponseError(
+                "Task not found: language-modelling; closest results: Language Modeling"
+            )
+
+    class TransportCatalog(StubCatalog):
+        def query(self, command, options):
+            raise HTTPStatusError(404, "not found: language-modelling")
+
+    with caplog.at_level(logging.INFO):
+        (missing,) = _call(
+            MissingCatalog(), [("get_task", {"task": "language-modelling"})]
+        )
+        (transport,) = _call(
+            TransportCatalog(), [("get_task", {"task": "language-modelling"})]
+        )
+
+    assert missing.content[0].text == (
+        "Error executing tool get_task: "
+        "Task not found: language-modelling; closest results: Language Modeling"
+    )
+    assert transport.content[0].text == (
+        "Error executing tool get_task: the Papers With Code catalog request failed"
+    )
+    assert "language-modelling" not in caplog.text
+
+
+def test_cli_usage_errors_are_returned_verbatim():
+    class StrictCatalog(StubCatalog):
+        def query(self, command, options):
+            raise UsageError("unknown metric(s): latency; available metrics: Accuracy")
+
+    (result,) = _call(
+        StrictCatalog(),
+        [("get_benchmark", {"benchmark": "imagenet-1k", "sort_metric": "latency"})],
+    )
+
+    assert result.is_error is True
+    assert result.content[0].text == (
+        "Error executing tool get_benchmark: "
+        "unknown metric(s): latency; available metrics: Accuracy"
+    )
+
+
 def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
     catalog = StubCatalog()
 
     async def exercise():
         async with Client(build_server(catalog, read_chunk_bytes=5)) as client:
             info = await client.call_tool("get_paper_info", {"paper": "1706.03762"})
+            evaluated = await client.call_tool(
+                "get_paper_info",
+                {"paper": "1706.03762", "include_evaluations": True},
+            )
             first = await client.call_tool("read_paper", {"paper": "1706.03762"})
             second = await client.call_tool(
                 "read_paper",
@@ -279,15 +391,42 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
                     "cursor": first.structured_content["next_cursor"],
                 },
             )
-        return info, first, second
+        return info, evaluated, first, second
 
-    info, first, second = asyncio.run(exercise())
+    info, evaluated, first, second = asyncio.run(exercise())
 
-    assert info.structured_content["paper"]["title"] == "Attention Is All You Need"
-    assert info.structured_content["paper"]["tasks"] == [
+    assert catalog.queries[0] == (
+        ("paper", "info"),
+        {"paper": "1706.03762", "include_resources": True, "include_evals": False},
+    )
+    paper = info.structured_content["paper"]
+    assert paper["title"] == "Attention Is All You Need"
+    assert paper["tasks"] == [
         {"id": "6", "name": "Machine Translation", "slug": "machine-translation"}
     ]
-    assert info.structured_content["paper"]["repositories"][0]["is_official"] is True
+    assert paper["repositories"][0]["is_official"] is True
+    assert paper["hf_models"] == ["https://huggingface.co/google-t5/t5-base"]
+    assert info.structured_content["evaluations"] is None
+    assert info.structured_content["data"]["abstract"] == "A transformer architecture."
+
+    assert catalog.queries[1][1]["include_evals"] is True
+    assert evaluated.structured_content["evaluation_count"] == 1
+    assert evaluated.structured_content["evaluations"] == [
+        {
+            "id": "40",
+            "benchmark": "WMT2014 English-German",
+            "task": "Machine Translation",
+            "model_name": "Transformer Big",
+            "harness": None,
+            "metrics": {"BLEU score": 28.4},
+            "best_metric": "BLEU score",
+            "best_rank": 3,
+            "is_open": True,
+            "num_parameters": 213_000_000,
+            "source_url": "https://example.test/result",
+        }
+    ]
+
     assert first.structured_content["markdown"] == "abcde"
     assert first.structured_content["truncated"] is True
     assert first.structured_content["next_cursor"]
@@ -303,13 +442,10 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
 
 
 def test_read_paper_rejects_invalid_continuation_as_an_expected_error():
-    async def exercise():
-        async with Client(build_server(StubCatalog())) as client:
-            return await client.call_tool(
-                "read_paper", {"paper": "1706.03762", "cursor": "%%%private%%%"}
-            )
-
-    result = asyncio.run(exercise())
+    (result,) = _call(
+        StubCatalog(),
+        [("read_paper", {"paper": "1706.03762", "cursor": "%%%private%%%"})],
+    )
 
     assert result.is_error is True
     assert result.content[0].text == (
@@ -318,22 +454,56 @@ def test_read_paper_rejects_invalid_continuation_as_an_expected_error():
 
 
 def test_paper_listing_related_work_and_lineage_are_composable():
-    async def exercise():
-        async with Client(build_server(StubCatalog())) as client:
-            listed = await client.call_tool(
-                "list_papers", {"task": "machine-translation", "limit": 1}
-            )
-            related = await client.call_tool(
-                "get_related_papers", {"paper": "1706.03762", "limit": 2}
-            )
-            lineage = await client.call_tool(
-                "get_paper_lineage", {"paper": "1706.03762"}
-            )
-        return listed, related, lineage
+    catalog = StubCatalog()
+    listed, recent, trending, related, lineage = _call(
+        catalog,
+        [
+            (
+                "list_papers",
+                {
+                    "task": "machine-translation",
+                    "authors": ["Ashish Vaswani"],
+                    "limit": 1,
+                },
+            ),
+            ("list_recent_papers", {"limit": 3}),
+            ("list_trending_papers", {"max_age_days": 30, "min_velocity": 1.5}),
+            ("get_related_papers", {"paper": "1706.03762", "limit": 2}),
+            ("get_paper_lineage", {"paper": "1706.03762"}),
+        ],
+    )
 
-    listed, related, lineage = asyncio.run(exercise())
-
+    assert catalog.options(("paper", "list")) == {
+        "search": None,
+        "task": "machine-translation",
+        "method": None,
+        "conference": None,
+        "framework": None,
+        "organization": None,
+        "author": ["Ashish Vaswani"],
+        "start_date": None,
+        "end_date": None,
+        "all_versions": False,
+        "order_by": "trending",
+        "order_dir": "desc",
+        "include_resources": False,
+        "has_official_implementation": False,
+        "page": 1,
+        "page_size": 1,
+    }
+    assert catalog.options(("paper", "recent")) == {"limit": 3}
+    assert catalog.options(("paper", "trending")) == {
+        "limit": 20,
+        "max_age_days": 30,
+        "min_velocity": 1.5,
+    }
+    assert catalog.options(("paper", "related")) == {"paper": "1706.03762", "limit": 2}
+    assert catalog.options(("paper", "lineage", "list")) == {"paper": "1706.03762"}
     assert listed.structured_content["items"][0]["arxiv_id"] == "1706.03762"
+    assert recent.structured_content["next_page"] is None
+    assert recent.structured_content["items"][0]["id"] == "755"
+    assert recent.structured_content["data"] == [PAPER_ROW]
+    assert trending.structured_content["items"][0]["id"] == "755"
     assert related.structured_content["items"][0]["id"] == "755"
     assert lineage.structured_content["paper"]["reference"] == "1706.03762"
     assert lineage.structured_content["successors"] == [
@@ -342,8 +512,10 @@ def test_paper_listing_related_work_and_lineage_are_composable():
 
 
 def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
+    catalog = StubCatalog()
+
     async def exercise():
-        async with Client(build_server(StubCatalog())) as client:
+        async with Client(build_server(catalog)) as client:
             tool_names = {tool.name for tool in (await client.list_tools()).tools}
             task = await client.call_tool("get_task", {"task": "image-classification"})
             method = await client.call_tool("get_method", {"method": "transformer"})
@@ -352,29 +524,156 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
             )
             benchmark = await client.call_tool(
                 "get_benchmark",
-                {"benchmark": "imagenet-1k", "limit": 5, "is_open": True},
+                {
+                    "benchmark": "imagenet-1k",
+                    "limit": 5,
+                    "is_open": True,
+                    "max_parameters": "4B",
+                    "minimum_metrics": {"Accuracy": 80},
+                    "sort_metric": "Accuracy:desc",
+                },
             )
         return tool_names, task, method, benchmarks, benchmark
 
     tool_names, task, method, benchmarks, benchmark = asyncio.run(exercise())
 
-    assert tool_names == {
-        "search_papers",
-        "list_papers",
-        "get_paper_info",
-        "read_paper",
-        "get_related_papers",
-        "get_paper_lineage",
-        "get_task",
-        "get_method",
-        "list_benchmarks",
-        "get_benchmark",
+    assert tool_names == set(TOOL_COMMANDS)
+    assert len(tool_names) == 20
+    assert catalog.options(("task",)) == {"name": "image-classification"}
+    assert catalog.options(("method",)) == {"name": "transformer"}
+    assert catalog.options(("benchmark", "list")) == {
+        "search": None,
+        "task": "image-classification",
+        "include_descendants": False,
+        "min_eval_count": None,
+        "is_open": None,
+        "group_by_area": False,
+        "area": None,
+        "benchmarks_per_task": 3,
+        "order_by": None,
+        "order_dir": "asc",
+        "page": 1,
+        "page_size": 25,
+    }
+    assert catalog.options(("benchmark",)) == {
+        "name": "imagenet-1k",
+        "limit": 5,
+        "is_open": True,
+        "max_parameters": "4B",
+        "require_metrics": None,
+        "minimum_metrics": {"Accuracy": 80.0},
+        "maximum_metrics": None,
+        "sort_metric": "Accuracy:desc",
+        "pareto": None,
     }
     assert task.structured_content["task"]["area"] == {"id": "1", "name": "Vision"}
+    assert task.structured_content["task"]["benchmarks"][0]["slug"] == "imagenet-1k"
+    assert task.structured_content["data"]["common_methods"][0]["name"] == "Transformer"
     assert method.structured_content["method"]["introduced_year"] == 2017
     assert benchmarks.structured_content["items"][0]["slug"] == "imagenet-1k"
-    assert benchmark.structured_content["evaluations"][0]["metrics"] == {
-        "Accuracy": 90.1
+    assert benchmark.structured_content["matched_count"] == 1
+    assert benchmark.structured_content["evaluations"] == [
+        {
+            "id": "10",
+            "model_name": "ExampleNet",
+            "harness": "timm",
+            "metrics": {"Accuracy": 90.1},
+            "best_metric": "Accuracy",
+            "best_rank": 1,
+            "task": "Image Classification",
+            "paper_id": "755",
+            "paper_title": "Attention Is All You Need",
+            "paper_arxiv_id": "1706.03762",
+            "paper_published": "2017-06-12",
+            "is_open": True,
+            "num_parameters": 1000,
+        }
+    ]
+
+
+def test_grouped_listings_omit_pagination_and_flatten_benchmarks():
+    catalog = StubCatalog()
+    tasks, grouped_tasks, benchmarks = _call(
+        catalog,
+        [
+            ("list_tasks", {"area": "Vision", "level": 1}),
+            ("list_tasks", {"group_by_area": True}),
+            ("list_benchmarks", {"area": "Vision", "benchmarks_per_task": 2}),
+        ],
+    )
+
+    assert catalog.queries[0] == (
+        ("task", "list"),
+        {
+            "area": "Vision",
+            "level": 1,
+            "visible_only": False,
+            "group_by_area": False,
+            "order_by": "name",
+            "order_dir": "asc",
+            "page": 1,
+            "page_size": 25,
+        },
+    )
+    assert catalog.queries[1][1]["group_by_area"] is True
+    assert catalog.queries[1][1]["page_size"] is None
+    assert catalog.queries[2][1]["page_size"] is None
+    assert catalog.queries[2][1]["benchmarks_per_task"] == 2
+    assert tasks.structured_content == {
+        "schema_version": "v1",
+        "data": {"count": 1, "results": [TASK]},
+    }
+    assert grouped_tasks.structured_content["data"] == {"count": 1, "results": [TASK]}
+    assert benchmarks.structured_content["items"] == [
+        {
+            "id": "72",
+            "name": "ImageNet-1k",
+            "slug": "imagenet-1k",
+            "full_name": None,
+            "description": None,
+            "hf_url": None,
+            "paper_count": 124,
+        }
+    ]
+    assert benchmarks.structured_content["data"] == GROUPED_BENCHMARKS
+
+
+def test_new_catalog_tools_return_the_cli_json_document():
+    catalog = StubCatalog()
+    requests = [
+        ("list_methods", {"introduced_year": 2017, "order_by": "paper_count"}),
+        ("get_conference", {"conference": "CVPR 2025"}),
+        ("list_conferences", {"year": 2025}),
+        ("get_organization", {"organization": "NVIDIA"}),
+        ("list_organizations", {"featured_only": True}),
+        ("get_framework", {"framework": "vLLM"}),
+        ("list_frameworks", {"platform": "gpu"}),
+    ]
+    results = _call(catalog, requests)
+
+    for (name, _arguments), result in zip(requests, results):
+        assert result.is_error is False, name
+        assert result.structured_content == {
+            "schema_version": "v1",
+            "data": PAYLOADS[TOOL_COMMANDS[name]],
+        }
+    assert catalog.options(("method", "list")) == {
+        "area": None,
+        "introduced_year": 2017,
+        "order_by": "paper_count",
+        "order_dir": "asc",
+        "page": 1,
+        "page_size": 25,
+    }
+    assert catalog.options(("conference",)) == {"name": "CVPR 2025"}
+    assert catalog.options(("conference", "list")) == {"year": 2025}
+    assert catalog.options(("organization",)) == {"name": "NVIDIA"}
+    assert catalog.options(("organization", "list")) == {"featured_only": True}
+    assert catalog.options(("framework",)) == {"name": "vLLM"}
+    assert catalog.options(("framework", "list")) == {
+        "domain": None,
+        "category": None,
+        "platform": "gpu",
     }
 
 

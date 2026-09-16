@@ -18,18 +18,37 @@ server.
 
 ## Public contract
 
-Expose exactly these tools:
+Expose exactly one tool per read-only `pwc` CLI research command, with every
+research flag of that command as a tool parameter (`tests/test_parity.py`
+enforces this against the CLI parser):
 
-- `search_papers`
-- `list_papers`
-- `get_paper_info`
-- `read_paper`
-- `get_related_papers`
-- `get_paper_lineage`
-- `get_task`
-- `get_method`
-- `list_benchmarks`
-- `get_benchmark`
+- `search_papers` (`pwc search`)
+- `get_paper_info` (`pwc paper info`)
+- `read_paper` (`pwc paper read`)
+- `list_papers` (`pwc paper list`)
+- `list_recent_papers` (`pwc paper recent`)
+- `list_trending_papers` (`pwc paper trending`)
+- `get_related_papers` (`pwc paper related`)
+- `get_paper_lineage` (`pwc paper lineage list`)
+- `get_task` (`pwc task --name`)
+- `list_tasks` (`pwc task list`)
+- `get_method` (`pwc method --name`)
+- `list_methods` (`pwc method list`)
+- `get_conference` (`pwc conference --name`)
+- `list_conferences` (`pwc conference list`)
+- `get_organization` (`pwc organization --name`)
+- `list_organizations` (`pwc organization list`)
+- `get_framework` (`pwc framework --name`)
+- `list_frameworks` (`pwc framework list`)
+- `get_benchmark` (`pwc benchmark --name`)
+- `list_benchmarks` (`pwc benchmark list`)
+
+Tools run the CLI handlers in-process through the shared cached transport, so
+validation, fail-closed filter confirmation, and the JSON payload are the
+CLI's. Every result includes that payload as `data` beside typed projections.
+Terminal-only flags have no parameter. The hosted service caps `limit` at 25,
+defaults `search_papers` to keyword mode, includes paper resources by default,
+and serves `read_paper` in chunks.
 
 Expose these resource templates and no prompts:
 
@@ -53,7 +72,7 @@ than selecting one result.
 
 - Require a strict configurable browser Origin allowlist; native clients may
   omit Origin. Never configure a wildcard Origin.
-- Enforce, per IP, 60 total requests/minute, 10 semantic searches/minute, and
+- Enforce, per IP, 60 total requests/minute, 10 semantic or hybrid searches/minute, and
   four concurrent requests, plus a global ceiling of 32 concurrent requests.
   List tools return at most 25 rows.
 - Set catalog timeouts to 25 seconds and bound HTTP request and upstream response
@@ -66,7 +85,8 @@ than selecting one result.
   Cache immutable, versioned Markdown chunks for one hour within both a
   256-entry and 16 MiB ceiling.
 - Bind to loopback on the VPS, trust forwarded identity only from an exact
-  loopback peer, and expose cached catalog readiness without making `/health`
+  loopback peer, let a direct loopback client without `X-Forwarded-For` name
+  its own rate-limit identity with `X-PwC-MCP-Client`, and expose cached catalog readiness without making `/health`
   wait on an upstream call.
 
 ## Release

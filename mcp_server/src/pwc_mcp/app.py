@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -23,7 +24,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import CatalogClient
-from pwc_mcp.server import Catalog, build_server
+from pwc_mcp.server import TOOL_COMMANDS, Catalog, build_server
 
 LOGGER = logging.getLogger("pwc_mcp.requests")
 # MCP SDK diagnostics can include peer-supplied tool names and resource URIs.
@@ -32,18 +33,7 @@ logging.getLogger("mcp").setLevel(logging.CRITICAL + 1)
 PROTOCOL_VERSION = "2026-07-28"
 MAX_REQUEST_BODY_SIZE = 2 * 1024 * 1024
 MAX_RESPONSE_BODY_SIZE = 2 * 1024 * 1024
-KNOWN_TOOLS = {
-    "search_papers",
-    "list_papers",
-    "get_paper_info",
-    "read_paper",
-    "get_related_papers",
-    "get_paper_lineage",
-    "get_task",
-    "get_method",
-    "list_benchmarks",
-    "get_benchmark",
-}
+KNOWN_TOOLS = frozenset(TOOL_COMMANDS)
 KNOWN_PROTOCOLS = {
     PROTOCOL_VERSION,
     "2025-11-25",
@@ -105,6 +95,14 @@ async def health(request: Request) -> JSONResponse:
     )
 
 
+# A first-party client on the same host (the chat gateway) may name the
+# rate-limit identity of a request, for example one hashed chat session. The
+# header counts only on a direct loopback connection that carries no proxy
+# header: nginx always adds X-Forwarded-For, so public traffic cannot use it.
+CLIENT_IDENTITY_HEADER = "x-pwc-mcp-client"
+CLIENT_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
+
 def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -> str:
     client = scope.get("client")
     direct_address = str(client[0]) if client else "unknown"
@@ -116,6 +114,9 @@ def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -
         forwarded = headers.get("x-forwarded-for")
         if forwarded:
             return forwarded.split(",", 1)[0].strip()
+        identity = headers.get(CLIENT_IDENTITY_HEADER, "")
+        if CLIENT_IDENTITY.fullmatch(identity):
+            return f"client:{identity}"
     return direct_address
 
 
@@ -206,7 +207,8 @@ def _tool_and_semantic(headers: Headers, body: bytes) -> tuple[str | None, bool]
             mode = arguments.get("mode")
     tool = body_tool or header_tool
     tool = tool if tool in KNOWN_TOOLS else None
-    return tool, tool == "search_papers" and mode == "semantic"
+    # Hybrid retrieval also runs the dense embedding search upstream.
+    return tool, tool == "search_papers" and mode in {"semantic", "hybrid"}
 
 
 def _protocol_label(headers: Headers) -> str:
