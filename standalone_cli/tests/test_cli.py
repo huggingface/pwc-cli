@@ -1724,7 +1724,7 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
         "datasets/42/evaluations/",
         {
             "page": 1,
-            "page_size": 100,
+            "page_size": 20,
             "ordering": "best_rank",
             "is_open": None,
         },
@@ -1875,7 +1875,7 @@ def test_benchmark_detail_filters_by_inclusive_max_parameters(monkeypatch, capsy
         "evaluations/",
         {
             "page": 1,
-            "page_size": 100,
+            "page_size": 20,
             "dataset_id": "42",
             "ordering": "best_rank",
             "is_open": "true",

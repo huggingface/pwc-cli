@@ -72,7 +72,7 @@ Paper references accept arXiv IDs, numeric PwC external IDs, arXiv/Hugging
 Face/Papers With Code URLs, and exact titles. Ambiguous exact titles fail rather
 than selecting one result.
 
-Paper evaluations paginate. Leaderboards merge equivalent model rows across
+Paper evaluations and benchmark leaderboards paginate. Leaderboards merge equivalent model rows across
 task scopes while retaining scoped ranks, protocol, split, shots, source,
 openness, and update time. Metric direction is explicit when known.
 

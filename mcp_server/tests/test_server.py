@@ -159,6 +159,8 @@ PAYLOADS = {
         "benchmark": {"id": "72", "name": "ImageNet-1k", "slug": "imagenet-1k"},
         "count": 1,
         "matched_count": 1,
+        "page": 1,
+        "next_page": 2,
         "results": [EVALUATION_ROW],
     },
     ("benchmark", "list"): {"next_page": None, "results": [BENCHMARK]},
@@ -584,6 +586,7 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
     }
     assert catalog.options(("benchmark",)) == {
         "name": "imagenet-1k",
+        "page": 1,
         "limit": 5,
         "is_open": True,
         "max_parameters": "4B",
@@ -599,6 +602,7 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
     assert method.structured_content["method"]["introduced_year"] == 2017
     assert benchmarks.structured_content["items"][0]["slug"] == "imagenet-1k"
     assert benchmark.structured_content["matched_count"] == 1
+    assert benchmark.structured_content["next_page"] == 2
     evaluation = benchmark.structured_content["evaluations"][0]
     assert evaluation["model_name"] == "ExampleNet"
     assert evaluation["metrics"] == {"Accuracy": 90.1}

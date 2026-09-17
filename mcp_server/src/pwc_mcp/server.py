@@ -782,6 +782,7 @@ def build_server(
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_benchmark(
         benchmark: Entity,
+        page: Page = 1,
         limit: Limit = 20,
         is_open: bool | None = None,
         max_parameters: ParameterSize | None = None,
@@ -795,6 +796,7 @@ def build_server(
         data = run(
             "get_benchmark",
             benchmark=benchmark,
+            page=page,
             limit=limit,
             is_open=is_open,
             max_parameters=max_parameters,
@@ -815,11 +817,14 @@ def build_server(
             matched_count=int(matched) if matched is not None else None,
             evaluations=evaluations,
             metric_directions=metric_directions(evaluations),
+            page=page,
+            next_page=_next_page(data),
             data=None,
         )
         return _tool_result(
             result,
-            f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models. Ranks are task-scoped.",
+            f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models on page {page}. Ranks are task-scoped."
+            + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)

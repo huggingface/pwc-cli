@@ -2136,24 +2136,26 @@ def _benchmark_evaluations(
     is_open: str | None,
     max_parameters: int | None,
     scan_all: bool,
-) -> tuple[list[dict[str, Any]], int]:
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, Any]], int, int | None]:
     evaluations = []
-    page = 1
+    upstream_page = 1 if scan_all else page
     total = 0
     while True:
         if max_parameters is None:
             path = f"datasets/{quote(str(benchmark_id), safe='')}/evaluations/"
             params = {
-                "page": page,
-                "page_size": 100,
+                "page": upstream_page,
+                "page_size": 100 if scan_all else page_size,
                 "ordering": "best_rank",
                 "is_open": is_open,
             }
         else:
             path = "evaluations/"
             params = {
-                "page": page,
-                "page_size": 100,
+                "page": upstream_page,
+                "page_size": 100 if scan_all else page_size,
                 "dataset_id": str(benchmark_id),
                 "ordering": "best_rank",
                 "is_open": is_open,
@@ -2177,18 +2179,18 @@ def _benchmark_evaluations(
             or (max_parameters is None and len(evaluations) >= total)
             or (max_parameters is not None and next_page is None)
         ):
-            return evaluations, total
+            return evaluations, total, next_page if isinstance(next_page, int) else None
         if len(evaluations) >= MAX_METRIC_SCAN_ROWS:
             raise ResponseError(
                 f"metric selection requires scanning {total} evaluation rows; "
                 f"safety limit is {MAX_METRIC_SCAN_ROWS}"
             )
         if max_parameters is not None:
-            if not isinstance(next_page, int) or next_page <= page:
+            if not isinstance(next_page, int) or next_page <= upstream_page:
                 raise ResponseError("API returned invalid evaluation pagination")
-            page = next_page
+            upstream_page = next_page
         else:
-            page += 1
+            upstream_page += 1
 
 
 def _paper_markdown(item: dict[str, Any]) -> str:
@@ -2236,12 +2238,14 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
         raise ResponseError(f"Benchmark not found: {args.name}{suffix}")
 
     scan_all = bool(_metric_requests(args))
-    evaluations, total = _benchmark_evaluations(
+    evaluations, total, next_page = _benchmark_evaluations(
         client,
         benchmark["id"],
         is_open=args.is_open,
         max_parameters=args.max_parameters,
         scan_all=scan_all,
+        page=args.page,
+        page_size=args.limit,
     )
     merged = _merged_evaluations(evaluations)
     if args.max_parameters is not None and any(
@@ -2254,11 +2258,18 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
             "API returned a model outside the requested parameter limit"
         )
     selected = _select_metric_rows(merged, args)
-    rows = selected[: args.limit]
+    if scan_all:
+        start = (args.page - 1) * args.limit
+        rows = selected[start : start + args.limit]
+        next_page = args.page + 1 if start + args.limit < len(selected) else None
+    else:
+        rows = selected[: args.limit]
     data = {
         "benchmark": benchmark,
         "count": total,
         "matched_count": len(selected),
+        "page": args.page,
+        "next_page": next_page,
         "results": rows,
     }
     if args.json:
@@ -2639,6 +2650,7 @@ def build_parser(
         default=20,
         help="maximum leaderboard rows, 1-100 (default: 20)",
     )
+    benchmark.add_argument("--page", type=_page, default=1)
     benchmark.add_argument("--is-open", choices=("true", "false"))
     benchmark.add_argument(
         "--max-parameters",

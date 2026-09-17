@@ -222,6 +222,8 @@ class BenchmarkResult(QueryResult):
     matched_count: int | None = None
     evaluations: list[Evaluation]
     metric_directions: dict[str, Literal["higher", "lower", "unknown"]]
+    page: int
+    next_page: int | None = None
     ranking_note: str = (
         "Ranks are scoped by task and are not necessarily comparable across "
         "rank_scopes."
