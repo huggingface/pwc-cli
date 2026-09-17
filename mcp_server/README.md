@@ -3,9 +3,9 @@
 Anonymous, read-only Model Context Protocol access to the public
 [Papers With Code](https://paperswithcode.co) catalog.
 
-The server uses MCP `2026-07-28` over Streamable HTTP and serves legacy
-2025-era clients on the same `/mcp` endpoint. It returns versioned structured
-output with compact text fallbacks.
+The server uses stock-client MCP `2025-11-25` over Streamable HTTP and also
+serves experimental `2026-07-28` discovery on the same `/mcp` endpoint. It
+returns versioned structured output with compact Markdown fallbacks.
 
 ## Run locally
 
@@ -31,6 +31,7 @@ to typed projections such as `items` or `evaluations`.
 | --- | --- |
 | `search_papers` | `pwc search` |
 | `get_paper_info` | `pwc paper info` |
+| `get_paper_evaluations` | `pwc paper evaluations` |
 | `read_paper` | `pwc paper read` (64 KiB chunks with a continuation cursor) |
 | `list_papers` | `pwc paper list` |
 | `list_recent_papers` | `pwc paper recent` |
@@ -57,8 +58,8 @@ Parameter names follow the CLI flags except for the established MCP names
 (`--include-evals`). Terminal-only flags (`--json`,
 `--implementation-coverage`, `--flat`) have no parameter because MCP output is
 always structured. Hosted differences from the CLI: `limit` is capped at 25,
-`search_papers` defaults to `keyword` mode, `get_paper_info` includes
-resources by default, and `read_paper` is chunked.
+`search_papers` defaults to `keyword` mode, `get_paper_info` returns compact
+official-first resources, and `read_paper` is chunked.
 `tests/test_parity.py` fails when the CLI parser and the tool schemas drift.
 
 All tools are annotated read-only and idempotent. Search is deterministic;
@@ -105,6 +106,11 @@ Tool inputs cap list results at 25, catalog calls time out after 25 seconds, and
 request, upstream, and serialized MCP response bodies are bounded to 2 MiB.
 The global ceiling is 128 concurrent requests by default.
 Markdown chunks use a bounded 256-entry/16 MiB in-memory cache.
+
+`GET /.well-known/mcp` exposes connection metadata and `GET /docs` publishes
+the live tool schema. A bare `GET /mcp` returns `405`; protocol requests use
+`POST /mcp`. The server also exposes `find_papers`, `compare_leaderboard`, and
+`survey_task` prompts.
 
 ## Test
 

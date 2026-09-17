@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -7,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OutputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def _absolute_url(value: object) -> str | None:
+    if not value:
+        return None
+    url = str(value)
+    return f"https://paperswithcode.co{url}" if url.startswith("/") else url
 
 
 class QueryResult(OutputModel):
@@ -27,7 +35,12 @@ class PaperSummary(OutputModel):
     published: str | None = None
     citation_count: int | None = None
     url: str | None = None
-    has_official_implementation: bool
+    has_official_implementation: bool = Field(
+        description=(
+            "True when the catalog marks at least one linked repository as the "
+            "paper's official implementation; this is not an independent code audit."
+        )
+    )
     code_repository_count: int
 
 
@@ -57,6 +70,7 @@ class PaperDetail(OutputModel):
     citation_count: int | None = None
     url: str | None = None
     pdf_url: str | None = None
+    code_repository_count: int
     tasks: list[CatalogReference]
     methods: list[CatalogReference]
     repositories: list[RepositoryReference]
@@ -104,6 +118,11 @@ class PaperLineageResult(QueryResult):
     paper: PaperReference
     predecessors: list[PaperReference]
     successors: list[PaperReference]
+    coverage: Literal["explicit_catalog_links_only"] = "explicit_catalog_links_only"
+    coverage_note: str = (
+        "Only explicit catalog relationships are returned; an empty list does not "
+        "prove that no predecessor or successor exists."
+    )
 
 
 class AreaReference(OutputModel):
@@ -117,6 +136,7 @@ class BenchmarkSummary(OutputModel):
     slug: str | None = None
     full_name: str | None = None
     description: str | None = None
+    split: str | None = None
     hf_url: str | None = None
     paper_count: int
 
@@ -159,6 +179,13 @@ class BenchmarkPage(QueryResult):
     next_page: int | None = None
 
 
+class EvaluationRankScope(OutputModel):
+    task_id: str | None = None
+    task_name: str | None = None
+    task_slug: str | None = None
+    rank: int | None = None
+
+
 class Evaluation(OutputModel):
     id: str
     model_name: str
@@ -171,14 +198,41 @@ class Evaluation(OutputModel):
     paper_title: str | None = None
     paper_arxiv_id: str | None = None
     paper_published: str | None = None
-    is_open: bool
+    rank_scopes: list[EvaluationRankScope] = Field(default_factory=list)
+    is_open: bool | None = Field(
+        description=(
+            "Catalog openness flag for the evaluated implementation: true=open, "
+            "false=closed, null=not recorded."
+        )
+    )
     num_parameters: int | None = None
+    split: str | None = None
+    shots: int | None = None
+    evaluation_protocol: str | None = None
+    source_url: str | None = None
+    code_url: str | None = None
+    hf_model_url: str | None = None
+    updated_at: str | None = None
+    uses_additional_data: bool | None = None
 
 
 class BenchmarkResult(QueryResult):
     benchmark: BenchmarkSummary
     evaluation_count: int
     matched_count: int | None = None
+    evaluations: list[Evaluation]
+    metric_directions: dict[str, Literal["higher", "lower", "unknown"]]
+    ranking_note: str = (
+        "Ranks are scoped by task and are not necessarily comparable across "
+        "rank_scopes."
+    )
+
+
+class EvaluationPage(QueryResult):
+    paper: str
+    evaluation_count: int
+    page: int
+    next_page: int | None = None
     evaluations: list[Evaluation]
 
 
@@ -226,16 +280,20 @@ def catalog_reference(item: dict[str, Any]) -> CatalogReference:
     )
 
 
-def paper_detail(item: dict[str, Any]) -> PaperDetail:
+def paper_detail(
+    item: dict[str, Any], *, include_resources: bool = False, repo_limit: int = 5
+) -> PaperDetail:
     repositories = []
     for repository in item.get("repositories") or []:
         if isinstance(repository, dict) and repository.get("url"):
-            repositories.append(
-                RepositoryReference(
-                    url=str(repository["url"]),
-                    is_official=repository.get("is_official") is True,
-                )
+            value = RepositoryReference(
+                url=str(repository["url"]),
+                is_official=repository.get("is_official") is True,
             )
+            if include_resources or value.is_official:
+                repositories.append(value)
+    repositories.sort(key=lambda repository: not repository.is_official)
+    repositories = repositories[:repo_limit]
     return PaperDetail(
         id=str(item.get("id") or ""),
         arxiv_id=_text(item.get("arxiv_id")),
@@ -246,6 +304,7 @@ def paper_detail(item: dict[str, Any]) -> PaperDetail:
         citation_count=_int(item.get("citation_count")),
         url=_text(item.get("url_abs") or item.get("source_url")),
         pdf_url=_text(item.get("url_pdf")),
+        code_repository_count=int(item.get("code_repository_count") or 0),
         tasks=[
             catalog_reference(task)
             for task in item.get("tasks") or []
@@ -257,10 +316,18 @@ def paper_detail(item: dict[str, Any]) -> PaperDetail:
             if isinstance(method, dict)
         ],
         repositories=repositories,
-        project_pages=_urls(item.get("project_pages")),
-        hf_models=_urls(item.get("hf_models")),
-        hf_datasets=_urls(item.get("hf_datasets")),
-        hf_spaces=_urls(item.get("hf_spaces")),
+        project_pages=_urls(item.get("project_pages"))[:repo_limit]
+        if include_resources
+        else [],
+        hf_models=_urls(item.get("hf_models"))[:repo_limit]
+        if include_resources
+        else [],
+        hf_datasets=_urls(item.get("hf_datasets"))[:repo_limit]
+        if include_resources
+        else [],
+        hf_spaces=_urls(item.get("hf_spaces"))[:repo_limit]
+        if include_resources
+        else [],
     )
 
 
@@ -308,6 +375,7 @@ def benchmark_summary(item: dict[str, Any]) -> BenchmarkSummary:
         slug=_text(item.get("slug")),
         full_name=_text(item.get("full_name")),
         description=_text(item.get("description")),
+        split=_text(item.get("split_name") or item.get("split")),
         hf_url=_text(item.get("hf_url")),
         paper_count=_int(count) or 0,
     )
@@ -318,7 +386,7 @@ def evaluation(item: dict[str, Any]) -> Evaluation:
         id=str(item.get("id") or ""),
         model_name=str(item.get("model_name") or "Unknown model"),
         harness=_text(item.get("harness")),
-        metrics=_metrics(item),
+        metrics={name: _metric_value(value) for name, value in _metrics(item).items()},
         best_metric=_text(item.get("best_metric")),
         best_rank=_int(item.get("best_rank")),
         task=_text(item.get("task_name")),
@@ -326,6 +394,105 @@ def evaluation(item: dict[str, Any]) -> Evaluation:
         paper_title=_text(item.get("paper_title")),
         paper_arxiv_id=_text(item.get("paper_arxiv_id")),
         paper_published=_text(item.get("paper_published_date")),
-        is_open=item.get("is_open") is not False,
+        rank_scopes=_rank_scopes(item),
+        is_open=(
+            item.get("is_open") if isinstance(item.get("is_open"), bool) else None
+        ),
         num_parameters=_int(item.get("num_parameters")),
+        split=_text(
+            item.get("split") or item.get("split_name") or item.get("evaluated_on")
+        ),
+        shots=_shot_count(item.get("methodology")),
+        evaluation_protocol=_text(item.get("methodology")),
+        source_url=_absolute_url(
+            item.get("result_url")
+            or item.get("source_url")
+            or item.get("external_source_url")
+        ),
+        code_url=_absolute_url(item.get("code_url")),
+        hf_model_url=_absolute_url(item.get("hf_model_url")),
+        updated_at=_text(item.get("updated_at")),
+        uses_additional_data=(
+            item.get("uses_additional_data")
+            if isinstance(item.get("uses_additional_data"), bool)
+            else None
+        ),
     )
+
+
+def _rank_scopes(item: dict[str, Any]) -> list[EvaluationRankScope]:
+    existing = item.get("rank_scopes")
+    if isinstance(existing, list):
+        return [
+            EvaluationRankScope.model_validate(scope)
+            for scope in existing
+            if isinstance(scope, dict)
+        ]
+    if not any(
+        item.get(field) is not None for field in ("task_id", "task_name", "best_rank")
+    ):
+        return []
+    return [
+        EvaluationRankScope(
+            task_id=_text(item.get("task_id")),
+            task_name=_text(item.get("task_name")),
+            task_slug=_text(item.get("task_slug")),
+            rank=_int(item.get("best_rank")),
+        )
+    ]
+
+
+def _shot_count(methodology: object) -> int | None:
+    match = re.search(r"\b(\d+)\s*[- ]?shot\b", str(methodology), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _metric_value(value: Any) -> float | int | str | None:
+    if value is None or isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return str(value)
+
+
+def metric_directions(
+    evaluations: list[Evaluation],
+) -> dict[str, Literal["higher", "lower", "unknown"]]:
+    lower = {
+        "error",
+        "loss",
+        "perplexity",
+        "latency",
+        "runtime",
+        "wer",
+        "cer",
+        "eer",
+        "fid",
+        "mae",
+        "rmse",
+    }
+    higher = {
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
+        "bleu",
+        "rouge",
+        "map",
+        "auc",
+        "score",
+        "em",
+    }
+    result: dict[str, Literal["higher", "lower", "unknown"]] = {}
+    for name in sorted({key for row in evaluations for key in row.metrics}):
+        words = set(re.sub(r"[^a-z0-9]+", " ", name.casefold()).split())
+        if words & lower:
+            result[name] = "lower"
+        elif words & higher:
+            result[name] = "higher"
+        else:
+            result[name] = "unknown"
+    return result

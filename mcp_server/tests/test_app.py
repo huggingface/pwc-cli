@@ -43,12 +43,28 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.2.0",
-        "protocol": "2026-07-28",
+        "version": "0.2.1",
+        "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == "https://chatgpt.com"
+
+
+def test_discovery_schema_and_bare_get_are_bounded():
+    app = create_app(StubCatalog(), allowed_hosts=["testserver"])
+
+    with TestClient(app) as client:
+        discovery = client.get("/.well-known/mcp")
+        schema = client.get("/docs")
+        bare_get = client.get("/mcp")
+
+    assert discovery.status_code == 200
+    assert discovery.json()["protocol_version"] == "2025-11-25"
+    assert discovery.json()["documentation_url"].endswith("/mcp/schema")
+    assert len(schema.json()["tools"]) == 21
+    assert bare_get.status_code == 405
+    assert bare_get.headers["allow"] == "POST"
 
 
 def test_wildcard_browser_origin_is_rejected_at_startup():

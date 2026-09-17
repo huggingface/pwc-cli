@@ -504,6 +504,36 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
     return 0
 
 
+def paper_evaluations(args: argparse.Namespace, client: Client) -> int:
+    paper = _resolve_paper(args.paper, client)
+    detail = client.get(
+        f"papers/{quote(paper, safe='.')}", {"include_resources": False}
+    ).json()
+    paper_id = detail.get("id") if isinstance(detail, dict) else None
+    if not paper_id:
+        raise ResponseError("Paper response did not contain an ID")
+    payload = client.get(
+        "evaluations/",
+        {
+            "page": args.page,
+            "page_size": args.page_size,
+            "paper_id": paper_id,
+            "ordering": "-benchmark_popularity",
+        },
+    ).json()
+    items, count = _rows(payload)
+    data = {
+        "count": count if count is not None else len(items),
+        "page": args.page,
+        "next_page": payload.get("next_page") if isinstance(payload, dict) else None,
+        "results": _merged_evaluations(items),
+    }
+    if args.json:
+        return _emit_json(args, data)
+    _render_paper_evaluations(data["results"])
+    return 0
+
+
 def _paper_info_lineage_markdown(item: dict[str, Any]) -> str:
     reference = item.get("route_identifier")
     title = (
@@ -839,6 +869,7 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
         and not args.flat
         and args.page == 1
         and args.page_size == 50
+        and args.search is None
         and args.level is None
     )
     if args.group_by_area or automatic_grouping:
@@ -850,6 +881,7 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
         {
             "page": args.page,
             "page_size": args.page_size,
+            **({"q": args.search} if args.search else {}),
             "area_id": area_id,
             "level": args.level,
             "visible_only": args.visible_only,
@@ -1252,6 +1284,7 @@ def method_list(args: argparse.Namespace, client: Client) -> int:
         {
             "page": args.page,
             "page_size": args.page_size,
+            **({"q": args.search} if args.search else {}),
             "area_id": area_id,
             "introduced_year": args.introduced_year,
             "ordering": _ordering(args.order_by, args.order_dir),
@@ -1769,18 +1802,37 @@ def _benchmark_match(name: str, items: list[dict[str, Any]]) -> dict[str, Any] |
 
 
 def _merged_evaluations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: dict[tuple[str, ...], dict[str, Any]] = {}
-    parameter_counts: dict[tuple[str, ...], set[int | None]] = {}
+    """Merge equivalent metric rows while retaining every task-scoped rank."""
+    merged: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for item in items:
-        key = tuple(
-            str(item.get(field) or "")
-            for field in (
-                "paper_id",
-                "task_id",
-                "dataset_id",
-                "model_name",
-                "harness",
-            )
+        methodology = str(item.get("methodology") or "")
+        shot_match = re.search(r"\b(\d+)\s*[- ]?shot\b", methodology, re.IGNORECASE)
+        key = (
+            *(
+                str(item.get(field) or "")
+                for field in ("paper_id", "dataset_id", "model_name", "harness")
+            ),
+            str(
+                item.get("split")
+                or item.get("split_name")
+                or item.get("evaluated_on")
+                or ""
+            ),
+            shot_match.group(1) if shot_match else "",
+        )
+        metrics = dict(item.get("metrics") or {})
+        candidates = merged.setdefault(key, [])
+        existing = next(
+            (
+                candidate
+                for candidate in candidates
+                if all(
+                    name not in candidate["metrics"]
+                    or candidate["metrics"][name] == value
+                    for name, value in metrics.items()
+                )
+            ),
+            None,
         )
         count = item.get("num_parameters")
         valid_count = (
@@ -1788,13 +1840,43 @@ def _merged_evaluations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if isinstance(count, int) and not isinstance(count, bool) and count > 0
             else None
         )
-        parameter_counts.setdefault(key, set()).add(valid_count)
-        existing = merged.get(key)
+        scope = {
+            "task_id": (
+                str(item["task_id"]) if item.get("task_id") is not None else None
+            ),
+            "task_name": item.get("task_name"),
+            "task_slug": item.get("task_slug"),
+            "rank": item.get("best_rank"),
+        }
         if existing is None:
-            existing = {**item, "metrics": dict(item.get("metrics") or {})}
-            merged[key] = existing
+            candidates.append(
+                {
+                    **item,
+                    "metrics": metrics,
+                    "rank_scopes": [scope],
+                    "_parameter_counts": {valid_count},
+                }
+            )
             continue
-        existing["metrics"].update(item.get("metrics") or {})
+        existing["metrics"].update(metrics)
+        known_scope = next(
+            (
+                value
+                for value in existing["rank_scopes"]
+                if value.get("task_id") == scope["task_id"]
+            ),
+            None,
+        )
+        if known_scope is None:
+            existing["rank_scopes"].append(scope)
+        else:
+            scope_ranks = [
+                rank
+                for rank in (known_scope.get("rank"), scope.get("rank"))
+                if isinstance(rank, int)
+            ]
+            known_scope["rank"] = min(scope_ranks) if scope_ranks else None
+        existing["_parameter_counts"].add(valid_count)
         ranks = [
             rank
             for rank in (existing.get("best_rank"), item.get("best_rank"))
@@ -1803,11 +1885,13 @@ def _merged_evaluations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         existing["best_rank"] = min(ranks) if ranks else None
         if not existing.get("best_metric") and item.get("best_metric"):
             existing["best_metric"] = item["best_metric"]
-    for key, counts in parameter_counts.items():
+    rows = [row for candidates in merged.values() for row in candidates]
+    for row in rows:
+        counts = row.pop("_parameter_counts")
         parameter_count = next(iter(counts)) if len(counts) == 1 else None
-        merged[key]["num_parameters"] = parameter_count
+        row["num_parameters"] = parameter_count
     return sorted(
-        merged.values(),
+        rows,
         key=lambda item: (
             item.get("best_rank")
             if isinstance(item.get("best_rank"), int)
@@ -2359,6 +2443,16 @@ def build_parser(
     )
     _json(info)
     info.set_defaults(handler=paper_info)
+    evaluations = paper_commands.add_parser(
+        "evaluations", help="list one paper's benchmark evaluations"
+    )
+    evaluations.add_argument(
+        "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
+    )
+    evaluations.add_argument("--page", type=_page, default=1)
+    evaluations.add_argument("--page-size", type=_page_size, default=20)
+    _json(evaluations)
+    evaluations.set_defaults(handler=paper_evaluations)
     read = paper_commands.add_parser("read", help="print stored paper Markdown")
     read.add_argument("paper", help="modern ArXiv ID or exact paper title")
     _json(read)
@@ -2439,6 +2533,7 @@ def build_parser(
     tasks = task_commands.add_parser("list", help="list and filter research tasks")
     tasks.add_argument("--page", type=_page, default=1)
     tasks.add_argument("--page-size", type=_page_size, default=50)
+    tasks.add_argument("--search", help="search task names and slugs")
     task_display = tasks.add_mutually_exclusive_group()
     task_display.add_argument(
         "--group-by-area",
@@ -2475,6 +2570,7 @@ def build_parser(
     )
     methods.add_argument("--page", type=_page, default=1)
     methods.add_argument("--page-size", type=_method_page_size, default=50)
+    methods.add_argument("--search", help="search method names, full names, and slugs")
     methods.add_argument(
         "--area",
         help="case-insensitive exact area name (for example Audio) or area ID",
