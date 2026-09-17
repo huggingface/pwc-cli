@@ -73,7 +73,9 @@ than selecting one result.
 - Require a strict configurable browser Origin allowlist; native clients may
   omit Origin. Never configure a wildcard Origin.
 - Enforce, per IP, 60 total requests/minute, 10 semantic or hybrid searches/minute, and
-  four concurrent requests, plus a global ceiling of 32 concurrent requests.
+  four concurrent requests, plus a global ceiling of 128 concurrent requests.
+  All four limits are overridable through `PWC_MCP_*_LIMIT` environment
+  variables; the global ceiling also sizes the synchronous tool thread pool.
   List tools return at most 25 rows.
 - Set catalog timeouts to 25 seconds and bound HTTP request and upstream response
   bodies and serialized MCP responses to 2 MiB.
