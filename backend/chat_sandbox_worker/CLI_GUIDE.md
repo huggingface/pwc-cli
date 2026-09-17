@@ -6,6 +6,7 @@ join, or schema-dependent transformation.
 ```bash
 pwc search "QUERY" --limit 10 [--start-date YYYY-MM-DD --end-date YYYY-MM-DD]
 pwc paper info PAPER --include-resources
+pwc paper evaluations PAPER --page 1 --page-size 20
 pwc paper read PAPER
 pwc paper list --search "QUERY" [--start-date YYYY-MM-DD --end-date YYYY-MM-DD] [--task NAME] [--method NAME] [--conference NAME] [--framework NAME] [--organization NAME]
 pwc paper recent

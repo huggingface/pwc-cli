@@ -43,6 +43,7 @@ case-insensitive but exact; ambiguous titles fail with their matching IDs.
 
 - `pwc search QUERY [--limit LIMIT] [--page PAGE] [--mode hybrid|keyword|semantic] [--start-date START_DATE] [--end-date END_DATE] [--has-official-implementation] [--implementation-coverage] [--json]` — search papers.
 - `pwc paper info PAPER [--include-resources] [--include-evals] [--json]` — show paper metadata including abstract.
+- `pwc paper evaluations PAPER [--page PAGE] [--page-size N] [--json]` — page through one paper's benchmark evaluations.
 - `pwc paper read PAPER [--json]` — print stored paper Markdown.
 - `pwc paper list [--page PAGE] [--page-size PAGE_SIZE] [--search SEARCH] [--start-date START_DATE] [--end-date END_DATE] [--task TASK] [--method METHOD] [--conference CONFERENCE] [--framework FRAMEWORK] [--organization ORGANIZATION] [--author AUTHOR] [--all-versions] [--order-by trending|date_published|citation_count] [--order-dir asc|desc] [--include-resources] [--has-official-implementation] [--implementation-coverage] [--json]` — list and filter papers.
 - `pwc paper recent [--limit LIMIT] [--implementation-coverage] [--json]` — list recent papers.

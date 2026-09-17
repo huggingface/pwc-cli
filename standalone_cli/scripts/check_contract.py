@@ -16,6 +16,7 @@ EDIT_COMMANDS = ("auth login", "auth status", "auth logout", "paper edit export"
 COMMANDS = (
     "search",
     "paper info",
+    "paper evaluations",
     "paper read",
     "paper list",
     "paper recent",
