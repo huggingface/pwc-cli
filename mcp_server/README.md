@@ -86,6 +86,10 @@ explicit restart response.
 | `PWC_MCP_CURSOR_KEY_CURRENT` | Required secret used to sign continuation cursors |
 | `PWC_MCP_CURSOR_KEY_PREVIOUS` | Optional previous secret accepted during key rotation |
 | `PORT` | HTTP port; defaults to `7860` |
+| `PWC_MCP_REQUEST_LIMIT` | Requests per client per minute; defaults to `60` |
+| `PWC_MCP_SEMANTIC_LIMIT` | Semantic or hybrid searches per client per minute; defaults to `10` |
+| `PWC_MCP_CONCURRENCY_LIMIT` | Concurrent requests per client; defaults to `4` |
+| `PWC_MCP_GLOBAL_CONCURRENCY_LIMIT` | Concurrent requests across all clients; defaults to `128` and sizes the tool thread pool |
 | `LOG_LEVEL` | Content-free operational log level |
 
 Native clients may omit `Origin`. Browser requests must match the configured
@@ -96,9 +100,10 @@ without `X-Forwarded-For`, so proxied public traffic cannot use it. The server d
 raw IP addresses, or authorization headers.
 
 The hosted defaults allow 60 total requests and 10 semantic or hybrid searches per minute
-per client IP, with at most four concurrent requests per IP and 32 globally.
+per client IP, with at most four concurrent requests per IP and 128 globally.
 Tool inputs cap list results at 25, catalog calls time out after 25 seconds, and
 request, upstream, and serialized MCP response bodies are bounded to 2 MiB.
+The global ceiling is 128 concurrent requests by default.
 Markdown chunks use a bounded 256-entry/16 MiB in-memory cache.
 
 ## Test

@@ -276,3 +276,43 @@ def test_hybrid_search_counts_toward_the_semantic_limit():
 
     assert first.status_code != 429
     assert limited.status_code == 429
+
+
+def test_rate_limits_are_env_configurable_with_hosted_defaults(monkeypatch):
+    from pwc_mcp.app import (
+        DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
+        RateLimitMiddleware,
+        _int_env,
+        thread_limiter_tokens,
+    )
+
+    assert DEFAULT_GLOBAL_CONCURRENCY_LIMIT == 128
+    assert thread_limiter_tokens(8) == 40 and thread_limiter_tokens(256) == 256
+    monkeypatch.delenv("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", raising=False)
+    assert _int_env("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", 128) == 128
+    monkeypatch.setenv("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", "256")
+    assert _int_env("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", 128) == 256
+    for invalid in ("0", "abc", "-4", "10001"):
+        monkeypatch.setenv("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", invalid)
+        try:
+            _int_env("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", 128)
+        except ValueError:
+            continue
+        raise AssertionError(invalid)
+
+    monkeypatch.setenv("PWC_MCP_REQUEST_LIMIT", "7")
+    monkeypatch.setenv("PWC_MCP_SEMANTIC_LIMIT", "3")
+    monkeypatch.setenv("PWC_MCP_CONCURRENCY_LIMIT", "2")
+    monkeypatch.setenv("PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", "64")
+    app = create_app(StubCatalog(), allowed_hosts=["testserver"])
+    layer = app
+    while not isinstance(layer, RateLimitMiddleware):
+        layer = layer.app
+    assert (
+        layer.request_limit,
+        layer.semantic_limit,
+        layer.concurrency_limit,
+        layer.global_concurrency_limit,
+    ) == (7, 3, 2, 64)
+    with TestClient(app) as client:
+        assert client.get("/health").status_code in {200, 503}

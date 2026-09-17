@@ -12,6 +12,7 @@ import threading
 import time
 from collections import defaultdict, deque
 
+import anyio.to_thread
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 from pwc_cli.transport import ResponseError, TransportError
@@ -41,6 +42,32 @@ KNOWN_PROTOCOLS = {
     "2025-03-26",
     "2024-11-05",
 }
+
+
+# Hosted defaults. The first-party chat gateway names one identity per chat
+# session (see _client_address), so per-client limits protect fairness while
+# the global ceiling protects the process. Every value is overridable through
+# the environment for other deployments.
+DEFAULT_REQUEST_LIMIT = 60
+DEFAULT_SEMANTIC_LIMIT = 10
+DEFAULT_CONCURRENCY_LIMIT = 4
+DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 128
+# anyio runs synchronous tool functions in a thread pool whose default size (40)
+# would silently cap concurrency below the global ceiling.
+MINIMUM_THREAD_TOKENS = 40
+
+
+def _int_env(name: str, default: int, *, maximum: int = 10_000) -> int:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    if not value.strip().isdigit() or not 1 <= int(value) <= maximum:
+        raise ValueError(f"{name} must be an integer between 1 and {maximum}")
+    return int(value)
+
+
+def thread_limiter_tokens(global_concurrency_limit: int) -> int:
+    return max(MINIMUM_THREAD_TOKENS, global_concurrency_limit)
 
 
 def _csv_env(name: str, default: list[str]) -> list[str]:
@@ -267,6 +294,10 @@ class RateLimitMiddleware:
                 self.semantic_requests.pop(identity, None)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            anyio.to_thread.current_default_thread_limiter().total_tokens = (
+                thread_limiter_tokens(self.global_concurrency_limit)
+            )
         if (
             scope["type"] != "http"
             or scope.get("path") != "/mcp"
@@ -391,12 +422,24 @@ def create_app(
     *,
     allowed_hosts: list[str] | None = None,
     allowed_origins: list[str] | None = None,
-    request_limit: int = 60,
-    semantic_limit: int = 10,
-    concurrency_limit: int = 4,
-    global_concurrency_limit: int = 32,
+    request_limit: int | None = None,
+    semantic_limit: int | None = None,
+    concurrency_limit: int | None = None,
+    global_concurrency_limit: int | None = None,
     trust_proxy_headers: bool = True,
 ) -> ASGIApp:
+    if request_limit is None:
+        request_limit = _int_env("PWC_MCP_REQUEST_LIMIT", DEFAULT_REQUEST_LIMIT)
+    if semantic_limit is None:
+        semantic_limit = _int_env("PWC_MCP_SEMANTIC_LIMIT", DEFAULT_SEMANTIC_LIMIT)
+    if concurrency_limit is None:
+        concurrency_limit = _int_env(
+            "PWC_MCP_CONCURRENCY_LIMIT", DEFAULT_CONCURRENCY_LIMIT
+        )
+    if global_concurrency_limit is None:
+        global_concurrency_limit = _int_env(
+            "PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", DEFAULT_GLOBAL_CONCURRENCY_LIMIT
+        )
     hosts = allowed_hosts or _csv_env(
         "PWC_MCP_ALLOWED_HOSTS",
         [
