@@ -14,16 +14,16 @@ import time
 from collections.abc import Mapping
 from datetime import date
 from functools import cache
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol, TypeVar
 
 from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pwc_cli import queries
 from pwc_cli.cli import UsageError
-from pwc_cli.transport import ResponseError, TransportError
-from pydantic import Field
+from pwc_cli.transport import HTTPStatusError, ResponseError, TransportError
+from pydantic import BaseModel, Field
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import PaperMarkdownChunk, PaperVersionMismatchError
@@ -37,6 +37,7 @@ from pwc_mcp.models import (
     AreaReference,
     BenchmarkPage,
     BenchmarkResult,
+    EvaluationPage,
     MethodDetail,
     MethodResult,
     PaperInfoResult,
@@ -49,6 +50,7 @@ from pwc_mcp.models import (
     benchmark_summary,
     catalog_reference,
     evaluation,
+    metric_directions,
     paper_detail,
     paper_evaluation,
     paper_reference,
@@ -84,17 +86,23 @@ GENERIC_ERROR = "the Papers With Code catalog request failed"
 
 def catalog_error_message(error: Exception) -> str:
     """Return the CLI's own lookup message when it is actionable, else a generic one."""
+    if isinstance(error, HTTPStatusError) and error.status == 404:
+        return "not_found: the requested catalog record does not exist"
+    if isinstance(error, TransportError) and "timeout" in str(error).casefold():
+        return "upstream_timeout: the Papers With Code catalog timed out"
     if isinstance(error, ResponseError) and not isinstance(error, TransportError):
         message = str(error)
         if message.startswith(CLIENT_FACING_ERRORS):
-            return message
-    return GENERIC_ERROR
+            code = "ambiguous" if "ambiguous" in message.casefold() else "not_found"
+            return f"{code}: {message}"
+    return f"upstream_error: {GENERIC_ERROR}"
 
 
 # One read-only CLI command per tool.
 TOOL_COMMANDS: dict[str, tuple[str, ...]] = {
     "search_papers": ("search",),
     "get_paper_info": ("paper", "info"),
+    "get_paper_evaluations": ("paper", "evaluations"),
     "read_paper": ("paper", "read"),
     "list_papers": ("paper", "list"),
     "list_recent_papers": ("paper", "recent"),
@@ -134,7 +142,11 @@ ENTITY_PARAMETERS: dict[str, str] = {
     "get_benchmark": "benchmark",
 }
 # Parameters with no CLI flag; ``read_paper`` continues with a signed cursor.
-MCP_ONLY_PARAMETERS: dict[str, frozenset[str]] = {"read_paper": frozenset({"cursor"})}
+MCP_ONLY_PARAMETERS: dict[str, frozenset[str]] = {
+    "read_paper": frozenset({"cursor"}),
+    "get_paper_info": frozenset({"repo_limit"}),
+    "get_task": frozenset({"benchmark_limit"}),
+}
 _CLI_DESTINATIONS = {mcp: cli for cli, mcp in PARAMETER_NAMES.items()}
 
 
@@ -189,6 +201,23 @@ AuthorList = Annotated[
         description="Exact author names, numeric IDs, or @HF_USERNAME; every author must match.",
     ),
 ]
+ResourceLimit = Annotated[int, Field(ge=1, le=10)]
+Output = TypeVar("Output", bound=BaseModel)
+
+
+def _tool_result(value: Output, markdown: str) -> CallToolResult:
+    return CallToolResult(
+        content=[TextContent(type="text", text=markdown)],
+        structured_content=value.model_dump(mode="json"),
+    )
+
+
+def _structured_model(result: Any, model: type[Output]) -> Output:
+    if isinstance(result, CallToolResult):
+        return model.model_validate(result.structured_content)
+    return result
+
+
 Area = Annotated[str, Field(description="Case-insensitive exact area name or area ID.")]
 Direction = Literal["asc", "desc"]
 ParameterSize = Annotated[
@@ -299,6 +328,14 @@ def build_server(
             "Read-only access to papers, tasks, methods, conferences, organizations, "
             "frameworks, and benchmarks; every pwc CLI research command and flag."
         ),
+        instructions=(
+            "Use search_papers for relevance and list tools for deterministic filters. "
+            "Pass slugs or numeric IDs returned by list tools to exact lookup tools. "
+            "Dates use YYYY-MM-DD. Structured data is in structuredContent; text is a "
+            "short Markdown summary. Official implementation means catalog-designated "
+            "official code, not an independent audit. Evaluation is_open describes the "
+            "cataloged implementation and may be null when unknown."
+        ),
         version=__version__,
         website_url="https://paperswithcode.co",
         cache_hints={
@@ -330,7 +367,7 @@ def build_server(
     ) -> PaperPage:
         """Search papers by title, topic, author, or arXiv ID (`pwc search`). Broad discovery only: for best, top, or state-of-the-art model questions start with get_task, list_benchmarks, and get_benchmark, which return leaderboard evidence that search cannot."""
         _validate_date_range(published_after, published_before)
-        return _paper_page(
+        result = _paper_page(
             run(
                 "search_papers",
                 query=query,
@@ -342,25 +379,35 @@ def build_server(
                 has_official_implementation=has_official_implementation,
             )
         )
+        return _tool_result(
+            result,
+            f"Found {len(result.items)} papers."
+            + (f" Next page: {result.next_page}." if result.next_page else ""),
+        )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_paper_info(
         paper: Reference,
-        include_resources: bool = True,
+        include_resources: bool = False,
+        repo_limit: ResourceLimit = 5,
         include_evaluations: bool = False,
     ) -> PaperInfoResult:
-        """Get paper metadata, abstract, tasks, methods, lineage, repositories, Hugging Face artifacts, and optionally every evaluation (`pwc paper info`)."""
+        """Get compact paper metadata and official-first code. Set include_resources for additional repositories/Hugging Face artifacts, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`)."""
         data = run(
             "get_paper_info",
             paper=paper,
-            include_resources=include_resources,
+            # Fetch once so the compact default can retain official code while
+            # omitting hundreds of community repositories from the response.
+            include_resources=True,
             include_evaluations=include_evaluations,
         )
         if not isinstance(data, dict):
             raise TypeError("paper response did not contain a paper")
         evaluations = data.get("evaluations")
-        return PaperInfoResult(
-            paper=paper_detail(data),
+        result = PaperInfoResult(
+            paper=paper_detail(
+                data, include_resources=include_resources, repo_limit=repo_limit
+            ),
             evaluation_count=(
                 int(evaluations.get("count") or 0)
                 if isinstance(evaluations, dict)
@@ -371,7 +418,33 @@ def build_server(
                 if isinstance(evaluations, dict)
                 else None
             ),
-            data=data,
+            data=None,
+        )
+        return _tool_result(
+            result,
+            f"## {result.paper.title}\n\n{result.paper.code_repository_count} code repositories; returned {len(result.paper.repositories)}.",
+        )
+
+    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def get_paper_evaluations(
+        paper: Reference, page: Page = 1, limit: Limit = 20
+    ) -> EvaluationPage:
+        """Get one page of benchmark evaluations for a paper, including protocol, source, openness, and task-scoped ranks (`pwc paper evaluations`)."""
+        data = run("get_paper_evaluations", paper=paper, page=page, limit=limit)
+        rows = _dicts(data.get("results")) if isinstance(data, dict) else []
+        values = [evaluation(row) for row in rows]
+        result = EvaluationPage(
+            paper=paper,
+            evaluation_count=int(data.get("count") or len(values)),
+            page=page,
+            next_page=_next_page(data),
+            evaluations=values,
+            data=None,
+        )
+        return _tool_result(
+            result,
+            f"Found {result.evaluation_count} evaluation rows; returned {len(values)} on page {page}."
+            + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -411,6 +484,12 @@ def build_server(
             raise ToolError(
                 "paper changed; restart reading from the beginning"
             ) from error
+        except HTTPStatusError as error:
+            if error.status == 404:
+                raise ToolError(
+                    "no_markdown: no stored Markdown is available for this paper"
+                ) from error
+            raise ToolError(catalog_error_message(error)) from error
         except (ResponseError, TransportError) as error:
             raise ToolError(catalog_error_message(error)) from error
         if chunk.paper != canonical or chunk.source != source:
@@ -525,14 +604,14 @@ def build_server(
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_task(task: Entity) -> TaskResult:
+    def get_task(task: Entity, benchmark_limit: ResourceLimit = 10) -> TaskResult:
         """Get one exact task by name, slug, or ID with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`). Start here for any question about the best or state-of-the-art models for a task, then inspect a leaderboard with get_benchmark."""
         data = run("get_task", task=task)
         item = data.get("task") if isinstance(data, dict) else None
         if not isinstance(item, dict):
             raise TypeError("task response did not contain a task")
         area_item = data.get("area")
-        return TaskResult(
+        result = TaskResult(
             task=TaskDetail(
                 id=str(item.get("id") or ""),
                 name=str(item.get("name") or "Unknown task"),
@@ -555,13 +634,18 @@ def build_server(
                 children=[catalog_reference(v) for v in _dicts(data.get("children"))],
                 benchmarks=[
                     benchmark_summary(v) for v in _dicts(data.get("benchmarks"))
-                ],
+                ][:benchmark_limit],
             ),
-            data=data,
+            data=None,
+        )
+        return _tool_result(
+            result,
+            f"## {result.task.name}\n\n{result.task.paper_count} papers; returned {len(result.task.benchmarks)} benchmarks.",
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def list_tasks(
+        search: str | None = None,
         area: Area | None = None,
         level: int | None = None,
         visible_only: bool = False,
@@ -575,6 +659,7 @@ def build_server(
         return QueryResult(
             data=run(
                 "list_tasks",
+                search=search,
                 area=area,
                 level=level,
                 visible_only=visible_only,
@@ -593,7 +678,7 @@ def build_server(
         item = data.get("method") if isinstance(data, dict) else None
         if not isinstance(item, dict):
             raise TypeError("method response did not contain a method")
-        return MethodResult(
+        result = MethodResult(
             method=MethodDetail(
                 id=str(item.get("id") or ""),
                 name=str(item.get("name") or "Unknown method"),
@@ -612,17 +697,27 @@ def build_server(
                     if item.get("source_paper_id")
                     else None
                 ),
-                source_url=str(item["source_url"]) if item.get("source_url") else None,
+                source_url=(
+                    f"https://paperswithcode.co{item['source_url']}"
+                    if str(item.get("source_url") or "").startswith("/")
+                    else str(item["source_url"])
+                    if item.get("source_url")
+                    else None
+                ),
                 source_title=(
                     str(item["source_title"]) if item.get("source_title") else None
                 ),
                 paper_count=int(item.get("paper_count") or 0),
             ),
-            data=data,
+            data=None,
+        )
+        return _tool_result(
+            result, f"## {result.method.name}\n\n{result.method.paper_count} papers."
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def list_methods(
+        search: str | None = None,
         area: Area | None = None,
         introduced_year: int | None = None,
         order_by: Literal[
@@ -636,6 +731,7 @@ def build_server(
         return QueryResult(
             data=run(
                 "list_methods",
+                search=search,
                 area=area,
                 introduced_year=introduced_year,
                 order_by=order_by,
@@ -686,6 +782,7 @@ def build_server(
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_benchmark(
         benchmark: Entity,
+        page: Page = 1,
         limit: Limit = 20,
         is_open: bool | None = None,
         max_parameters: ParameterSize | None = None,
@@ -699,6 +796,7 @@ def build_server(
         data = run(
             "get_benchmark",
             benchmark=benchmark,
+            page=page,
             limit=limit,
             is_open=is_open,
             max_parameters=max_parameters,
@@ -712,12 +810,21 @@ def build_server(
         if not isinstance(item, dict):
             raise TypeError("benchmark response did not contain a benchmark")
         matched = data.get("matched_count")
-        return BenchmarkResult(
+        evaluations = [evaluation(value) for value in _dicts(data.get("results"))]
+        result = BenchmarkResult(
             benchmark=benchmark_summary(item),
             evaluation_count=int(data.get("count") or 0),
             matched_count=int(matched) if matched is not None else None,
-            evaluations=[evaluation(value) for value in _dicts(data.get("results"))],
-            data=data,
+            evaluations=evaluations,
+            metric_directions=metric_directions(evaluations),
+            page=page,
+            next_page=_next_page(data),
+            data=None,
+        )
+        return _tool_result(
+            result,
+            f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models on page {page}. Ranks are task-scoped."
+            + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -764,6 +871,27 @@ def build_server(
             data=data,
         )
 
+    @server.prompt(name="find_papers", title="Find papers")
+    def find_papers_prompt(topic: str) -> str:
+        return (
+            f"Find papers about {topic!r}. Use semantic search for concepts, then "
+            "inspect the most relevant papers and cite their canonical URLs."
+        )
+
+    @server.prompt(name="compare_leaderboard", title="Compare a leaderboard")
+    def compare_leaderboard_prompt(benchmark: str) -> str:
+        return (
+            f"Inspect the {benchmark!r} benchmark. Explain metric direction and "
+            "evaluation settings, and do not compare ranks from different task scopes."
+        )
+
+    @server.prompt(name="survey_task", title="Survey a research task")
+    def survey_task_prompt(task: str) -> str:
+        return (
+            f"Survey the {task!r} task. Resolve its slug, inspect high-coverage "
+            "benchmarks, then summarize representative papers and methods."
+        )
+
     @server.resource(
         "pwc://papers/{paper}",
         name="paper-info",
@@ -772,7 +900,9 @@ def build_server(
         mime_type="application/json",
     )
     def paper_info_resource(paper: str) -> str:
-        return get_paper_info(paper).model_dump_json()
+        return _structured_model(
+            get_paper_info(paper), PaperInfoResult
+        ).model_dump_json()
 
     @server.resource(
         "pwc://papers/{paper}/markdown",
@@ -797,7 +927,7 @@ def build_server(
         mime_type="application/json",
     )
     def task_resource(task: str) -> str:
-        return get_task(task).model_dump_json()
+        return _structured_model(get_task(task), TaskResult).model_dump_json()
 
     @server.resource(
         "pwc://benchmarks/{benchmark}",
@@ -807,6 +937,8 @@ def build_server(
         mime_type="application/json",
     )
     def benchmark_resource(benchmark: str) -> str:
-        return get_benchmark(benchmark).model_dump_json()
+        return _structured_model(
+            get_benchmark(benchmark), BenchmarkResult
+        ).model_dump_json()
 
     return server

@@ -18,7 +18,7 @@ from pwc_mcp.server import (
 from test_server import StubCatalog
 
 # Deliberate default divergences from the CLI, documented in README.md.
-DEFAULT_EXCEPTIONS = {("get_paper_info", "include_resources"): True}
+DEFAULT_EXCEPTIONS = {}
 
 
 def _tools():
@@ -87,6 +87,7 @@ def test_paper_references_and_entity_names_are_required_everywhere():
         assert tools[tool].input_schema["required"] == [entity]
     for tool in (
         "get_paper_info",
+        "get_paper_evaluations",
         "read_paper",
         "get_related_papers",
         "get_paper_lineage",

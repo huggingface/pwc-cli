@@ -4,7 +4,7 @@ description: "Papers With Code MCP tools for searching and reading AI/ML papers,
 compatibility: "Requires an MCP client connected to https://paperswithcode.co/mcp with the Papers With Code tools available."
 ---
 
-Generated for `pwc-mcp v0.2.0` and MCP protocol `2026-07-28`.
+Generated for `pwc-mcp v0.2.1` and stock-client MCP protocol `2025-11-25`.
 
 The tools query the public [Papers With Code](https://paperswithcode.co) catalog
 anonymously and are read-only. Every tool runs the matching `pwc` CLI research
@@ -50,7 +50,8 @@ arguments take an exact name, slug, or ID.
 ## Tools
 
 - `search_papers({"query": QUERY, "mode": "hybrid"|"keyword"|"semantic", "page": PAGE, "limit": LIMIT, "published_after": START_DATE, "published_before": END_DATE, "has_official_implementation": BOOLEAN})` — search papers by title, topic, author, or arXiv ID (`pwc search`). Omit optional arguments when they are not needed.
-- `get_paper_info({"paper": PAPER, "include_resources": BOOLEAN, "include_evaluations": BOOLEAN})` — show paper metadata, abstract, tasks, methods, lineage, repositories, project pages, and Hugging Face model, dataset, and Space artifacts; `include_evaluations: true` adds every benchmark evaluation of the paper (`pwc paper info`).
+- `get_paper_info({"paper": PAPER, "include_resources": BOOLEAN, "repo_limit": LIMIT, "include_evaluations": BOOLEAN})` — show compact paper metadata, official-first code, and the total repository count; opt into capped additional resources (`pwc paper info`).
+- `get_paper_evaluations({"paper": PAPER, "page": PAGE, "limit": LIMIT})` — page through one paper's benchmark evaluations, including protocol, sources, openness, and task-scoped ranks (`pwc paper evaluations`).
 - `read_paper({"paper": PAPER, "cursor": CURSOR})` — read one stored paper Markdown chunk (`pwc paper read`). If `truncated` is true, call `read_paper` again with the same `paper` and the returned `next_cursor`; repeat until `truncated` is false. Treat the cursor as opaque and use it within one hour.
 - `list_papers({"search": SEARCH, "task": TASK, "method": METHOD, "conference": CONFERENCE, "framework": FRAMEWORK, "organization": ORGANIZATION, "authors": [AUTHOR], "published_after": START_DATE, "published_before": END_DATE, "all_versions": BOOLEAN, "order_by": "trending"|"date_published"|"citation_count", "order_direction": "asc"|"desc", "include_resources": BOOLEAN, "has_official_implementation": BOOLEAN, "page": PAGE, "limit": LIMIT})` — list and filter papers by exact catalog associations (`pwc paper list`). Omit optional arguments when they are not needed.
 - `list_recent_papers({"limit": LIMIT})` — list the most recently added papers (`pwc paper recent`).
@@ -58,16 +59,16 @@ arguments take an exact name, slug, or ID.
 - `get_related_papers({"paper": PAPER, "limit": LIMIT})` — list related papers (`pwc paper related`); `limit` is at most 20.
 - `get_paper_lineage({"paper": PAPER})` — list explicit predecessors and successors (`pwc paper lineage list`).
 - `get_task({"task": TASK})` — inspect one exact task, including its area, hierarchy, sister tasks, ranked benchmarks, common methods, recommended frameworks, and trending papers (`pwc task --name`).
-- `list_tasks({"area": AREA, "level": LEVEL, "visible_only": BOOLEAN, "group_by_area": BOOLEAN, "order_by": "name"|"created_at"|"level"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — list and filter research tasks, or set `group_by_area: true` for the complete visible top-level taxonomy without pagination (`pwc task list`).
+- `list_tasks({"search": SEARCH, "area": AREA, "level": LEVEL, "visible_only": BOOLEAN, "group_by_area": BOOLEAN, "order_by": "name"|"created_at"|"level"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — search, list, and filter research tasks, or set `group_by_area: true` for the complete visible top-level taxonomy without pagination (`pwc task list`).
 - `get_method({"method": METHOD})` — inspect one exact method with its area (`pwc method --name`).
-- `list_methods({"area": AREA, "introduced_year": YEAR, "order_by": "name"|"full_name"|"introduced_year"|"created_at"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — list and filter research methods (`pwc method list`).
+- `list_methods({"search": SEARCH, "area": AREA, "introduced_year": YEAR, "order_by": "name"|"full_name"|"introduced_year"|"created_at"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — search, list, and filter research methods (`pwc method list`).
 - `get_conference({"conference": CONFERENCE})` — inspect one exact conference (`pwc conference --name`).
 - `list_conferences({"year": YEAR})` — list conferences with imported papers (`pwc conference list`).
 - `get_organization({"organization": ORGANIZATION})` — inspect one exact research organization (`pwc organization --name`).
 - `list_organizations({"featured_only": BOOLEAN})` — list research organizations (`pwc organization list`).
 - `get_framework({"framework": FRAMEWORK})` — inspect one exact research framework (`pwc framework --name`).
 - `list_frameworks({"domain": DOMAIN, "category": CATEGORY, "platform": PLATFORM})` — list research frameworks (`pwc framework list`).
-- `get_benchmark({"benchmark": BENCHMARK, "limit": LIMIT, "is_open": BOOLEAN, "max_parameters": SIZE, "require_metrics": [METRIC], "minimum_metrics": {METRIC: VALUE}, "maximum_metrics": {METRIC: VALUE}, "sort_metric": "METRIC:asc|desc", "pareto": ["METRIC:higher", "METRIC:lower"]})` — inspect one exact benchmark leaderboard with model-size, metric threshold, sort, and Pareto selection (`pwc benchmark --name`). `matched_count` reports rows that satisfied the filters before `limit`.
+- `get_benchmark({"benchmark": BENCHMARK, "page": PAGE, "limit": LIMIT, "is_open": BOOLEAN, "max_parameters": SIZE, "require_metrics": [METRIC], "minimum_metrics": {METRIC: VALUE}, "maximum_metrics": {METRIC: VALUE}, "sort_metric": "METRIC:asc|desc", "pareto": ["METRIC:higher", "METRIC:lower"]})` — inspect one paginated benchmark leaderboard with model-size, metric threshold, sort, and Pareto selection (`pwc benchmark --name`). `matched_count` reports rows that satisfied the filters before pagination.
 - `list_benchmarks({"search": SEARCH, "task": TASK, "include_descendants": BOOLEAN, "minimum_evaluations": COUNT, "is_open": BOOLEAN, "group_by_area": BOOLEAN, "area": AREA, "benchmarks_per_task": COUNT, "order_by": "trending"|"name"|"full_name"|"created_at"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — list and filter benchmarks (`pwc benchmark list`). With `task`, results are ranked by trend unless `order_by` is set; `group_by_area` or `area` returns top benchmarks under each visible task.
 
 All page numbers start at 1. `limit` is between 1 and 25 and defaults to the
@@ -88,8 +89,8 @@ available and the user needs one of those capabilities.
    `max_parameters` when model size is part of the request and `sort_metric`
    or `minimum_metrics` when a specific metric matters.
 2. Use `get_paper_info({"paper": PAPER})` to inspect promising results. Its
-   response includes repositories, project pages, and Hugging Face artifacts;
-   add `include_evaluations: true` to compare one paper across benchmarks.
+   response includes official-first code; use `get_paper_evaluations` to page
+   through its benchmark results.
 3. Use exact `list_papers` `authors`, `task`, `method`, `conference`,
    `framework`, and `organization` arguments for known identities or catalog
    associations. Combine them to require every association; do not substitute

@@ -13,8 +13,9 @@ server.
   the MCP contract.
 - Serve anonymous, read-only requests. Search is deterministic and contains no
   embedded language model.
-- Use stateless Streamable HTTP at `/mcp`, supporting MCP `2026-07-28` and
-  legacy 2025 clients on the same endpoint. Expose `/health` for operations.
+- Use stateless Streamable HTTP at `/mcp`, advertising stock-client MCP
+  `2025-11-25` while supporting experimental `2026-07-28` discovery. Expose
+  `/health`, `/.well-known/mcp`, and generated `/docs` schema routes.
 
 ## Public contract
 
@@ -24,6 +25,7 @@ enforces this against the CLI parser):
 
 - `search_papers` (`pwc search`)
 - `get_paper_info` (`pwc paper info`)
+- `get_paper_evaluations` (`pwc paper evaluations`)
 - `read_paper` (`pwc paper read`)
 - `list_papers` (`pwc paper list`)
 - `list_recent_papers` (`pwc paper recent`)
@@ -47,15 +49,17 @@ Tools run the CLI handlers in-process through the shared cached transport, so
 validation, fail-closed filter confirmation, and the JSON payload are the
 CLI's. Every result includes that payload as `data` beside typed projections.
 Terminal-only flags have no parameter. The hosted service caps `limit` at 25,
-defaults `search_papers` to keyword mode, includes paper resources by default,
-and serves `read_paper` in chunks.
+defaults `search_papers` to keyword mode, returns compact official-first paper
+resources, and serves `read_paper` in chunks.
 
-Expose these resource templates and no prompts:
+Expose these resource templates:
 
 - `pwc://papers/{paper}`
 - `pwc://papers/{paper}/markdown`
 - `pwc://tasks/{task}`
 - `pwc://benchmarks/{benchmark}`
+
+Expose `find_papers`, `compare_leaderboard`, and `survey_task` prompts.
 
 Responses use stable, MCP-specific versioned structured outputs with a text
 fallback. `read_paper` performs one upstream read of at most 64 KiB per call and
@@ -67,6 +71,10 @@ previous signing keys support rotation without accepting unsigned state.
 Paper references accept arXiv IDs, numeric PwC external IDs, arXiv/Hugging
 Face/Papers With Code URLs, and exact titles. Ambiguous exact titles fail rather
 than selecting one result.
+
+Paper evaluations and benchmark leaderboards paginate. Leaderboards merge equivalent model rows across
+task scopes while retaining scoped ranks, protocol, split, shots, source,
+openness, and update time. Metric direction is explicit when known.
 
 ## Safety and operations
 

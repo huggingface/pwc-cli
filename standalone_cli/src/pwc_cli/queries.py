@@ -25,6 +25,7 @@ Command = tuple[str, ...]
 READ_ONLY_COMMANDS: tuple[Command, ...] = (
     ("search",),
     ("paper", "info"),
+    ("paper", "evaluations"),
     ("paper", "read"),
     ("paper", "list"),
     ("paper", "recent"),

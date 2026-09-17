@@ -121,6 +121,12 @@ PAYLOADS = {
     ("paper", "recent"): [PAPER_ROW],
     ("paper", "trending"): [PAPER_ROW],
     ("paper", "related"): {"results": [PAPER_ROW]},
+    ("paper", "evaluations"): {
+        "count": 1,
+        "page": 1,
+        "next_page": 2,
+        "results": [EVALUATION_ROW],
+    },
     ("paper", "lineage", "list"): {
         "paper": {
             "id": 755,
@@ -153,6 +159,8 @@ PAYLOADS = {
         "benchmark": {"id": "72", "name": "ImageNet-1k", "slug": "imagenet-1k"},
         "count": 1,
         "matched_count": 1,
+        "page": 1,
+        "next_page": 2,
         "results": [EVALUATION_ROW],
     },
     ("benchmark", "list"): {"next_page": None, "results": [BENCHMARK]},
@@ -322,7 +330,7 @@ def test_catalog_failures_do_not_expose_or_log_user_queries(caplog):
     assert result.is_error is True
     assert result.content[0].text == (
         "Error executing tool search_papers: "
-        "the Papers With Code catalog request failed"
+        "upstream_error: the Papers With Code catalog request failed"
     )
     assert secret_query not in caplog.text
 
@@ -348,10 +356,10 @@ def test_lookup_failures_return_the_cli_hint_without_logging_it(caplog):
 
     assert missing.content[0].text == (
         "Error executing tool get_task: "
-        "Task not found: language-modelling; closest results: Language Modeling"
+        "not_found: Task not found: language-modelling; closest results: Language Modeling"
     )
     assert transport.content[0].text == (
-        "Error executing tool get_task: the Papers With Code catalog request failed"
+        "Error executing tool get_task: not_found: the requested catalog record does not exist"
     )
     assert "language-modelling" not in caplog.text
 
@@ -405,9 +413,10 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
         {"id": "6", "name": "Machine Translation", "slug": "machine-translation"}
     ]
     assert paper["repositories"][0]["is_official"] is True
-    assert paper["hf_models"] == ["https://huggingface.co/google-t5/t5-base"]
+    assert paper["hf_models"] == []
+    assert paper["code_repository_count"] == 595
     assert info.structured_content["evaluations"] is None
-    assert info.structured_content["data"]["abstract"] == "A transformer architecture."
+    assert info.structured_content["data"] is None
 
     assert catalog.queries[1][1]["include_evals"] is True
     assert evaluated.structured_content["evaluation_count"] == 1
@@ -439,6 +448,26 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
     }
     assert catalog.resolve_calls == 1
     assert catalog.read_calls == [(0, None, 5), (5, "a" * 64, 5)]
+
+
+def test_paper_evaluations_are_paginated_and_compact():
+    catalog = StubCatalog()
+    (result,) = _call(
+        catalog,
+        [("get_paper_evaluations", {"paper": "1706.03762", "limit": 5})],
+    )
+
+    assert catalog.options(("paper", "evaluations")) == {
+        "paper": "1706.03762",
+        "page": 1,
+        "page_size": 5,
+    }
+    assert result.structured_content["next_page"] == 2
+    assert result.structured_content["data"] is None
+    assert (
+        result.structured_content["evaluations"][0]["rank_scopes"][0]["task_name"]
+        == "Image Classification"
+    )
 
 
 def test_read_paper_rejects_invalid_continuation_as_an_expected_error():
@@ -538,7 +567,7 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
     tool_names, task, method, benchmarks, benchmark = asyncio.run(exercise())
 
     assert tool_names == set(TOOL_COMMANDS)
-    assert len(tool_names) == 20
+    assert len(tool_names) == 21
     assert catalog.options(("task",)) == {"name": "image-classification"}
     assert catalog.options(("method",)) == {"name": "transformer"}
     assert catalog.options(("benchmark", "list")) == {
@@ -557,6 +586,7 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
     }
     assert catalog.options(("benchmark",)) == {
         "name": "imagenet-1k",
+        "page": 1,
         "limit": 5,
         "is_open": True,
         "max_parameters": "4B",
@@ -568,27 +598,23 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
     }
     assert task.structured_content["task"]["area"] == {"id": "1", "name": "Vision"}
     assert task.structured_content["task"]["benchmarks"][0]["slug"] == "imagenet-1k"
-    assert task.structured_content["data"]["common_methods"][0]["name"] == "Transformer"
+    assert task.structured_content["data"] is None
     assert method.structured_content["method"]["introduced_year"] == 2017
     assert benchmarks.structured_content["items"][0]["slug"] == "imagenet-1k"
     assert benchmark.structured_content["matched_count"] == 1
-    assert benchmark.structured_content["evaluations"] == [
+    assert benchmark.structured_content["next_page"] == 2
+    evaluation = benchmark.structured_content["evaluations"][0]
+    assert evaluation["model_name"] == "ExampleNet"
+    assert evaluation["metrics"] == {"Accuracy": 90.1}
+    assert evaluation["rank_scopes"] == [
         {
-            "id": "10",
-            "model_name": "ExampleNet",
-            "harness": "timm",
-            "metrics": {"Accuracy": 90.1},
-            "best_metric": "Accuracy",
-            "best_rank": 1,
-            "task": "Image Classification",
-            "paper_id": "755",
-            "paper_title": "Attention Is All You Need",
-            "paper_arxiv_id": "1706.03762",
-            "paper_published": "2017-06-12",
-            "is_open": True,
-            "num_parameters": 1000,
+            "task_id": None,
+            "task_name": "Image Classification",
+            "task_slug": None,
+            "rank": 1,
         }
     ]
+    assert benchmark.structured_content["metric_directions"] == {"Accuracy": "higher"}
 
 
 def test_grouped_listings_omit_pagination_and_flatten_benchmarks():
@@ -605,6 +631,7 @@ def test_grouped_listings_omit_pagination_and_flatten_benchmarks():
     assert catalog.queries[0] == (
         ("task", "list"),
         {
+            "search": None,
             "area": "Vision",
             "level": 1,
             "visible_only": False,
@@ -631,6 +658,7 @@ def test_grouped_listings_omit_pagination_and_flatten_benchmarks():
             "slug": "imagenet-1k",
             "full_name": None,
             "description": None,
+            "split": None,
             "hf_url": None,
             "paper_count": 124,
         }
@@ -658,6 +686,7 @@ def test_new_catalog_tools_return_the_cli_json_document():
             "data": PAYLOADS[TOOL_COMMANDS[name]],
         }
     assert catalog.options(("method", "list")) == {
+        "search": None,
         "area": None,
         "introduced_year": 2017,
         "order_by": "paper_count",

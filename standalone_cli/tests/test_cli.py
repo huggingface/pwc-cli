@@ -918,6 +918,8 @@ def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
                     "list",
                     "--area",
                     "vision",
+                    "--search",
+                    "image",
                     "--page-size",
                     "1",
                     "--order-by",
@@ -936,6 +938,7 @@ def test_task_list_resolves_area_name_and_renders_compact_output(monkeypatch):
             {
                 "page": 1,
                 "page_size": 1,
+                "q": "image",
                 "area_id": "1",
                 "level": None,
                 "visible_only": False,
@@ -1304,6 +1307,8 @@ def test_method_list_accepts_area_id_and_year_filter(monkeypatch):
                     "list",
                     "--area",
                     "6",
+                    "--search",
+                    "wav2vec",
                     "--introduced-year",
                     "2020",
                 ]
@@ -1316,6 +1321,7 @@ def test_method_list_accepts_area_id_and_year_filter(monkeypatch):
         {
             "page": 1,
             "page_size": 50,
+            "q": "wav2vec",
             "area_id": "6",
             "introduced_year": 2020,
             "ordering": "name",
@@ -1639,7 +1645,7 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
         ],
     }
     evaluations_payload = {
-        "count": 2,
+        "count": 3,
         "results": [
             {
                 "id": "1",
@@ -1673,6 +1679,23 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
                 "task_name": "Coding Agents",
                 "is_open": False,
             },
+            {
+                "id": "3",
+                "paper_id": "9",
+                "task_id": "8",
+                "dataset_id": "42",
+                "model_name": "Agent | One",
+                "metrics": {"Resolved": 55.5},
+                "best_metric": "Resolved",
+                "best_rank": 4,
+                "num_parameters": 10_000_000_000,
+                "paper_title": "An Agent Paper",
+                "paper_arxiv_id": "2601.12345",
+                "paper_published_date": "2026-01-20",
+                "task_name": "Software Engineering",
+                "task_slug": "software-engineering",
+                "is_open": False,
+            },
         ],
     }
 
@@ -1701,11 +1724,30 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
         "datasets/42/evaluations/",
         {
             "page": 1,
-            "page_size": 100,
+            "page_size": 20,
             "ordering": "best_rank",
             "is_open": None,
         },
     )
+    json_output = io.StringIO()
+    with redirect_stdout(json_output):
+        assert main(["benchmark", "--name", "SWE-Bench Pro", "--json"]) == 0
+    rows = json.loads(json_output.getvalue())["data"]["results"]
+    assert len(rows) == 1
+    assert rows[0]["rank_scopes"] == [
+        {
+            "task_id": "3",
+            "task_name": "Coding Agents",
+            "task_slug": None,
+            "rank": 1,
+        },
+        {
+            "task_id": "8",
+            "task_name": "Software Engineering",
+            "task_slug": "software-engineering",
+            "rank": 4,
+        },
+    ]
 
 
 def test_benchmark_detail_renders_aligned_table_in_terminal(monkeypatch):
@@ -1833,7 +1875,7 @@ def test_benchmark_detail_filters_by_inclusive_max_parameters(monkeypatch, capsy
         "evaluations/",
         {
             "page": 1,
-            "page_size": 100,
+            "page_size": 20,
             "dataset_id": "42",
             "ordering": "best_rank",
             "is_open": "true",
