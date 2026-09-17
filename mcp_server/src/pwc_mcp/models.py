@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _absolute_url(value: object) -> str | None:
@@ -26,7 +27,12 @@ class PaperSummary(OutputModel):
     published: str | None = None
     citation_count: int | None = None
     url: str | None = None
-    has_official_implementation: bool
+    has_official_implementation: bool = Field(
+        description=(
+            "True when the catalog marks at least one linked repository as the "
+            "paper's official implementation; this is not an independent code audit."
+        )
+    )
     code_repository_count: int
 
 
@@ -94,6 +100,11 @@ class PaperLineageResult(OutputModel):
     paper: PaperReference
     predecessors: list[PaperReference]
     successors: list[PaperReference]
+    coverage: Literal["explicit_catalog_links_only"] = "explicit_catalog_links_only"
+    coverage_note: str = (
+        "Only explicit catalog relationships are returned; an empty list does not "
+        "prove that no predecessor or successor exists."
+    )
 
 
 class AreaReference(OutputModel):
@@ -108,6 +119,7 @@ class BenchmarkSummary(OutputModel):
     url: str | None = None
     full_name: str | None = None
     description: str | None = None
+    split: str | None = None
     hf_url: str | None = None
     paper_count: int
 
@@ -162,16 +174,41 @@ class BenchmarkPage(OutputModel):
     next_page: int | None = None
 
 
+class EvaluationRankScope(OutputModel):
+    task_id: str | None = None
+    task_name: str | None = None
+    task_slug: str | None = None
+    rank: int | None = None
+
+
 class Evaluation(OutputModel):
     id: str
     model_name: str
     metrics: dict[str, float | int | str | None]
-    best_rank: int | None = None
+    best_rank: int | None = Field(
+        default=None,
+        description="Best rank across the task-specific rank scopes listed in rank_scopes.",
+    )
+    rank_scopes: list[EvaluationRankScope]
     paper_id: str | None = None
     paper_title: str | None = None
     paper_arxiv_id: str | None = None
-    is_open: bool
+    is_open: bool | None = Field(
+        description=(
+            "Catalog openness flag for the evaluated implementation: true=open, "
+            "false=closed, null=not recorded."
+        )
+    )
     num_parameters: int | None = None
+    split: str | None = None
+    shots: int | None = None
+    evaluation_protocol: str | None = None
+    harness: str | None = None
+    source_url: str | None = None
+    code_url: str | None = None
+    hf_model_url: str | None = None
+    updated_at: str | None = None
+    uses_additional_data: bool | None = None
 
 
 class BenchmarkResult(OutputModel):
@@ -179,6 +216,10 @@ class BenchmarkResult(OutputModel):
     benchmark: BenchmarkSummary
     evaluation_count: int
     evaluations: list[Evaluation]
+    metric_directions: dict[str, Literal["higher", "lower", "unknown"]]
+    page: int
+    next_page: int | None = None
+    ranking_note: str = "Ranks are scoped by task and are not necessarily comparable across rank_scopes."
 
 
 class EvaluationPage(OutputModel):
@@ -186,6 +227,8 @@ class EvaluationPage(OutputModel):
     paper: str
     evaluation_count: int
     evaluations: list[Evaluation]
+    page: int
+    next_page: int | None = None
 
 
 def paper_summary(item: dict[str, Any]) -> PaperSummary:
@@ -305,6 +348,11 @@ def benchmark_summary(item: dict[str, Any]) -> BenchmarkSummary:
         ),
         full_name=str(item["full_name"]) if item.get("full_name") else None,
         description=str(item["description"]) if item.get("description") else None,
+        split=(
+            str(item.get("split_name") or item.get("split"))
+            if item.get("split_name") or item.get("split")
+            else None
+        ),
         hf_url=str(item["hf_url"]) if item.get("hf_url") else None,
         paper_count=int(item.get("paper_count") or 0),
     )
@@ -324,14 +372,69 @@ def evaluation(item: dict[str, Any]) -> Evaluation:
         paper_arxiv_id=(
             str(item["paper_arxiv_id"]) if item.get("paper_arxiv_id") else None
         ),
-        is_open=item.get("is_open") is not False,
+        rank_scopes=_rank_scopes(item),
+        is_open=(
+            item.get("is_open") if isinstance(item.get("is_open"), bool) else None
+        ),
         num_parameters=(
             int(item["num_parameters"])
             if isinstance(item.get("num_parameters"), int)
             and not isinstance(item.get("num_parameters"), bool)
             else None
         ),
+        split=(
+            str(item.get("split") or item.get("split_name") or item.get("evaluated_on"))
+            if item.get("split") or item.get("split_name") or item.get("evaluated_on")
+            else None
+        ),
+        shots=_shot_count(item.get("methodology")),
+        evaluation_protocol=(
+            str(item["methodology"]) if item.get("methodology") else None
+        ),
+        harness=str(item["harness"]) if item.get("harness") else None,
+        source_url=_absolute_url(
+            item.get("result_url")
+            or item.get("source_url")
+            or item.get("external_source_url")
+        ),
+        code_url=_absolute_url(item.get("code_url")),
+        hf_model_url=_absolute_url(item.get("hf_model_url")),
+        updated_at=str(item["updated_at"]) if item.get("updated_at") else None,
+        uses_additional_data=(
+            item.get("uses_additional_data")
+            if isinstance(item.get("uses_additional_data"), bool)
+            else None
+        ),
     )
+
+
+def _rank_scopes(item: dict[str, Any]) -> list[EvaluationRankScope]:
+    existing = item.get("rank_scopes")
+    if isinstance(existing, list):
+        return [
+            EvaluationRankScope.model_validate(scope)
+            for scope in existing
+            if isinstance(scope, dict)
+        ]
+    if not any(
+        item.get(field) is not None for field in ("task_id", "task_name", "best_rank")
+    ):
+        return []
+    return [
+        EvaluationRankScope(
+            task_id=str(item["task_id"]) if item.get("task_id") else None,
+            task_name=str(item["task_name"]) if item.get("task_name") else None,
+            task_slug=str(item["task_slug"]) if item.get("task_slug") else None,
+            rank=int(item["best_rank"]) if item.get("best_rank") is not None else None,
+        )
+    ]
+
+
+def _shot_count(methodology: object) -> int | None:
+    if not methodology:
+        return None
+    match = re.search(r"\b(\d+)\s*[- ]?shot\b", str(methodology), re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 def _metric_value(value: Any) -> float | int | str | None:
@@ -346,38 +449,102 @@ def _metric_value(value: Any) -> float | int | str | None:
 
 
 def merged_evaluations(items: list[dict[str, Any]]) -> list[Evaluation]:
-    """Return one row per paper/model/setup with all reported metrics combined."""
-    merged: dict[tuple[str, ...], dict[str, Any]] = {}
-    parameter_counts: dict[tuple[str, ...], set[int | None]] = {}
+    """Combine equivalent rows while retaining each task-specific rank scope."""
+    merged: dict[tuple[str, ...], list[dict[str, Any]]] = {}
     for item in items:
-        key = tuple(
-            str(item.get(field) or "")
-            for field in ("paper_id", "task_id", "dataset_id", "model_name", "harness")
+        shots = _shot_count(item.get("methodology"))
+        base_key = (
+            *(
+                str(item.get(field) or "")
+                for field in ("paper_id", "dataset_id", "model_name", "harness")
+            ),
+            str(
+                item.get("split")
+                or item.get("split_name")
+                or item.get("evaluated_on")
+                or ""
+            ),
+            str(shots) if shots is not None else "",
         )
+        source_metrics = item.get("metrics")
+        metrics = {
+            str(name): _metric_value(value)
+            for name, value in (
+                source_metrics.items() if isinstance(source_metrics, dict) else []
+            )
+        }
+        candidates = merged.setdefault(base_key, [])
+        current = next(
+            (
+                candidate
+                for candidate in candidates
+                if all(
+                    name not in candidate["metrics"]
+                    or candidate["metrics"][name] == value
+                    for name, value in metrics.items()
+                )
+            ),
+            None,
+        )
+        scope = _rank_scopes(item)
         count = item.get("num_parameters")
         valid_count = (
             count
             if isinstance(count, int) and not isinstance(count, bool) and count > 0
             else None
         )
-        parameter_counts.setdefault(key, set()).add(valid_count)
-        current = merged.get(key)
         if current is None:
-            merged[key] = {**item, "metrics": dict(item.get("metrics") or {})}
+            candidates.append(
+                {
+                    **item,
+                    "metrics": metrics,
+                    "rank_scopes": [value.model_dump() for value in scope],
+                    "_parameter_counts": {valid_count},
+                    "_open_values": {
+                        item.get("is_open")
+                        if isinstance(item.get("is_open"), bool)
+                        else None
+                    },
+                }
+            )
             continue
-        current["metrics"].update(item.get("metrics") or {})
+        current["metrics"].update(metrics)
+        known_scopes = {
+            (value.get("task_id"), value.get("rank"))
+            for value in current["rank_scopes"]
+        }
+        current["rank_scopes"].extend(
+            value.model_dump()
+            for value in scope
+            if (value.task_id, value.rank) not in known_scopes
+        )
         ranks = [
             rank
             for rank in (current.get("best_rank"), item.get("best_rank"))
             if isinstance(rank, int)
         ]
         current["best_rank"] = min(ranks) if ranks else None
-    for key, counts in parameter_counts.items():
-        merged[key]["num_parameters"] = next(iter(counts)) if len(counts) == 1 else None
+        current["_parameter_counts"].add(valid_count)
+        current["_open_values"].add(
+            item.get("is_open") if isinstance(item.get("is_open"), bool) else None
+        )
+        if len(str(item.get("methodology") or "")) > len(
+            str(current.get("methodology") or "")
+        ):
+            current["methodology"] = item["methodology"]
+        if str(item.get("updated_at") or "") > str(current.get("updated_at") or ""):
+            current["updated_at"] = item["updated_at"]
+
+    rows = [row for candidates in merged.values() for row in candidates]
+    for row in rows:
+        counts = row.pop("_parameter_counts")
+        row["num_parameters"] = next(iter(counts)) if len(counts) == 1 else None
+        openness = row.pop("_open_values")
+        row["is_open"] = next(iter(openness)) if len(openness) == 1 else None
     return [
         evaluation(item)
         for item in sorted(
-            merged.values(),
+            rows,
             key=lambda item: (
                 item.get("best_rank")
                 if isinstance(item.get("best_rank"), int)
@@ -386,3 +553,45 @@ def merged_evaluations(items: list[dict[str, Any]]) -> list[Evaluation]:
             ),
         )
     ]
+
+
+def metric_directions(
+    evaluations: list[Evaluation],
+) -> dict[str, Literal["higher", "lower", "unknown"]]:
+    names = {name for row in evaluations for name in row.metrics}
+    lower_markers = (
+        "error",
+        "loss",
+        "perplexity",
+        "latency",
+        "runtime",
+        "wer",
+        "cer",
+        "eer",
+        "fid",
+        "mae",
+        "rmse",
+    )
+    higher_markers = (
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
+        "bleu",
+        "rouge",
+        "map",
+        "auc",
+        "score",
+        "em",
+    )
+    result: dict[str, Literal["higher", "lower", "unknown"]] = {}
+    for name in sorted(names):
+        normalized = re.sub(r"[^a-z0-9]+", " ", name.casefold())
+        words = set(normalized.split())
+        if any(marker in words for marker in lower_markers):
+            result[name] = "lower"
+        elif any(marker in words for marker in higher_markers):
+            result[name] = "higher"
+        else:
+            result[name] = "unknown"
+    return result

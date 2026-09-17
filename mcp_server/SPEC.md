@@ -56,6 +56,12 @@ Paper references accept arXiv IDs, numeric PwC external IDs, arXiv/Hugging
 Face/Papers With Code URLs, and exact titles. Ambiguous exact titles fail rather
 than selecting one result.
 
+Benchmark and paper evaluation results paginate with `page` and `next_page`.
+Equivalent result rows merge their metrics while retaining task-scoped ranks,
+evaluation protocol, split, shots when reported, source URL, openness, and
+update timestamp. Metric direction is explicit and unknown directions remain
+`unknown` rather than being guessed.
+
 ## Safety and operations
 
 - Require a strict configurable browser Origin allowlist; native clients may

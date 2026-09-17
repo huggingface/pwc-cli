@@ -111,8 +111,9 @@ class StubCatalog:
         assert min_velocity is None
         return self.search_papers()
 
-    def get_paper_evaluations(self, paper: str, *, limit: int):
+    def get_paper_evaluations(self, paper: str, *, page: int, limit: int):
         assert paper == "1706.03762"
+        assert page == 1
         assert limit == 5
         return self.get_benchmark("imagenet-1k", limit=5, is_open=None)
 
@@ -199,13 +200,17 @@ class StubCatalog:
             ],
         }
 
-    def get_benchmark(self, benchmark: str, *, limit: int, is_open: bool | None):
+    def get_benchmark(
+        self, benchmark: str, *, page: int = 1, limit: int, is_open: bool | None
+    ):
         assert benchmark == "imagenet-1k"
+        assert page in {1, 2}
         assert limit in {5, 10}
         assert is_open in {True, None}
         return {
             "benchmark": {"id": "72", "name": "ImageNet-1k", "slug": "imagenet-1k"},
-            "count": 2,
+            "count": 4,
+            "next_page": 2 if page == 1 else None,
             "results": [
                 {
                     "id": "10",
@@ -217,6 +222,12 @@ class StubCatalog:
                     "paper_arxiv_id": "1706.03762",
                     "is_open": True,
                     "num_parameters": 1000,
+                    "task_id": "1",
+                    "task_name": "Image Classification",
+                    "task_slug": "image-classification",
+                    "methodology": "5-shot evaluation on the validation split.",
+                    "result_url": "/paper/1706.03762",
+                    "updated_at": "2026-09-16T00:00:00Z",
                 },
                 {
                     "id": "11",
@@ -228,6 +239,29 @@ class StubCatalog:
                     "paper_arxiv_id": "1706.03762",
                     "is_open": True,
                     "num_parameters": 1000,
+                    "task_id": "2",
+                    "task_name": "Visual Recognition",
+                    "task_slug": "visual-recognition",
+                    "methodology": "5-shot evaluation on the validation split.",
+                    "result_url": "/paper/1706.03762",
+                    "updated_at": "2026-09-16T00:00:00Z",
+                },
+                {
+                    "id": "12",
+                    "model_name": "ExampleNet",
+                    "metrics": {"Accuracy": "90.1"},
+                    "best_rank": 1,
+                    "paper_id": "755",
+                    "paper_title": "Attention Is All You Need",
+                    "paper_arxiv_id": "1706.03762",
+                    "is_open": True,
+                    "num_parameters": 1000,
+                    "task_id": "1",
+                    "task_name": "Image Classification",
+                    "task_slug": "image-classification",
+                    "methodology": "0-shot evaluation on the validation split.",
+                    "result_url": "/paper/1706.03762",
+                    "updated_at": "2026-09-16T00:00:00Z",
                 },
             ],
         }
@@ -371,6 +405,7 @@ def test_discovery_tools_and_prompts_cover_common_agent_flows():
         "Accuracy": 90.1,
         "F1": 88,
     }
+    assert evaluations.structured_content["next_page"] == 2
     assert tasks.structured_content["items"][0]["slug"] == "image-classification"
     assert tasks.structured_content["items"][0]["url"] == (
         "https://paperswithcode.co/tasks/image-classification"
@@ -431,6 +466,7 @@ def test_paper_listing_related_work_and_lineage_are_composable():
     assert lineage.structured_content["successors"] == [
         {"id": "900", "reference": "2001.00001", "title": "A Follow-up"}
     ]
+    assert lineage.structured_content["coverage"] == "explicit_catalog_links_only"
 
 
 def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
@@ -473,7 +509,31 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
         "Accuracy": 90.1,
         "F1": 88,
     }
-    assert len(benchmark.structured_content["evaluations"]) == 1
+    assert len(benchmark.structured_content["evaluations"]) == 2
+    assert benchmark.structured_content["next_page"] == 2
+    assert benchmark.structured_content["metric_directions"] == {
+        "Accuracy": "higher",
+        "F1": "higher",
+    }
+    evaluation = benchmark.structured_content["evaluations"][0]
+    assert evaluation["shots"] == 5
+    assert evaluation["source_url"] == "https://paperswithcode.co/paper/1706.03762"
+    assert evaluation["updated_at"] == "2026-09-16T00:00:00Z"
+    assert evaluation["rank_scopes"] == [
+        {
+            "task_id": "1",
+            "task_name": "Image Classification",
+            "task_slug": "image-classification",
+            "rank": 1,
+        },
+        {
+            "task_id": "2",
+            "task_name": "Visual Recognition",
+            "task_slug": "visual-recognition",
+            "rank": 2,
+        },
+    ]
+    assert benchmark.structured_content["evaluations"][1]["shots"] == 0
 
 
 def test_resources_expose_canonical_papers_tasks_and_benchmarks():

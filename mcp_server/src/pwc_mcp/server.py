@@ -42,6 +42,7 @@ from pwc_mcp.models import (
     benchmark_summary,
     catalog_reference,
     merged_evaluations,
+    metric_directions,
     paper_detail,
     paper_reference,
     paper_summary,
@@ -165,7 +166,9 @@ class Catalog(Protocol):
         self, *, limit: int, max_age_days: int, min_velocity: float | None
     ) -> dict[str, Any]: ...
 
-    def get_paper_evaluations(self, paper: str, *, limit: int) -> dict[str, Any]: ...
+    def get_paper_evaluations(
+        self, paper: str, *, page: int, limit: int
+    ) -> dict[str, Any]: ...
 
     def get_paper_lineage(self, paper: str) -> dict[str, Any]: ...
 
@@ -194,7 +197,7 @@ class Catalog(Protocol):
     ) -> dict[str, Any]: ...
 
     def get_benchmark(
-        self, benchmark: str, *, limit: int, is_open: bool | None
+        self, benchmark: str, *, page: int, limit: int, is_open: bool | None
     ) -> dict[str, Any]: ...
 
 
@@ -217,7 +220,10 @@ def build_server(
             "filters. Pass slugs or numeric IDs returned by list tools to exact task, "
             "method, and benchmark tools. Dates use YYYY-MM-DD. When a tool returns "
             "ambiguous, retry with a listed slug or ID. Structured data is in "
-            "structuredContent; text is only a compact Markdown summary."
+            "structuredContent; text is only a compact Markdown summary. Official "
+            "implementation means catalog-designated official code, not an independent "
+            "audit. Evaluation is_open is the catalog's implementation availability "
+            "flag and may be null when unknown."
         ),
         version=__version__,
         website_url="https://paperswithcode.co",
@@ -239,7 +245,7 @@ def build_server(
         published_before: str | None = None,
         has_official_implementation: bool = False,
     ) -> PaperPage:
-        """Search by relevance across paper title, topic, author, or arXiv ID. Use keyword for exact terms and semantic for concepts. Dates are YYYY-MM-DD. has_official_implementation means at least one author-claimed official code repository."""
+        """Search by relevance across paper title, topic, author, or arXiv ID. Use keyword for exact terms and semantic for concepts. Dates are YYYY-MM-DD. has_official_implementation means at least one repository is marked official in the catalog; it is not an independent code audit."""
         _validate_date_range(published_after, published_before)
         payload = _catalog_call(
             catalog.search_papers,
@@ -442,9 +448,13 @@ def build_server(
         return _tool_result(result, f"Found {len(result.items)} trending papers.")
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def get_paper_evaluations(paper: Reference, limit: Limit = 10) -> EvaluationPage:
-        """Get benchmark evaluation rows reported for one paper. paper accepts an arXiv/PwC ID, supported URL, or exact title."""
-        payload = _catalog_call(catalog.get_paper_evaluations, paper, limit=limit)
+    def get_paper_evaluations(
+        paper: Reference, page: Page = 1, limit: Limit = 10
+    ) -> EvaluationPage:
+        """Get paginated benchmark evaluations reported for one paper, including protocol, source, update time, and task-scoped ranks. paper accepts an arXiv/PwC ID, supported URL, or exact title."""
+        payload = _catalog_call(
+            catalog.get_paper_evaluations, paper, page=page, limit=limit
+        )
         rows = payload.get("results") or payload.get("items") or []
         result = EvaluationPage(
             paper=paper,
@@ -452,15 +462,22 @@ def build_server(
             evaluations=merged_evaluations(
                 [item for item in rows if isinstance(item, dict)]
             ),
+            page=page,
+            next_page=(
+                int(payload["next_page"])
+                if payload.get("next_page") is not None
+                else None
+            ),
         )
         return _tool_result(
             result,
-            f"Found {result.evaluation_count} evaluation rows; returned {len(result.evaluations)}.",
+            f"Found {result.evaluation_count} evaluation rows; returned {len(result.evaluations)} on page {page}."
+            + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_paper_lineage(paper: Reference) -> PaperLineageResult:
-        """Get explicit predecessor and successor relationships for a paper."""
+        """Get explicit catalog predecessor and successor links for a paper. Empty lists mean no relationships are recorded, not proof that none exist."""
         payload = _catalog_call(catalog.get_paper_lineage, paper)
         current = payload.get("paper")
         if not isinstance(current, dict):
@@ -480,7 +497,7 @@ def build_server(
         )
         return _tool_result(
             result,
-            f"{result.paper.title}: {len(result.predecessors)} predecessors, {len(result.successors)} successors.",
+            f"{result.paper.title}: {len(result.predecessors)} recorded predecessors, {len(result.successors)} recorded successors. Coverage is explicit catalog links only.",
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -664,30 +681,40 @@ def build_server(
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_benchmark(
         benchmark: Reference,
+        page: Page = 1,
         limit: Limit = 10,
         is_open: bool | None = None,
     ) -> BenchmarkResult:
-        """Get one exact benchmark by numeric ID or slug from list_benchmarks and its top model rows. Display names are accepted only when unambiguous; is_open filters reproducible/open implementations."""
+        """Get one exact benchmark and a page of evaluation rows. Rows expose split, shots/protocol, source, update time, metric direction, and task-specific rank scopes. Use next_page for continuation. is_open filters the catalog's open-implementation flag; null means unrecorded."""
         payload = _catalog_call(
-            catalog.get_benchmark, benchmark, limit=limit, is_open=is_open
+            catalog.get_benchmark,
+            benchmark,
+            page=page,
+            limit=limit,
+            is_open=is_open,
         )
         item = payload.get("benchmark")
         if not isinstance(item, dict):
             raise TypeError("benchmark response did not contain a benchmark")
+        evaluations = merged_evaluations(
+            [value for value in payload.get("results") or [] if isinstance(value, dict)]
+        )
         result = BenchmarkResult(
             benchmark=benchmark_summary(item),
             evaluation_count=int(payload.get("count") or 0),
-            evaluations=merged_evaluations(
-                [
-                    value
-                    for value in payload.get("results") or []
-                    if isinstance(value, dict)
-                ]
+            evaluations=evaluations,
+            metric_directions=metric_directions(evaluations),
+            page=page,
+            next_page=(
+                int(payload["next_page"])
+                if payload.get("next_page") is not None
+                else None
             ),
         )
         return _tool_result(
             result,
-            f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models.",
+            f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models on page {page}. Ranks are task-scoped."
+            + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
     @server.prompt(name="find_papers", title="Find papers")

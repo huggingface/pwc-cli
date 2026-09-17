@@ -4,7 +4,7 @@ description: "Papers With Code MCP tools for searching and reading AI/ML papers,
 compatibility: "Requires an MCP client connected to https://paperswithcode.co/mcp with the Papers With Code tools available."
 ---
 
-Generated for `pwc-mcp v0.2.0` and MCP protocol `2025-11-25`.
+Generated for `pwc-mcp v0.2.1` and MCP protocol `2025-11-25`.
 
 The tools query the public [Papers With Code](https://paperswithcode.co) catalog
 anonymously and are read-only. If live tool discovery and this skill disagree,
@@ -41,14 +41,14 @@ matching IDs.
 - `list_papers({"page": PAGE, "limit": LIMIT, "search": SEARCH, "published_after": START_DATE, "published_before": END_DATE, "task": TASK, "method": METHOD, "conference": CONFERENCE, "framework": FRAMEWORK, "organization": ORGANIZATION, "authors": [AUTHOR], "order_by": "date_published"|"citation_count"|"title", "order_direction": "asc"|"desc"})` — list and filter papers. Omit optional arguments when they are not needed.
 - `get_related_papers({"paper": PAPER, "limit": LIMIT})` — list related papers.
 - `get_trending_papers({"limit": LIMIT, "max_age_days": DAYS, "min_velocity": VELOCITY})` — list trending papers.
-- `get_paper_evaluations({"paper": PAPER, "limit": LIMIT})` — list benchmark evaluations reported by a paper.
-- `get_paper_lineage({"paper": PAPER})` — list explicit predecessors and successors.
+- `get_paper_evaluations({"paper": PAPER, "page": PAGE, "limit": LIMIT})` — list paginated benchmark evaluations reported by a paper.
+- `get_paper_lineage({"paper": PAPER})` — list explicit catalog predecessors and successors; empty results do not prove that none exist.
 - `list_tasks({"search": SEARCH, "page": PAGE, "limit": LIMIT})` — discover task slugs and IDs.
 - `get_task({"task": TASK, "benchmark_limit": LIMIT})` — inspect one exact task by ID or slug with a capped benchmark list.
 - `list_methods({"search": SEARCH, "page": PAGE, "limit": LIMIT})` — discover method slugs and IDs.
 - `get_method({"method": METHOD})` — inspect one exact method by ID, slug, full name, or name.
 - `list_benchmarks({"page": PAGE, "limit": LIMIT, "search": SEARCH, "task": TASK, "include_descendants": BOOLEAN, "minimum_evaluations": MINIMUM_EVALUATIONS, "is_open": BOOLEAN})` — list and filter benchmarks. Omit optional arguments when they are not needed.
-- `get_benchmark({"benchmark": BENCHMARK, "limit": LIMIT, "is_open": BOOLEAN})` — inspect one exact benchmark and its leading evaluation rows.
+- `get_benchmark({"benchmark": BENCHMARK, "page": PAGE, "limit": LIMIT, "is_open": BOOLEAN})` — inspect one exact benchmark and one page of evaluation rows.
 
 All page numbers start at 1. `limit` is between 1 and 25. Follow `next_page`
 when the user asks for more results than one response contains; do not infer
@@ -83,6 +83,12 @@ one of those capabilities.
 
 - Tool results use stable, versioned structured output with compact text
   fallbacks. Prefer structured fields over parsing the text fallback.
+- Evaluation ranks are task-scoped. Compare ranks only within matching
+  `rank_scopes`; use `metric_directions`, protocol, split, shots, and source to
+  decide whether scores are comparable. Follow `next_page` for more rows.
+- `has_official_implementation` means the catalog marks linked code as official;
+  it is not an independent audit. Evaluation `is_open` is the catalog's
+  implementation-availability flag and is null when not recorded.
 - Search mode is deterministic: choose `keyword` by default and use `semantic`
   when conceptual similarity is more useful. The MCP server does not support
   the CLI's `hybrid` mode.

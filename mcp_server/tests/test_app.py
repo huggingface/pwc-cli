@@ -43,7 +43,7 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.2.0",
+        "version": "0.2.1",
         "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403
@@ -62,6 +62,10 @@ def test_discovery_docs_and_bare_get_are_client_friendly():
     assert discovery.status_code == 200
     assert discovery.json()["transport"]["url"] == "/mcp"
     assert discovery.json()["protocol_version"] == "2025-11-25"
+    assert discovery.json()["documentation_url"] == (
+        "https://paperswithcode.co/mcp/schema"
+    )
+    assert discovery.json()["setup_url"] == "https://paperswithcode.co/mcp"
     assert docs.status_code == 200
     assert {tool["name"] for tool in docs.json()["tools"]} >= {
         "search_papers",

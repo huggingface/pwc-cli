@@ -45,6 +45,10 @@ the caller controls keyword or semantic mode. `read_paper` fetches at most one
 64 KiB catalog chunk per call and returns a signed, one-hour continuation cursor
 when more Markdown remains. Continuations stay pinned to the resolved paper and
 content version, so a changed paper fails with an explicit restart response.
+Benchmark and paper evaluations are paginated. Equivalent duplicate rows are
+merged while preserving every task-specific rank scope; rows also expose the
+reported protocol, split, shot count when stated, source, update timestamp,
+openness, and metric direction.
 
 ## Resources
 
@@ -77,8 +81,11 @@ request, upstream, and serialized MCP response bodies are bounded to 2 MiB.
 Markdown chunks use a bounded 256-entry/16 MiB in-memory cache.
 
 `GET /.well-known/mcp` exposes connection metadata and `GET /docs` publishes
-the live input/output schema for every tool. A bare `GET /mcp` returns `405`;
-MCP requests use `POST /mcp`. Rate limits return `429` with `Retry-After`.
+the live input/output schema for every tool. On the canonical host these are
+also available as `/.well-known/mcp` and `/mcp/schema`, while a human GET of
+`/mcp` opens the setup guide. Direct package servers return `405` for a bare
+`GET /mcp`; MCP requests use `POST /mcp`. Rate limits return `429` with
+`Retry-After`.
 
 ## Test
 

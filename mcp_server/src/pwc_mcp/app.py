@@ -66,7 +66,8 @@ async def well_known_mcp(request: Request) -> JSONResponse:
             "transport": {"type": "streamable-http", "url": "/mcp"},
             "protocol_version": PROTOCOL_VERSION,
             "supported_protocol_versions": sorted(KNOWN_PROTOCOLS, reverse=True),
-            "documentation_url": "/docs",
+            "documentation_url": "https://paperswithcode.co/mcp/schema",
+            "setup_url": "https://paperswithcode.co/mcp",
         }
     )
 

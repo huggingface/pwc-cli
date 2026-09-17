@@ -551,7 +551,9 @@ class CatalogClient:
             accept_list=True,
         )
 
-    def get_paper_evaluations(self, paper: str, *, limit: int) -> dict[str, Any]:
+    def get_paper_evaluations(
+        self, paper: str, *, limit: int, page: int = 1
+    ) -> dict[str, Any]:
         detail = self.get_paper_info(paper, include_resources=False)
         paper_id = detail.get("id")
         if not paper_id:
@@ -559,7 +561,7 @@ class CatalogClient:
         return self._json(
             "evaluations/",
             {
-                "page": 1,
+                "page": page,
                 "page_size": limit,
                 "paper_id": paper_id,
                 "ordering": "-benchmark_popularity",
@@ -715,7 +717,12 @@ class CatalogClient:
         )
 
     def get_benchmark(
-        self, benchmark: str, *, limit: int, is_open: bool | None
+        self,
+        benchmark: str,
+        *,
+        limit: int,
+        is_open: bool | None,
+        page: int = 1,
     ) -> dict[str, Any]:
         candidates = self._rows(
             self._json(
@@ -756,7 +763,7 @@ class CatalogClient:
         evaluations = self._json(
             f"datasets/{quote(benchmark_id, safe='')}/evaluations/",
             {
-                "page": 1,
+                "page": page,
                 "page_size": limit,
                 "ordering": "best_rank",
                 "is_open": is_open,
@@ -767,4 +774,5 @@ class CatalogClient:
             "benchmark": matched,
             "count": evaluations.get("count") or 0,
             "results": evaluations.get("results") or [],
+            "next_page": evaluations.get("next_page"),
         }
