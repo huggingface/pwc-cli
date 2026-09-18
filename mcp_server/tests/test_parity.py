@@ -17,8 +17,16 @@ from pwc_mcp.server import (
 )
 from test_server import StubCatalog
 
-# Deliberate default divergences from the CLI, documented in README.md.
-DEFAULT_EXCEPTIONS = {}
+# Deliberate default divergences from the CLI, documented in README.md: the
+# hosted service caps rows per response at 25 (list_benchmarks and list_tasks
+# leave the row count to the server instead of the CLI's 50).
+DEFAULT_EXCEPTIONS = {
+    ("list_benchmarks", "limit"): None,
+    ("list_methods", "limit"): 25,
+    ("list_tasks", "limit"): None,
+}
+# argparse placeholders for "not given"; the MCP schema spells these as null.
+UNSET_DEFAULTS = (None, argparse.SUPPRESS, (), [])
 
 
 def _tools():
@@ -67,8 +75,6 @@ def test_every_cli_research_flag_is_a_tool_parameter_and_vice_versa():
             property_schema = schema["properties"][parameter]
             if isinstance(action, argparse._StoreTrueAction):
                 assert property_schema.get("type") == "boolean", (tool, parameter)
-                expected = DEFAULT_EXCEPTIONS.get((tool, parameter), False)
-                assert property_schema.get("default") is expected, (tool, parameter)
             elif action.choices and set(action.choices) != {"true", "false"}:
                 assert set(action.choices) <= set(
                     _enum_values(property_schema, schema)
@@ -78,6 +84,11 @@ def test_every_cli_research_flag_is_a_tool_parameter_and_vice_versa():
                 )
             if not action.option_strings or destination == "name":
                 assert parameter in schema["required"], (tool, parameter)
+            # Same arguments must mean the same query through `pwc` and the MCP
+            # tools, so every CLI default is the tool default unless documented.
+            if action.default not in UNSET_DEFAULTS:
+                expected = DEFAULT_EXCEPTIONS.get((tool, parameter), action.default)
+                assert property_schema.get("default") == expected, (tool, parameter)
 
 
 def test_paper_references_and_entity_names_are_required_everywhere():
