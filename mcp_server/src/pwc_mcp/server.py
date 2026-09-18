@@ -9,6 +9,7 @@ checks against the CLI parser.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import Mapping
@@ -57,6 +58,7 @@ from pwc_mcp.models import (
     paper_summary,
 )
 
+logger = logging.getLogger(__name__)
 READ_ONLY = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
@@ -77,24 +79,46 @@ CLIENT_FACING_ERRORS = (
     "Area not found",
     "Paper title not found",
     "Paper title is ambiguous",
+    "Paper not found",
+    "Paper URL not supported",
     "Paper reference cannot be empty",
     "Too many results to resolve paper title",
     "Papers API did not confirm",
 )
 GENERIC_ERROR = "the Papers With Code catalog request failed"
+# Upstream validation failures the caller can correct; the detail is the
+# public API's own message, bounded and stripped of control characters.
+INVALID_ARGUMENT_STATUSES = frozenset({400, 422})
+MAX_UPSTREAM_DETAIL_CHARS = 200
+
+
+def _upstream_detail(error: HTTPStatusError) -> str:
+    detail = "".join(
+        ch if ch.isprintable() else " " for ch in str(error.detail or "")
+    ).strip()
+    return detail[:MAX_UPSTREAM_DETAIL_CHARS] or "the catalog rejected the request"
 
 
 def catalog_error_message(error: Exception) -> str:
     """Return the CLI's own lookup message when it is actionable, else a generic one."""
-    if isinstance(error, HTTPStatusError) and error.status == 404:
-        return "not_found: the requested catalog record does not exist"
-    if isinstance(error, TransportError) and "timeout" in str(error).casefold():
-        return "upstream_timeout: the Papers With Code catalog timed out"
+    if isinstance(error, HTTPStatusError):
+        if error.status == 404:
+            return "not_found: the requested catalog record does not exist"
+        if error.status in INVALID_ARGUMENT_STATUSES:
+            return f"invalid_argument: {_upstream_detail(error)}"
+        if error.status == 429:
+            return "rate_limited: the Papers With Code catalog is rate limiting; retry later"
+    if isinstance(error, TransportError):
+        message = str(error).casefold()
+        if "timeout" in message or "timed out" in message:
+            return "upstream_timeout: the Papers With Code catalog timed out"
     if isinstance(error, ResponseError) and not isinstance(error, TransportError):
         message = str(error)
         if message.startswith(CLIENT_FACING_ERRORS):
             code = "ambiguous" if "ambiguous" in message.casefold() else "not_found"
             return f"{code}: {message}"
+    # Only the exception class is logged: never the reference, query, or body.
+    logger.warning("pwc-mcp generic catalog error type=%s", type(error).__name__)
     return f"upstream_error: {GENERIC_ERROR}"
 
 
@@ -493,7 +517,7 @@ def build_server(
         except (ResponseError, TransportError) as error:
             raise ToolError(catalog_error_message(error)) from error
         if chunk.paper != canonical or chunk.source != source:
-            raise ToolError("the Papers With Code catalog request failed")
+            raise ToolError("paper changed; restart reading from the beginning")
         next_cursor = None
         if chunk.next_offset is not None:
             next_cursor = codec.encode(
@@ -792,7 +816,7 @@ def build_server(
         sort_metric: SortMetric | None = None,
         pareto: ParetoObjectives | None = None,
     ) -> BenchmarkResult:
-        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit."""
+        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit. Metric names are matched case-insensitively and through common aliases (AP/mAP, top1/Accuracy, AUROC/AUC); an unknown metric error lists the leaderboard's actual metric names."""
         data = run(
             "get_benchmark",
             benchmark=benchmark,
@@ -843,8 +867,24 @@ def build_server(
         page: Page = 1,
         limit: Limit | None = None,
     ) -> BenchmarkPage:
-        """List benchmarks for a task ranked by trend, filter them, or group them by area and task (`pwc benchmark list`). Follow with get_benchmark on the most relevant leaderboard."""
+        """List benchmarks for a task ranked by trend, filter them, or group them by area and task (`pwc benchmark list`). order_by=trending needs task (without it the list is ordered by name); area groups a whole area and is dropped when combined with task, search, or ordering filters. Follow with get_benchmark on the most relevant leaderboard."""
+        notes: list[str] = []
+        if order_by == "trending" and not task:
+            order_by = None
+            notes.append("order_by=trending needs task; ordered by name instead")
+        filtered = bool(
+            task
+            or search
+            or include_descendants
+            or is_open is not None
+            or order_by is not None
+            or order_direction != "asc"
+        )
+        if area is not None and filtered:
+            area = None
+            notes.append("area cannot be combined with filters; returned the filtered list")
         grouped = group_by_area or area is not None
+        # Grouped listings are not paginated; the CLI rejects page/limit there.
         data = run(
             "list_benchmarks",
             search=search,
@@ -857,19 +897,25 @@ def build_server(
             benchmarks_per_task=benchmarks_per_task,
             order_by=order_by,
             order_direction=order_direction,
-            page=page,
-            limit=limit if limit is not None or grouped else MAX_ROWS,
+            page=1 if grouped else page,
+            limit=None if grouped else (limit if limit is not None else MAX_ROWS),
         )
         if not isinstance(data, dict):
             raise TypeError("benchmark listing did not contain a result document")
         rows = _dicts(data.get("results"))
         if grouped:
             rows = _grouped_benchmarks(rows)
-        return BenchmarkPage(
+        result = BenchmarkPage(
             items=[benchmark_summary(item) for item in rows],
             next_page=_next_page(data),
             data=data,
         )
+        summary = f"Found {len(result.items)} benchmarks."
+        if result.next_page:
+            summary += f" Next page: {result.next_page}."
+        for note in notes:
+            summary += f" Note: {note}."
+        return _tool_result(result, summary)
 
     @server.prompt(name="find_papers", title="Find papers")
     def find_papers_prompt(topic: str) -> str:

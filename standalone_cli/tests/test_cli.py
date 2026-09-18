@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import io
 import json
 import sys
 import urllib.error
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from pwc_cli.cli import build_parser, main  # noqa: E402
+from pwc_cli.cli import UsageError, build_parser, main  # noqa: E402
 from pwc_cli.skills import build_skill_md  # noqa: E402
-from pwc_cli.transport import Client, HTTPStatusError, Response  # noqa: E402
+from pwc_cli.transport import (  # noqa: E402
+    Client,
+    HTTPStatusError,
+    Response,
+    ResponseError,
+)
 
 INSTALLER_SPEC = importlib.util.spec_from_file_location(
     "pwc_cli_installer", ROOT / "install.py"
@@ -85,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.1`" in skill
+    assert "Generated with `pwc v0.4.2`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2297,7 +2306,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.1\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.2\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -2949,3 +2958,79 @@ def test_transport_encodes_repeated_query_parameters(monkeypatch):
     assert requests[0].full_url.endswith(
         "/api/v1/papers/?author=Kaiming+He&author=%40yilundu"
     )
+
+
+def test_transport_reports_read_timeouts_and_socket_errors_as_transport_errors(
+    monkeypatch,
+):
+    from pwc_cli.transport import TransportError
+
+    failures = iter([TimeoutError("The read operation timed out"), ConnectionResetError(104, "reset")])
+
+    def fake_urlopen(_request, *, timeout):
+        raise next(failures)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = Client("https://example.test/api/v1")
+
+    with pytest.raises(TransportError, match="timed out"):
+        client.get("health")
+    with pytest.raises(TransportError, match="API request failed"):
+        client.get("health")
+
+
+def test_closest_results_rank_by_shared_words_not_search_order():
+    from pwc_cli.cli import _closest_names, _exact_entity_match
+
+    candidates = [
+        {"name": "Spoken Language Identification"},
+        {"name": "Face Recognition"},
+        {"name": "Person Re-Identification (Video)"},
+        {"name": "Unsupervised Person Re-Identification"},
+        {"name": "Image Classification"},
+    ]
+
+    assert _closest_names("person re-identification", candidates) == (
+        "Person Re-Identification (Video), "
+        "Unsupervised Person Re-Identification, "
+        "Spoken Language Identification"
+    )
+    with pytest.raises(ResponseError, match="closest results: Person Re-Identification"):
+        _exact_entity_match("person re-identification", candidates, label="Task")
+
+
+def test_metric_requests_resolve_through_case_and_common_aliases():
+    from pwc_cli.cli import _resolve_metric_name, _select_metric_rows
+
+    available = {"map": "mAP", "fps": "FPS", "top 1 accuracy": "Top 1 Accuracy"}
+    assert _resolve_metric_name("AP", available) == "mAP"
+    assert _resolve_metric_name("box ap", available) == "mAP"
+    assert _resolve_metric_name("top1", available) == "Top 1 Accuracy"
+    assert _resolve_metric_name("Top-1 Accuracy", available) == "Top 1 Accuracy"
+    assert _resolve_metric_name("fps", available) == "FPS"
+    assert _resolve_metric_name("latency", available) is None
+
+    rows = [
+        {"model_name": "Fast", "metrics": {"mAP": 58, "FPS": 100}},
+        {"model_name": "Slow", "metrics": {"mAP": 62, "FPS": 20}},
+    ]
+    args = argparse.Namespace(
+        require_metrics=["ap"],
+        minimum_metrics=[("AP", 60)],
+        maximum_metrics=[],
+        sort_metric=("ap", "desc"),
+        pareto=[],
+    )
+    assert [row["model_name"] for row in _select_metric_rows(rows, args)] == ["Slow"]
+    assert args.sort_metric == ("mAP", "desc")
+    assert args.minimum_metrics == [("mAP", 60)]
+
+    unknown = argparse.Namespace(
+        require_metrics=[],
+        minimum_metrics=[],
+        maximum_metrics=[],
+        sort_metric=("latency", "desc"),
+        pareto=[],
+    )
+    with pytest.raises(UsageError, match="unknown metric\\(s\\): latency; available metrics: FPS, mAP"):
+        _select_metric_rows(rows, unknown)

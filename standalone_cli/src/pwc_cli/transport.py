@@ -93,3 +93,8 @@ class Client:
             raise HTTPStatusError(error.code, detail) from error
         except urllib.error.URLError as error:
             raise TransportError(f"API request failed: {error.reason}") from error
+        except TimeoutError as error:
+            # Read timeouts surface as a bare TimeoutError, not a URLError.
+            raise TransportError("API request timed out") from error
+        except OSError as error:
+            raise TransportError(f"API request failed: {error}") from error
