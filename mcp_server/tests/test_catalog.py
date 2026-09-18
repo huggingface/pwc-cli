@@ -280,3 +280,83 @@ def test_catalog_query_reports_cli_usage_errors_without_upstream_calls():
     with pytest.raises(UsageError, match="not a read-only"):
         catalog.query(("skills", "add"), {})
     assert transport.calls == []
+
+
+def test_catalog_canonicalises_numeric_ids_of_arxiv_papers():
+    transport = StubTransport(
+        {
+            "papers/86122": {"id": "86122", "arxiv_id": "2505.18132v1"},
+            "papers/2505.18132": {"id": "86122", "title": "BiggerGait"},
+            "papers/4242": {"id": "4242", "arxiv_id": None, "source": "external"},
+        }
+    )
+    catalog = CatalogClient(transport=transport)
+
+    # List tools hand out numeric IDs for arXiv papers too; the Markdown route
+    # only knows arXiv papers by arXiv ID, so numeric references canonicalise.
+    assert catalog.resolve_paper("86122") == "2505.18132"
+    assert catalog.query(("paper", "info"), {"paper": "86122"}) == {
+        "id": "86122",
+        "title": "BiggerGait",
+    }
+    # External papers have no arXiv ID and keep their numeric reference.
+    assert catalog.resolve_paper("4242") == "4242"
+    assert transport.calls[0] == ("papers/86122", {})
+
+
+def test_catalog_rejects_unsupported_urls_without_searching():
+    transport = StubTransport({})
+    catalog = CatalogClient(transport=transport)
+
+    for url in (
+        "https://doi.org/10.1007/s10479-024-06277-x",
+        "https://aclanthology.org/2026.acl-long.200/",
+    ):
+        with pytest.raises(ResponseError, match="Paper URL not supported"):
+            catalog.resolve_paper(url)
+    assert transport.calls == []
+
+
+def test_catalog_distinguishes_missing_papers_from_missing_markdown():
+    from pwc_cli.transport import HTTPStatusError
+
+    class MissingTransport:
+        def __init__(self, paper_exists):
+            self.paper_exists = paper_exists
+
+        def get(self, path, params=None):
+            if path.endswith("/read"):
+                raise HTTPStatusError(404, "Paper Markdown was not found")
+            if self.paper_exists:
+                return Response(b'{"id": "1"}', {})
+            raise HTTPStatusError(404, "No paper found")
+
+    with pytest.raises(ResponseError, match="Paper not found: 2308.10195"):
+        CatalogClient(transport=MissingTransport(False)).read_paper_chunk(
+            "2308.10195", resolved=True
+        )
+    with pytest.raises(HTTPStatusError) as missing_markdown:
+        CatalogClient(transport=MissingTransport(True)).read_paper_chunk(
+            "2505.18132", resolved=True
+        )
+    assert missing_markdown.value.status == 404
+
+
+def test_catalog_reports_titles_missing_from_an_empty_search_as_not_found():
+    # The public API answers an unknown title with an empty result list; that
+    # must surface as "title not found", not as a malformed response.
+    transport = StubTransport(
+        {
+            "papers/search": {
+                "next_page": None,
+                "previous_page": None,
+                "results": [],
+                "applied_filters": {},
+            }
+        }
+    )
+    catalog = CatalogClient(transport=transport)
+
+    with pytest.raises(ResponseError, match="Paper title not found: Dropout"):
+        catalog.resolve_paper("Dropout: A Simple Way to Prevent Overfitting")
+    assert len(transport.calls) == 1

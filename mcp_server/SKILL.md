@@ -4,7 +4,7 @@ description: "Papers With Code MCP tools for searching and reading AI/ML papers,
 compatibility: "Requires an MCP client connected to https://paperswithcode.co/mcp with the Papers With Code tools available."
 ---
 
-Generated for `pwc-mcp v0.2.1` and stock-client MCP protocol `2025-11-25`.
+Generated for `pwc-mcp v0.2.2` and stock-client MCP protocol `2025-11-25`.
 
 The tools query the public [Papers With Code](https://paperswithcode.co) catalog
 anonymously and are read-only. Every tool runs the matching `pwc` CLI research

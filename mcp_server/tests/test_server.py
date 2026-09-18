@@ -733,3 +733,101 @@ def test_resources_expose_canonical_papers_tasks_and_benchmarks():
     assert markdown.contents[0].text == "abcdefgh"
     assert '"slug":"image-classification"' in task.contents[0].text
     assert '"slug":"imagenet-1k"' in benchmark.contents[0].text
+
+
+def test_upstream_validation_rate_limit_and_timeout_errors_are_actionable(caplog):
+    from pwc_cli.transport import TransportError
+    from pwc_mcp.server import catalog_error_message
+
+    class ErrorCatalog(StubCatalog):
+        def __init__(self, error):
+            super().__init__()
+            self.error = error
+
+        def query(self, command, options):
+            raise self.error
+
+    cases = {
+        HTTPStatusError(422, '{"detail":"page_size must be <= 100"}\n\x00'): (
+            'invalid_argument: {"detail":"page_size must be <= 100"}'
+        ),
+        HTTPStatusError(429, "slow down"): (
+            "rate_limited: the Papers With Code catalog is rate limiting; retry later"
+        ),
+        TransportError("API request timed out"): (
+            "upstream_timeout: the Papers With Code catalog timed out"
+        ),
+        ResponseError("Paper not found: 2308.10195"): (
+            "not_found: Paper not found: 2308.10195"
+        ),
+        ResponseError("Paper URL not supported: https://doi.org/x; only arXiv"): (
+            "not_found: Paper URL not supported: https://doi.org/x; only arXiv"
+        ),
+    }
+    for error, expected in cases.items():
+        (result,) = _call(ErrorCatalog(error), [("get_task", {"task": "x"})])
+        assert result.is_error is True
+        assert result.content[0].text == f"Error executing tool get_task: {expected}"
+
+    with caplog.at_level(logging.WARNING):
+        assert catalog_error_message(ResponseError("API returned invalid JSON")) == (
+            "upstream_error: the Papers With Code catalog request failed"
+        )
+    assert "pwc-mcp generic catalog error type=ResponseError" in caplog.text
+    assert "invalid JSON" not in caplog.text
+
+
+def test_list_benchmarks_falls_back_instead_of_rejecting_argument_combinations():
+    catalog = StubCatalog()
+    trending_search, area_with_search, area_only = _call(
+        catalog,
+        [
+            (
+                "list_benchmarks",
+                {"search": "COCO", "order_by": "trending", "order_direction": "desc"},
+            ),
+            ("list_benchmarks", {"area": "Vision", "search": "HDR", "limit": 10}),
+            ("list_benchmarks", {"area": "Vision", "limit": 10}),
+        ],
+    )
+
+    # order_by=trending needs a task; the CLI would raise a usage error.
+    assert catalog.queries[0][1]["order_by"] is None
+    assert catalog.queries[0][1]["search"] == "COCO"
+    assert trending_search.is_error is False
+    assert "Note: order_by=trending needs task; ordered by name instead." in (
+        trending_search.content[0].text
+    )
+    assert trending_search.structured_content["items"][0]["slug"] == "imagenet-1k"
+
+    # area cannot be combined with flat filters; the filters win.
+    assert catalog.queries[1][1]["area"] is None
+    assert catalog.queries[1][1]["search"] == "HDR"
+    assert catalog.queries[1][1]["page_size"] == 10
+    assert "area cannot be combined with filters" in area_with_search.content[0].text
+
+    # A bare limit does not conflict with grouping: the grouped listing ignores it.
+    assert catalog.queries[2][1]["area"] == "Vision"
+    assert catalog.queries[2][1]["page_size"] is None
+    assert "Note:" not in area_only.content[0].text
+    assert area_only.content[0].text == "Found 1 benchmarks."
+
+
+def test_read_paper_names_an_identity_mismatch_instead_of_a_generic_failure():
+    class DriftingCatalog(StubCatalog):
+        def read_paper_chunk(self, paper, **kwargs):
+            chunk = super().read_paper_chunk(paper, **kwargs)
+            return PaperMarkdownChunk(
+                paper="9999.99999",
+                source=chunk.source,
+                markdown=chunk.markdown,
+                content_version=chunk.content_version,
+                next_offset=chunk.next_offset,
+            )
+
+    (result,) = _call(DriftingCatalog(), [("read_paper", {"paper": "1706.03762"})])
+
+    assert result.is_error is True
+    assert result.content[0].text == (
+        "Error executing tool read_paper: paper changed; restart reading from the beginning"
+    )

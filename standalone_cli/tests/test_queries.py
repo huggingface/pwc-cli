@@ -211,3 +211,15 @@ def test_query_refuses_commands_that_are_not_read_only():
     for command in (("skills", "add"), ("version",), ("paper", "edit", "export")):
         with pytest.raises(UsageError, match="not a read-only"):
             queries.query(command, {}, StubClient({}))
+
+
+def test_query_resolves_metric_aliases_against_the_leaderboard():
+    # Agents ask for "AP" on COCO leaderboards that report "mAP".
+    data = queries.query(
+        ("benchmark",),
+        {"name": "COCO", "sort_metric": "AP:asc"},
+        StubClient(BENCHMARK_ROUTES),
+    )
+
+    assert data["matched_count"] == 2
+    assert [row["model_name"] for row in data["results"]] == ["Small", "Smaller"]

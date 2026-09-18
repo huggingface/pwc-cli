@@ -205,7 +205,10 @@ class CatalogClient:
 
     @staticmethod
     def _rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
-        values = payload.get("results") or payload.get("items")
+        values = payload.get("results")
+        if values is None:
+            values = payload.get("items")
+        # An empty list is a valid (empty) result, not a missing list.
         if not isinstance(values, list):
             raise ResponseError("API response did not contain a result list")
         return [item for item in values if isinstance(item, dict)]
@@ -255,8 +258,17 @@ class CatalogClient:
                 "www.paperswithcode.co",
             }:
                 slug_from_url = candidate.casefold()
+        elif urlparse(candidate).scheme in {"http", "https"}:
+            # A DOI, publisher, or venue URL is never an exact title; searching
+            # it would page through empty results before failing anyway.
+            raise ResponseError(
+                f"Paper URL not supported: {candidate}; only arXiv, Hugging Face, "
+                "and Papers With Code URLs resolve"
+            )
         candidate = ARXIV_VERSION.sub("", candidate)
         if PAPER_ID.fullmatch(candidate):
+            if candidate.isdigit():
+                return self._canonical_paper_id(candidate)
             return candidate
         query = candidate.replace("-", " ") if slug_from_url else candidate
         target = " ".join(candidate.split()).casefold()
@@ -293,6 +305,30 @@ class CatalogClient:
             raise ResponseError(f"Paper title is ambiguous: {candidate}; {choices}")
         raise ResponseError(f"Paper title not found: {candidate}")
 
+    def _canonical_paper_id(self, catalog_id: str) -> str:
+        """Prefer the arXiv ID for a numeric catalog ID so every route accepts it.
+
+        The Markdown read route stores arXiv papers under their arXiv ID and
+        only external papers under the numeric ID; list tools hand out numeric
+        IDs for both, so a bare numeric reference cannot tell them apart.
+        """
+        path = f"papers/{quote(catalog_id, safe='')}"
+        record = self._json(path, ttl=cache_ttl(path))
+        arxiv_id = record.get("arxiv_id")
+        if isinstance(arxiv_id, str) and arxiv_id.strip():
+            return ARXIV_VERSION.sub("", arxiv_id.strip())
+        return catalog_id
+
+    def _paper_exists(self, reference: str) -> bool:
+        path = f"papers/{quote(reference, safe='.')}"
+        try:
+            self._json(path, ttl=cache_ttl(path))
+        except HTTPStatusError as error:
+            if error.status == 404:
+                return False
+            raise
+        return True
+
     def resolve_paper(self, paper: str) -> str:
         return self._resolve_paper(paper)
 
@@ -326,6 +362,8 @@ class CatalogClient:
                 raise PaperVersionMismatchError(
                     "Paper Markdown changed; restart reading from the beginning"
                 ) from error
+            if error.status == 404 and not self._paper_exists(reference):
+                raise ResponseError(f"Paper not found: {reference}") from error
             raise
 
         returned_version = response.headers.get("x-pwc-content-version", "")

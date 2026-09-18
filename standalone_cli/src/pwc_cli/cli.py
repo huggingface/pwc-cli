@@ -183,6 +183,33 @@ def _rows(payload: Any) -> tuple[list[dict[str, Any]], int | None]:
     ) if total is not None else None
 
 
+def _name_tokens(value: object) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z0-9]+", str(value or "").casefold()))
+
+
+def _closest_names(reference: str, items: list[dict[str, Any]], limit: int = 3) -> str:
+    """Name the candidates sharing the most words with the reference.
+
+    The search API ranks by its own relevance, which for short taxonomy names
+    can put an unrelated entry first; word overlap with the reference keeps the
+    hint useful ("person re-identification" suggests re-identification tasks,
+    not language identification).
+    """
+    target = _name_tokens(reference)
+    ranked = sorted(
+        (
+            (
+                -len(target & _name_tokens(item.get("name") or item.get("slug"))),
+                index,
+                str(item.get("name") or item.get("slug")),
+            )
+            for index, item in enumerate(items)
+            if item.get("name") or item.get("slug")
+        ),
+    )
+    return ", ".join(name for _score, _index, name in ranked[:limit])
+
+
 def _exact_entity_match(
     reference: str,
     items: list[dict[str, Any]],
@@ -195,11 +222,7 @@ def _exact_entity_match(
         for item in items:
             if str(item.get(field) or "").strip().casefold() == target:
                 return item
-    suggestions = ", ".join(
-        str(item.get("name") or item.get("slug"))
-        for item in items[:3]
-        if item.get("name") or item.get("slug")
-    )
+    suggestions = _closest_names(reference, items)
     suffix = f"; closest results: {suggestions}" if suggestions else ""
     raise ResponseError(f"{label} not found: {reference}{suffix}")
 
@@ -1016,9 +1039,7 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
         candidates, _total = _rows(search_payload)
         summary = _task_match(args.name, candidates)
         if summary is None:
-            suggestions = ", ".join(
-                str(item.get("name")) for item in candidates[:3] if item.get("name")
-            )
+            suggestions = _closest_names(args.name, candidates)
             suffix = f"; closest results: {suggestions}" if suggestions else ""
             raise ResponseError(f"Task not found: {args.name}{suffix}")
 
@@ -2048,6 +2069,67 @@ def _metric_requests(args: argparse.Namespace) -> tuple[str, ...]:
     return tuple(dict.fromkeys(name.casefold() for name in requested))
 
 
+# Normalised (lower-case alphanumeric) spellings agents use for the same metric.
+METRIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "ap": ("map", "boxap", "ap5095"),
+    "map": ("ap", "boxap"),
+    "maskap": ("map", "ap"),
+    "boxap": ("map", "ap"),
+    "top1": ("accuracy", "top1accuracy", "acc"),
+    "top1accuracy": ("accuracy", "top1", "acc"),
+    "acc": ("accuracy", "top1accuracy", "top1"),
+    "accuracy": ("top1accuracy", "top1", "acc"),
+    "top5": ("top5accuracy",),
+    "top5accuracy": ("top5",),
+    "auroc": ("auc", "rocauc"),
+    "auc": ("auroc", "rocauc"),
+    "rocauc": ("auc", "auroc"),
+    "f1": ("f1score",),
+    "f1score": ("f1",),
+    "miou": ("meaniou", "iou"),
+    "meaniou": ("miou", "iou"),
+    "bleu": ("bleuscore",),
+    "bleuscore": ("bleu",),
+    "totalscore": ("total", "overall", "overallscore", "score"),
+    "score": ("totalscore", "overallscore"),
+}
+
+
+def _normalize_metric_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _resolve_metric_name(requested: str, available: dict[str, str]) -> str | None:
+    """Map a requested metric onto the leaderboard's own name, or None."""
+    key = requested.casefold()
+    if key in available:
+        return available[key]
+    normalized = _normalize_metric_name(requested)
+    by_normalized: dict[str, str] = {}
+    for name in available.values():
+        by_normalized.setdefault(_normalize_metric_name(name), name)
+    if normalized in by_normalized:
+        return by_normalized[normalized]
+    for alias in METRIC_ALIASES.get(normalized, ()):
+        if alias in by_normalized:
+            return by_normalized[alias]
+    return None
+
+
+def _apply_metric_names(args: argparse.Namespace, mapping: dict[str, str]) -> None:
+    def rename(name: str) -> str:
+        return mapping.get(name.casefold(), name)
+
+    args.require_metrics = [rename(name) for name in args.require_metrics]
+    args.minimum_metrics = [(rename(n), t) for n, t in args.minimum_metrics]
+    args.maximum_metrics = [(rename(n), t) for n, t in args.maximum_metrics]
+    if args.sort_metric:
+        name, direction = args.sort_metric
+        args.sort_metric = (rename(name), direction)
+    if args.pareto:
+        args.pareto = [(rename(n), d) for n, d in args.pareto]
+
+
 def _select_metric_rows(
     items: list[dict[str, Any]], args: argparse.Namespace
 ) -> list[dict[str, Any]]:
@@ -2055,6 +2137,15 @@ def _select_metric_rows(
     if not requested:
         return items
     available = _available_metrics(items)
+    renamed = {
+        name: resolved
+        for name in requested
+        if name not in available
+        and (resolved := _resolve_metric_name(name, available)) is not None
+    }
+    if renamed:
+        _apply_metric_names(args, renamed)
+        requested = _metric_requests(args)
     unknown = [name for name in requested if name not in available]
     if unknown:
         choices = ", ".join(sorted(available.values(), key=str.casefold)) or "none"
@@ -2231,9 +2322,7 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     candidates, _total = _rows(search_payload)
     benchmark = _benchmark_match(args.name, candidates)
     if benchmark is None:
-        suggestions = ", ".join(
-            str(item.get("name")) for item in candidates[:3] if item.get("name")
-        )
+        suggestions = _closest_names(args.name, candidates)
         suffix = f"; closest results: {suggestions}" if suggestions else ""
         raise ResponseError(f"Benchmark not found: {args.name}{suffix}")
 
