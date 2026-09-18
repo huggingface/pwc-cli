@@ -256,6 +256,10 @@ def test_search_papers_is_a_read_only_structured_tool():
         "keyword",
         "semantic",
     ]
+    # Same default as `pwc search --mode`.
+    assert (
+        tools["search_papers"].input_schema["properties"]["mode"]["default"] == "hybrid"
+    )
     assert result.is_error is False
     assert result.structured_content == {
         "schema_version": "v1",

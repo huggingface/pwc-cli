@@ -49,8 +49,8 @@ Tools run the CLI handlers in-process through the shared cached transport, so
 validation, fail-closed filter confirmation, and the JSON payload are the
 CLI's. Every result includes that payload as `data` beside typed projections.
 Terminal-only flags have no parameter. The hosted service caps `limit` at 25,
-defaults `search_papers` to keyword mode, returns compact official-first paper
-resources, and serves `read_paper` in chunks.
+returns compact official-first paper resources, and serves `read_paper` in
+chunks. `search_papers` defaults to hybrid mode, the same as `pwc search`.
 
 Expose these resource templates:
 

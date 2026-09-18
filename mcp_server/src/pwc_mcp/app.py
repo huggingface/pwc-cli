@@ -25,7 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import CatalogClient
-from pwc_mcp.server import TOOL_COMMANDS, Catalog, build_server
+from pwc_mcp.server import DEFAULT_SEARCH_MODE, TOOL_COMMANDS, Catalog, build_server
 
 LOGGER = logging.getLogger("pwc_mcp.requests")
 # MCP SDK diagnostics can include peer-supplied tool names and resource URIs.
@@ -270,7 +270,7 @@ async def _body_and_replay(
 def _tool_and_semantic(headers: Headers, body: bytes) -> tuple[str | None, bool]:
     header_tool = headers.get("mcp-name")
     body_tool = None
-    mode = None
+    mode = DEFAULT_SEARCH_MODE
     try:
         payload = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -286,7 +286,7 @@ def _tool_and_semantic(headers: Headers, body: bytes) -> tuple[str | None, bool]
         params = payload.get("params")
         arguments = params.get("arguments") if isinstance(params, dict) else None
         if isinstance(arguments, dict):
-            mode = arguments.get("mode")
+            mode = arguments.get("mode", DEFAULT_SEARCH_MODE)
     tool = body_tool or header_tool
     tool = tool if tool in KNOWN_TOOLS else None
     # Hybrid retrieval also runs the dense embedding search upstream.

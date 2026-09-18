@@ -43,7 +43,7 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.2.2",
+        "version": "0.2.3",
         "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403
@@ -292,6 +292,51 @@ def test_hybrid_search_counts_toward_the_semantic_limit():
 
     assert first.status_code != 429
     assert limited.status_code == 429
+
+
+def test_omitted_search_mode_defaults_to_hybrid_and_counts_toward_the_semantic_limit():
+    app = create_app(
+        StubCatalog(),
+        allowed_hosts=["testserver"],
+        semantic_limit=1,
+    )
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "search_papers", "arguments": {"query": "attention"}},
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/mcp", json=body)
+        limited = client.post("/mcp", json=body)
+
+    assert first.status_code != 429
+    assert limited.status_code == 429
+
+
+def test_keyword_search_does_not_count_toward_the_semantic_limit():
+    app = create_app(
+        StubCatalog(),
+        allowed_hosts=["testserver"],
+        semantic_limit=1,
+    )
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "search_papers",
+            "arguments": {"query": "attention", "mode": "keyword"},
+        },
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/mcp", json=body)
+        second = client.post("/mcp", json=body)
+
+    assert first.status_code != 429
+    assert second.status_code != 429
 
 
 def test_rate_limits_are_env_configurable_with_hosted_defaults(monkeypatch):
