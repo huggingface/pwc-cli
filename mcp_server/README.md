@@ -58,13 +58,13 @@ Parameter names follow the CLI flags except for the established MCP names
 (`--include-evals`). Terminal-only flags (`--json`,
 `--implementation-coverage`, `--flat`) have no parameter because MCP output is
 always structured. Hosted differences from the CLI: `limit` is capped at 25,
-`search_papers` defaults to `keyword` mode, `get_paper_info` returns compact
-official-first resources, and `read_paper` is chunked.
+`get_paper_info` returns compact official-first resources, and `read_paper`
+is chunked. `search_papers` defaults to `hybrid` mode like `pwc search`.
 `tests/test_parity.py` fails when the CLI parser and the tool schemas drift.
 
 All tools are annotated read-only and idempotent. Search is deterministic;
-the caller controls keyword, hybrid, or semantic mode. `read_paper` fetches at
-most one 64 KiB catalog chunk per call and returns a signed, one-hour
+the caller controls hybrid (default), keyword, or semantic mode. `read_paper`
+fetches at most one 64 KiB catalog chunk per call and returns a signed, one-hour
 continuation cursor when more Markdown remains. Continuations stay pinned to
 the resolved paper and content version, so a changed paper fails with an
 explicit restart response.

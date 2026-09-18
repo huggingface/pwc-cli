@@ -67,6 +67,8 @@ READ_ONLY = ToolAnnotations(
 )
 # Hosted ceiling on rows per response (SPEC.md); the CLI allows up to 100.
 MAX_ROWS = 25
+# Matches `pwc search --mode`; app.py counts omitted modes with this value.
+DEFAULT_SEARCH_MODE = "hybrid"
 # CLI lookup failures the caller can act on (an unknown or ambiguous name, an
 # unconfirmed filter). Transport, HTTP, and response-shape failures stay generic.
 CLIENT_FACING_ERRORS = (
@@ -382,14 +384,14 @@ def build_server(
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def search_papers(
         query: Query,
-        mode: Literal["hybrid", "keyword", "semantic"] = "keyword",
+        mode: Literal["hybrid", "keyword", "semantic"] = DEFAULT_SEARCH_MODE,
         page: Page = 1,
         limit: Limit = 10,
         published_after: IsoDate | None = None,
         published_before: IsoDate | None = None,
         has_official_implementation: bool = False,
     ) -> PaperPage:
-        """Search papers by title, topic, author, or arXiv ID (`pwc search`). Broad discovery only: for best, top, or state-of-the-art model questions start with get_task, list_benchmarks, and get_benchmark, which return leaderboard evidence that search cannot."""
+        """Search papers by title, topic, author, or arXiv ID (`pwc search`). Broad discovery only: for best, top, or state-of-the-art model questions start with get_task, list_benchmarks, and get_benchmark, which return leaderboard evidence that search cannot. Mode defaults to hybrid like `pwc search`; use keyword for exact terminology or to stay under the semantic search rate limit."""
         _validate_date_range(published_after, published_before)
         result = _paper_page(
             run(
