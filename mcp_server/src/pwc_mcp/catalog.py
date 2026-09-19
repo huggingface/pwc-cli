@@ -272,6 +272,34 @@ class CatalogClient:
             return candidate
         query = candidate.replace("-", " ") if slug_from_url else candidate
         target = " ".join(candidate.split()).casefold()
+        # The keyword search treats a quoted query as one phrase, so an exact
+        # title comes back in a single small page even when its words are
+        # common ("Attention Is All You Need" has over a thousand keyword
+        # hits). The plain query remains the fallback for titles the phrase
+        # parser cannot express.
+        phrase = '"' + " ".join(query.replace('"', " ").split()) + '"'
+        exact, exhausted = self._exact_title_matches(phrase, target, slug_from_url)
+        if not exact:
+            exact, exhausted = self._exact_title_matches(query, target, slug_from_url)
+        if len(exact) == 1:
+            return next(iter(exact))
+        if exact:
+            choices = "; ".join(
+                f"{item.get('title')} ({paper})" for paper, item in exact.items()
+            )
+            raise ResponseError(f"Paper title is ambiguous: {candidate}; {choices}")
+        if not exhausted:
+            raise ResponseError("Too many results to resolve paper title safely")
+        raise ResponseError(f"Paper title not found: {candidate}")
+
+    def _exact_title_matches(
+        self, query: str, target: str, slug_from_url: str | None
+    ) -> tuple[dict[str, dict[str, Any]], bool]:
+        """Collect papers whose title (or slug) equals the target.
+
+        Returns the matches and whether the search was read to its end within
+        the page budget; an unexhausted search with no match is inconclusive.
+        """
         exact: dict[str, dict[str, Any]] = {}
         page = 1
         while page <= 10:
@@ -292,18 +320,9 @@ class CatalogClient:
                     exact.setdefault(paper, item)
             next_page = payload.get("next_page")
             if not isinstance(next_page, int) or next_page <= page:
-                break
+                return exact, True
             page = next_page
-        else:
-            raise ResponseError("Too many results to resolve paper title safely")
-        if len(exact) == 1:
-            return next(iter(exact))
-        if exact:
-            choices = "; ".join(
-                f"{item.get('title')} ({paper})" for paper, item in exact.items()
-            )
-            raise ResponseError(f"Paper title is ambiguous: {candidate}; {choices}")
-        raise ResponseError(f"Paper title not found: {candidate}")
+        return exact, False
 
     def _canonical_paper_id(self, catalog_id: str) -> str:
         """Prefer the arXiv ID for a numeric catalog ID so every route accepts it.
