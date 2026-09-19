@@ -210,6 +210,67 @@ def _closest_names(reference: str, items: list[dict[str, Any]], limit: int = 3) 
     return ", ".join(name for _score, _index, name in ranked[:limit])
 
 
+_TRAILING_PARENTHETICAL = re.compile(r"\s*\(([^()]*)\)\s*$")
+
+
+def _normalize_entity_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _without_abbreviation(name: str) -> str | None:
+    """Drop a trailing acronym such as "(MoE)" or "(ViT)", but not "(Video)".
+
+    The parenthetical counts as an abbreviation when it is short, starts with
+    the name's first letter, and its letters appear in order inside the name.
+    """
+    match = _TRAILING_PARENTHETICAL.search(name)
+    if match is None:
+        return None
+    stem = name[: match.start()]
+    abbreviation = _normalize_entity_name(match.group(1))
+    normalized_stem = _normalize_entity_name(stem)
+    if not abbreviation or len(abbreviation) > 8 or not normalized_stem:
+        return None
+    if abbreviation[0] != normalized_stem[0]:
+        return None
+    position = 0
+    for character in abbreviation:
+        position = normalized_stem.find(character, position)
+        if position < 0:
+            return None
+        position += 1
+    return stem
+
+
+def _normalized_entity_match(
+    reference: str, items: list[dict[str, Any]], fields: tuple[str, ...]
+) -> dict[str, Any] | None:
+    """Match one candidate on letters and digits alone.
+
+    Agents write "mixture of experts" for "Mixture-of-Experts (MoE)" and
+    "time-series forecasting" for "Time Series Forecasting"; punctuation,
+    spacing, and a trailing acronym must not turn those into lookup failures.
+    Only a unique match resolves; anything else keeps the exact-name error.
+    """
+    target = _normalize_entity_name(reference)
+    if len(target) < 3:
+        return None
+    matches: list[dict[str, Any]] = []
+    for item in items:
+        for field in fields:
+            value = str(item.get(field) or "")
+            if not value:
+                continue
+            forms = {_normalize_entity_name(value)}
+            stem = _without_abbreviation(value)
+            if stem is not None:
+                forms.add(_normalize_entity_name(stem))
+            if target in forms:
+                matches.append(item)
+                break
+    return matches[0] if len(matches) == 1 else None
+
+
 def _exact_entity_match(
     reference: str,
     items: list[dict[str, Any]],
@@ -222,6 +283,9 @@ def _exact_entity_match(
         for item in items:
             if str(item.get(field) or "").strip().casefold() == target:
                 return item
+    normalized = _normalized_entity_match(reference, items, fields)
+    if normalized is not None:
+        return normalized
     suggestions = _closest_names(reference, items)
     suffix = f"; closest results: {suggestions}" if suggestions else ""
     raise ResponseError(f"{label} not found: {reference}{suffix}")
@@ -945,11 +1009,12 @@ def task_list(args: argparse.Namespace, client: Client) -> int:
 
 def _task_match(name: str, items: list[dict[str, Any]]) -> dict[str, Any] | None:
     target = name.strip().casefold()
-    for field in ("name", "slug", "id"):
+    fields = ("name", "slug", "id")
+    for field in fields:
         for item in items:
             if str(item.get(field) or "").strip().casefold() == target:
                 return item
-    return None
+    return _normalized_entity_match(name, items, fields)
 
 
 def _task_reference(item: dict[str, Any], *, markdown: bool) -> str:
@@ -2084,14 +2149,29 @@ METRIC_ALIASES: dict[str, tuple[str, ...]] = {
     "auroc": ("auc", "rocauc"),
     "auc": ("auroc", "rocauc"),
     "rocauc": ("auc", "auroc"),
-    "f1": ("f1score",),
-    "f1score": ("f1",),
+    "f1": ("f1score", "fscore", "fmeasure"),
+    "f1score": ("f1", "fscore", "fmeasure"),
+    "fscore": ("f1", "f1score", "fmeasure"),
+    "fmeasure": ("f1", "f1score", "fscore"),
     "miou": ("meaniou", "iou"),
     "meaniou": ("miou", "iou"),
     "bleu": ("bleuscore",),
     "bleuscore": ("bleu",),
     "totalscore": ("total", "overall", "overallscore", "score"),
-    "score": ("totalscore", "overallscore"),
+    "score": ("totalscore", "overallscore", "overall"),
+    "overall": ("overallscore", "totalscore", "score", "total", "average"),
+    "overallscore": ("overall", "totalscore", "score"),
+    "pass1": ("passrate", "pass1accuracy", "accuracy", "successrate", "resolved"),
+    "passrate": ("pass1", "successrate", "accuracy"),
+    "successrate": ("passrate", "pass1", "success"),
+    "imagelevelauroc": ("detectionauroc", "imageauroc", "auroc", "iauroc"),
+    "pixellevelauroc": ("segmentationauroc", "pixelauroc", "pauroc"),
+    "wer": ("worderrorrate",),
+    "worderrorrate": ("wer",),
+    "cer": ("charactererrorrate",),
+    "charactererrorrate": ("cer",),
+    "em": ("exactmatch",),
+    "exactmatch": ("em",),
 }
 
 
@@ -2100,7 +2180,14 @@ def _normalize_metric_name(value: str) -> str:
 
 
 def _resolve_metric_name(requested: str, available: dict[str, str]) -> str | None:
-    """Map a requested metric onto the leaderboard's own name, or None."""
+    """Map a requested metric onto the leaderboard's own name, or None.
+
+    Resolution order: exact name, spelling ignoring case and punctuation,
+    common aliases, then the one leaderboard name containing the request or
+    an alias of it (or contained in the request): "Normalized Score" answers
+    "D4RL Normalized Score", "GenEval Score" answers "Overall" through the
+    "score" alias, "Detection AUROC" answers "image-level AUROC".
+    """
     key = requested.casefold()
     if key in available:
         return available[key]
@@ -2108,11 +2195,21 @@ def _resolve_metric_name(requested: str, available: dict[str, str]) -> str | Non
     by_normalized: dict[str, str] = {}
     for name in available.values():
         by_normalized.setdefault(_normalize_metric_name(name), name)
-    if normalized in by_normalized:
-        return by_normalized[normalized]
-    for alias in METRIC_ALIASES.get(normalized, ()):
-        if alias in by_normalized:
-            return by_normalized[alias]
+    spellings = (normalized, *METRIC_ALIASES.get(normalized, ()))
+    for spelling in spellings:
+        if spelling in by_normalized:
+            return by_normalized[spelling]
+    for spelling in spellings:
+        if len(spelling) < 2:
+            continue
+        containing = [
+            name
+            for candidate, name in by_normalized.items()
+            if len(candidate) >= 2
+            and (spelling in candidate or candidate in spelling)
+        ]
+        if len(containing) == 1:
+            return containing[0]
     return None
 
 

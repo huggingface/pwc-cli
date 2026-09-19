@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.2`" in skill
+    assert "Generated with `pwc v0.4.3`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2306,7 +2306,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.2\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.3\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -3034,3 +3034,74 @@ def test_metric_requests_resolve_through_case_and_common_aliases():
     )
     with pytest.raises(UsageError, match="unknown metric\\(s\\): latency; available metrics: FPS, mAP"):
         _select_metric_rows(rows, unknown)
+
+
+def test_metric_requests_resolve_by_containment_and_alias_containment():
+    from pwc_cli.cli import _resolve_metric_name
+
+    # Requests seen from chat agents against production leaderboards.
+    assert (
+        _resolve_metric_name("D4RL Normalized Score", {"normalized score": "Normalized Score"})
+        == "Normalized Score"
+    )
+    assert _resolve_metric_name("Overall", {"geneval score": "GenEval Score"}) == "GenEval Score"
+    assert _resolve_metric_name("Score", {"dpg-bench score": "DPG-Bench Score"}) == "DPG-Bench Score"
+    assert _resolve_metric_name("Pass@1", {"accuracy": "Accuracy"}) == "Accuracy"
+    assert _resolve_metric_name("Pass Rate", {"success rate": "Success Rate"}) == "Success Rate"
+    mvtec = {
+        "detection auroc": "Detection AUROC",
+        "segmentation auroc": "Segmentation AUROC",
+        "detection ap": "Detection AP",
+    }
+    assert _resolve_metric_name("image-level AUROC", mvtec) == "Detection AUROC"
+    assert _resolve_metric_name("pixel-level AUROC", mvtec) == "Segmentation AUROC"
+    # Ambiguous or unrelated requests still surface the leaderboard's names.
+    assert _resolve_metric_name("AUROC", mvtec) is None
+    assert (
+        _resolve_metric_name(
+            "F-score",
+            {"mean f1 (advanced)": "Mean F1 (Advanced)", "mean f1 (intermediate)": "Mean F1 (Intermediate)"},
+        )
+        is None
+    )
+    assert _resolve_metric_name("latency", {"map": "mAP"}) is None
+
+
+def test_entity_names_match_ignoring_punctuation_and_trailing_acronyms():
+    from pwc_cli.cli import _exact_entity_match, _task_match, _without_abbreviation
+
+    methods = [
+        {"name": "Mixture-of-Experts (MoE)", "slug": "moe"},
+        {"name": "Vision Transformer (ViT)", "slug": "vit"},
+    ]
+    assert _exact_entity_match("mixture of experts", methods, label="Method")["slug"] == "moe"
+    assert _exact_entity_match("vision transformer", methods, label="Method")["slug"] == "vit"
+    with pytest.raises(ResponseError, match="Method not found: experts"):
+        _exact_entity_match("experts", methods, label="Method")
+
+    tasks = [
+        {"name": "Time Series Forecasting", "slug": "time-series-forecasting"},
+        {"name": "Person Re-Identification (Video)", "slug": "person-re-identification-video"},
+        {"name": "Unsupervised Person Re-Identification", "slug": "unsupervised-person-re-identification"},
+    ]
+    assert _task_match("time-series forecasting", tasks)["slug"] == "time-series-forecasting"
+    # "(Video)" qualifies the task instead of abbreviating it, so the bare name
+    # must not silently pick the video variant.
+    assert _task_match("person re-identification", tasks) is None
+    # Two candidates that normalize alike stay unresolved.
+    assert (
+        _task_match(
+            "image-classification",
+            [{"name": "Image Classification"}, {"name": "Image, Classification"}],
+        )
+        is None
+    )
+
+    assert (
+        _without_abbreviation("Physics-Informed Neural Networks (PINNs)")
+        == "Physics-Informed Neural Networks"
+    )
+    assert _without_abbreviation("Aspect-Based Sentiment Analysis (ABSA)") == "Aspect-Based Sentiment Analysis"
+    assert _without_abbreviation("Person Re-Identification (Video)") is None
+    assert _without_abbreviation("MVTec AD (Unified Multi-Class)") is None
+    assert _without_abbreviation("Knowledge Distillation") is None

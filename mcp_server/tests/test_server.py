@@ -482,8 +482,46 @@ def test_read_paper_rejects_invalid_continuation_as_an_expected_error():
 
     assert result.is_error is True
     assert result.content[0].text == (
-        "Error executing tool read_paper: invalid continuation cursor"
+        "Error executing tool read_paper: invalid continuation cursor; pass the "
+        "next_cursor value from the previous read_paper result, or omit cursor to "
+        "start from the beginning"
     )
+
+
+class AliasedStubCatalog(StubCatalog):
+    """Resolves the numeric catalog ID and the arXiv ID to the same paper."""
+
+    def resolve_paper(self, paper: str):
+        self.resolve_calls += 1
+        return {"1706.03762": "1706.03762", "755": "1706.03762", "1810.04805": "1810.04805"}[paper]
+
+
+def test_read_paper_continues_with_another_reference_to_the_same_paper():
+    # Agents start from the arXiv ID and continue with the numeric ID that
+    # list tools hand out; the cursor must follow the paper, not the spelling.
+    catalog = AliasedStubCatalog()
+
+    async def exercise():
+        async with Client(build_server(catalog, read_chunk_bytes=5)) as client:
+            first = await client.call_tool("read_paper", {"paper": "1706.03762"})
+            cursor = first.structured_content["next_cursor"]
+            same = await client.call_tool("read_paper", {"paper": "755", "cursor": cursor})
+            other = await client.call_tool("read_paper", {"paper": "1810.04805", "cursor": cursor})
+        return first, same, other
+
+    first, same, other = asyncio.run(exercise())
+
+    assert first.structured_content["markdown"] == "abcde"
+    assert same.is_error is False
+    assert same.structured_content["paper"] == "755"
+    assert same.structured_content["markdown"] == "fgh"
+    assert same.structured_content["next_cursor"] is None
+    assert other.is_error is True
+    assert other.content[0].text == (
+        "Error executing tool read_paper: continuation cursor belongs to a different "
+        "paper; omit cursor to start reading this paper from the beginning"
+    )
+    assert catalog.read_calls == [(0, None, 5), (5, "a" * 64, 5)]
 
 
 def test_paper_listing_related_work_and_lineage_are_composable():

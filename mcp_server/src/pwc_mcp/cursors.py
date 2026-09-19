@@ -18,6 +18,21 @@ _CONTENT_VERSION = re.compile(r"[0-9a-f]{64}")
 _PAPER_ID = re.compile(r"(?:\d{4}\.\d{4,5}|\d{1,20})")
 
 
+class CursorReferenceMismatch(ValueError):
+    """A valid cursor whose paper reference differs from the one supplied.
+
+    The caller may still honour it when the new reference resolves to the
+    cursor's paper (an agent that started from an arXiv ID and continues with
+    the numeric catalog ID, say).
+    """
+
+    def __init__(self, state: CursorState) -> None:
+        super().__init__(
+            "invalid continuation cursor: it belongs to another paper reference"
+        )
+        self.state = state
+
+
 @dataclass(frozen=True)
 class CursorState:
     reference: str
@@ -129,15 +144,18 @@ class CursorCodec:
                     "kid",
                     "exp",
                 }
-                or state.reference != reference.strip()
                 or not self._valid_state(state)
             ):
                 raise ValueError
             if state.expires_at <= int(self._now()):
                 raise TimeoutError
+            if state.reference != reference.strip():
+                raise CursorReferenceMismatch(state)
             return state
         except TimeoutError as error:
             raise ValueError("expired continuation cursor") from error
+        except CursorReferenceMismatch:
+            raise
         except (
             ValueError,
             TypeError,
