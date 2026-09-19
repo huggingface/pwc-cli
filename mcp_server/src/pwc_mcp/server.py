@@ -32,6 +32,7 @@ from pwc_mcp.cursors import (
     CURSOR_LIFETIME_SECONDS,
     MAX_CHUNK_BYTES,
     CursorCodec,
+    CursorReferenceMismatch,
     CursorState,
 )
 from pwc_mcp.models import (
@@ -475,12 +476,28 @@ def build_server(
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def read_paper(paper: Reference, cursor: str | None = None) -> PaperReadResult:
-        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`)."""
+        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning."""
         reference = paper.strip()
         try:
             state = codec.decode(cursor, reference=reference) if cursor else None
+        except CursorReferenceMismatch as error:
+            # The agent continued with another spelling of the same paper, for
+            # example the numeric catalog ID after starting from the arXiv ID.
+            try:
+                canonical = catalog.resolve_paper(reference)
+            except (ResponseError, TransportError) as inner:
+                raise ToolError(catalog_error_message(inner)) from inner
+            if canonical != error.state.paper:
+                raise ToolError(
+                    "continuation cursor belongs to a different paper; omit cursor "
+                    "to start reading this paper from the beginning"
+                ) from error
+            state = error.state
         except ValueError as error:
-            raise ToolError(str(error)) from error
+            raise ToolError(
+                f"{error}; pass the next_cursor value from the previous read_paper "
+                "result, or omit cursor to start from the beginning"
+            ) from error
         if state is None:
             try:
                 canonical = catalog.resolve_paper(reference)
@@ -818,7 +835,7 @@ def build_server(
         sort_metric: SortMetric | None = None,
         pareto: ParetoObjectives | None = None,
     ) -> BenchmarkResult:
-        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit. Metric names are matched case-insensitively and through common aliases (AP/mAP, top1/Accuracy, AUROC/AUC); an unknown metric error lists the leaderboard's actual metric names."""
+        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit. Metric names are matched case-insensitively, through common aliases (AP/mAP, top1/Accuracy, AUROC/AUC, Pass@1/Pass Rate), and by the one leaderboard metric containing the request or an alias of it (Normalized Score for "D4RL Normalized Score", GenEval Score for "Overall"); an unknown metric error lists the leaderboard's actual metric names."""
         data = run(
             "get_benchmark",
             benchmark=benchmark,

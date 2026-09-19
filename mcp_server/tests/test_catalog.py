@@ -359,4 +359,68 @@ def test_catalog_reports_titles_missing_from_an_empty_search_as_not_found():
 
     with pytest.raises(ResponseError, match="Paper title not found: Dropout"):
         catalog.resolve_paper("Dropout: A Simple Way to Prevent Overfitting")
-    assert len(transport.calls) == 1
+    # One phrase query, then one plain keyword query as the fallback.
+    assert [params["q"] for _path, params in transport.calls] == [
+        '"Dropout: A Simple Way to Prevent Overfitting"',
+        "Dropout: A Simple Way to Prevent Overfitting",
+    ]
+
+
+EXACT_TITLE_ROW = {"id": "755", "arxiv_id": "1706.03762", "title": "Attention Is All You Need"}
+
+
+class TitleSearchTransport:
+    """Keyword search whose plain results never end; the phrase query is small."""
+
+    def __init__(self, *, phrase_results, plain_has_exact):
+        self.phrase_results = phrase_results
+        self.plain_has_exact = plain_has_exact
+        self.calls = []
+
+    def get(self, path, params=None):
+        params = dict(params or {})
+        self.calls.append((path, params))
+        assert path == "papers/search"
+        page = params["page"]
+        if params["q"].startswith('"'):
+            body = {"results": self.phrase_results, "next_page": None}
+        else:
+            rows = [
+                {"id": str(page * 100 + i), "arxiv_id": f"2{page:03d}.{i:05d}", "title": f"Attention {i}"}
+                for i in range(100)
+            ]
+            if self.plain_has_exact and page == 1:
+                rows[0] = EXACT_TITLE_ROW
+            body = {"results": rows, "next_page": page + 1}
+        return Response(json.dumps(body).encode(), {"content-type": "application/json"})
+
+
+def test_catalog_resolves_common_word_titles_through_one_phrase_query():
+    # "Attention Is All You Need" has over a thousand keyword hits; paging
+    # through them used to end in "Too many results" although the exact title
+    # was the first result.
+    transport = TitleSearchTransport(
+        phrase_results=[
+            EXACT_TITLE_ROW,
+            {"id": "9", "arxiv_id": "2010.13154", "title": "Attention is All You Need in Speech Separation"},
+        ],
+        plain_has_exact=True,
+    )
+    catalog = CatalogClient(transport=transport)
+
+    assert catalog.resolve_paper("Attention Is All You Need") == "1706.03762"
+    assert [params["q"] for _path, params in transport.calls] == ['"Attention Is All You Need"']
+
+
+def test_catalog_keeps_exact_matches_found_before_the_page_budget_runs_out():
+    transport = TitleSearchTransport(phrase_results=[], plain_has_exact=True)
+    catalog = CatalogClient(transport=transport)
+
+    assert catalog.resolve_paper("Attention Is All You Need") == "1706.03762"
+    assert len(transport.calls) == 11
+
+    inconclusive = CatalogClient(
+        transport=TitleSearchTransport(phrase_results=[], plain_has_exact=False)
+    )
+    with pytest.raises(ResponseError, match="Too many results"):
+        inconclusive.resolve_paper("Attention Is All You Need")

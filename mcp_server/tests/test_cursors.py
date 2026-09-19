@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from pwc_mcp.cursors import CursorCodec, CursorState
+from pwc_mcp.cursors import CursorCodec, CursorReferenceMismatch, CursorState
 
 
 def _state(*, expires_at: int = 4600) -> CursorState:
@@ -57,3 +57,17 @@ def test_cursor_rejects_oversized_or_invalid_state():
         codec.encode(_state(expires_at=1000))
     with pytest.raises(ValueError, match="cursor secret"):
         CursorCodec("")
+
+
+def test_cursor_for_another_reference_reports_the_mismatch_with_its_state():
+    codec = CursorCodec("current-secret", now=lambda: 1000)
+    token = codec.encode(_state())
+
+    with pytest.raises(CursorReferenceMismatch, match="invalid continuation cursor") as caught:
+        codec.decode(token, reference="755")
+    assert caught.value.state == _state()
+
+    # Tampering and expiry still win over the reference check.
+    expired = CursorCodec("current-secret", now=lambda: 5000)
+    with pytest.raises(ValueError, match="expired continuation cursor"):
+        expired.decode(token, reference="755")

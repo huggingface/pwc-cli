@@ -67,7 +67,8 @@ the caller controls hybrid (default), keyword, or semantic mode. `read_paper`
 fetches at most one 64 KiB catalog chunk per call and returns a signed, one-hour
 continuation cursor when more Markdown remains. Continuations stay pinned to
 the resolved paper and content version, so a changed paper fails with an
-explicit restart response.
+explicit restart response; any reference that resolves to the same paper (the
+numeric catalog ID after starting from the arXiv ID, say) may carry the cursor.
 
 ## Resources
 

@@ -65,8 +65,10 @@ Responses use stable, MCP-specific versioned structured outputs with a text
 fallback. `read_paper` performs one upstream read of at most 64 KiB per call and
 returns a signed opaque continuation cursor when more Markdown remains. The
 cursor binds the original reference, canonical paper, content version, byte
-offset, chunk limit, key identifier, and fixed one-hour expiry. The current and
-previous signing keys support rotation without accepting unsigned state.
+offset, chunk limit, key identifier, and fixed one-hour expiry. A continuation
+supplied with a different reference is honoured only when that reference
+resolves to the cursor's canonical paper. The current and previous signing keys
+support rotation without accepting unsigned state.
 
 Paper references accept arXiv IDs, numeric PwC external IDs, arXiv/Hugging
 Face/Papers With Code URLs, and exact titles. Ambiguous exact titles fail rather
