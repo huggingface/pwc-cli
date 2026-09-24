@@ -5,13 +5,15 @@ on:
     tags:
       - "pwc-cli-*"
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+
+permissions: {}
 
 jobs:
   build:
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +50,8 @@ jobs:
           path: dist/pwc-*
 
   release:
+    permissions:
+      contents: write
     needs: build
     runs-on: ubuntu-24.04
     steps:
