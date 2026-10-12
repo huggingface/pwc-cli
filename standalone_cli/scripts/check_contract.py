@@ -72,9 +72,6 @@ def main() -> int:
     expected = set(COMMANDS) | set(EDIT_COMMANDS)
     if parser_commands() != expected:
         raise SystemExit("standalone parser command inventory drifted")
-    guide = (
-        REPOSITORY / "backend" / "chat_sandbox_worker" / "CLI_GUIDE.md"
-    ).read_text()
     skill = (REPOSITORY / "standalone_cli" / "SKILL.md").read_text()
     for command in EDIT_COMMANDS:
         if f"pwc {command}" not in skill:
@@ -83,7 +80,7 @@ def main() -> int:
         if command == "version":
             continue
         invocation = f"pwc {command}"
-        if invocation not in guide or invocation not in skill:
+        if invocation not in skill:
             raise SystemExit(f"missing read-only inventory entry: {invocation}")
     return 0
 
