@@ -345,8 +345,10 @@ submit multiple scores without repeating model and benchmark details:
 ```
 
 Add `evaluation_id` alongside `section` to correct a row. Other supported
-sections are tasks, methods, repositories, project_pages, hf_artifacts, and
-source_url. Section replacements must retain unrelated entries. Evaluation
+sections are tasks, methods, repositories, project_pages, hf_artifacts,
+x_threads, and source_url. `x_threads` takes `{"x_threads": [post URLs]}` in
+display order (at most 10); link only posts in which the paper's authors or
+their organization introduce the paper. Section replacements must retain unrelated entries. Evaluation
 updates preserve omitted fields. Existing benchmark/metric definitions are
 required; evaluation deletion and rank overrides are excluded.
 

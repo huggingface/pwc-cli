@@ -588,6 +588,16 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
             print("\n## Hugging Face artifacts\n")
             for label, url in artifacts:
                 print(f"- **{label}:** {_clean(url)}")
+
+        threads = [
+            thread for thread in payload.get("x_threads") or [] if thread.get("url")
+        ]
+        if threads:
+            print("\n## X threads\n")
+            for thread in threads:
+                author = _clean(thread.get("author_name") or "")
+                handle = _clean(thread.get("author_handle") or "")
+                print(f"- **{author} (@{handle}):** {_clean(thread['url'])}")
     return 0
 
 
