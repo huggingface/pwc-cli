@@ -60,6 +60,12 @@ class RepositoryReference(OutputModel):
     is_official: bool
 
 
+class XThreadReference(OutputModel):
+    url: str
+    author: str
+    handle: str
+
+
 class PaperDetail(OutputModel):
     id: str
     arxiv_id: str | None = None
@@ -78,6 +84,7 @@ class PaperDetail(OutputModel):
     hf_models: list[str] = []
     hf_datasets: list[str] = []
     hf_spaces: list[str] = []
+    x_threads: list[XThreadReference] = []
 
 
 class PaperEvaluation(OutputModel):
@@ -328,6 +335,17 @@ def paper_detail(
         if include_resources
         else [],
         hf_spaces=_urls(item.get("hf_spaces"))[:repo_limit]
+        if include_resources
+        else [],
+        x_threads=[
+            XThreadReference(
+                url=str(thread["url"]),
+                author=str(thread.get("author_name") or ""),
+                handle=str(thread.get("author_handle") or ""),
+            )
+            for thread in item.get("x_threads") or []
+            if isinstance(thread, dict) and thread.get("url")
+        ][:repo_limit]
         if include_resources
         else [],
     )

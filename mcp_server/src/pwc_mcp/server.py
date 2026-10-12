@@ -419,7 +419,7 @@ def build_server(
         repo_limit: ResourceLimit = 5,
         include_evaluations: bool = False,
     ) -> PaperInfoResult:
-        """Get compact paper metadata and official-first code. Set include_resources for additional repositories/Hugging Face artifacts, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`)."""
+        """Get compact paper metadata and official-first code. Set include_resources for additional repositories, project pages, Hugging Face artifacts, and author X threads introducing the paper, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`)."""
         data = run(
             "get_paper_info",
             paper=paper,

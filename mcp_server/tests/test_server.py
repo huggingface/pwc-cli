@@ -7,6 +7,7 @@ from mcp.client import Client
 from pwc_cli.cli import UsageError
 from pwc_cli.transport import HTTPStatusError, ResponseError
 from pwc_mcp.catalog import PaperMarkdownChunk
+from pwc_mcp.models import paper_detail
 from pwc_mcp.server import TOOL_COMMANDS, build_server
 
 PAPER_ROW = {
@@ -873,3 +874,28 @@ def test_read_paper_names_an_identity_mismatch_instead_of_a_generic_failure():
     assert result.content[0].text == (
         "Error executing tool read_paper: paper changed; restart reading from the beginning"
     )
+
+
+def test_paper_detail_includes_x_threads_only_with_resources():
+    item = {
+        **PAPER_INFO,
+        "x_threads": [
+            {
+                "url": "https://x.com/author/status/123",
+                "author_name": "Ada Author",
+                "author_handle": "author",
+                "text": "Introducing our paper",
+            },
+            {"author_name": "No URL"},
+        ],
+    }
+
+    threads = paper_detail(item, include_resources=True, repo_limit=5).x_threads
+    assert [thread.model_dump() for thread in threads] == [
+        {
+            "url": "https://x.com/author/status/123",
+            "author": "Ada Author",
+            "handle": "author",
+        }
+    ]
+    assert paper_detail(item, include_resources=False, repo_limit=5).x_threads == []
