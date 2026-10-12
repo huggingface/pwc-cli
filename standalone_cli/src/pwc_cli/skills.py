@@ -251,8 +251,12 @@ Use this workflow only when the user requests edits. Research commands remain an
    and tags. Omitted sections stay unchanged. Allowed sections and payload keys:
    tasks/task_ids, methods/method_ids, repositories/repositories,
    project_pages/project_pages, hf_artifacts/hf_models+hf_datasets+hf_spaces,
-   source_url/source_url (external papers only), and evaluations.
-   Repository/project-page entries contain url and is_official.
+   x_threads/x_threads, source_url/source_url (external papers only), and
+   evaluations. Repository/project-page entries contain url and is_official.
+   x_threads is a list of x.com or twitter.com post URLs in display order (at
+   most 10). Link only posts in which the paper's authors or their organization
+   introduce the paper, never outside accounts; the server captures each post's
+   preview and rejects deleted or protected posts.
 4. For evaluations, an operation without evaluation_id creates a row. Include
    task_id, dataset_id, metrics (a dictionary of existing metric names to scores),
    model_name, and the evaluation setup where available. One row can contain

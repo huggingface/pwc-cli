@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.3`" in skill
+    assert "Generated with `pwc v0.4.4`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -107,6 +107,13 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     assert "`pwc skills add" in skill
     assert "Publication date ranges are inclusive" in skill
     assert "must not be later than `--end-date`" in skill
+
+
+def test_published_skill_documents_x_thread_edits():
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "x_threads/x_threads" in skill
+    assert "authors or their organization" in skill
 
 
 def test_published_skill_advertises_inclusive_date_ranges():
@@ -2306,7 +2313,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.3\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.4\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -2620,6 +2627,13 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
         "hf_models": ["https://huggingface.co/example/model"],
         "hf_datasets": ["https://huggingface.co/datasets/example/data"],
         "hf_spaces": ["https://huggingface.co/spaces/example/demo"],
+        "x_threads": [
+            {
+                "url": "https://x.com/author/status/123",
+                "author_name": "Ada Author",
+                "author_handle": "author",
+            }
+        ],
     }
 
     class Client:
@@ -2669,6 +2683,10 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
         "- **Model:** https://huggingface.co/example/model\n"
         "- **Dataset:** https://huggingface.co/datasets/example/data\n"
         "- **Space:** https://huggingface.co/spaces/example/demo\n"
+        "\n"
+        "## X threads\n"
+        "\n"
+        "- **Ada Author (@author):** https://x.com/author/status/123\n"
     )
 
 
