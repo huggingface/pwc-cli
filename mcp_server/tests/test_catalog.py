@@ -449,20 +449,41 @@ def test_catalog_resolves_a_unique_short_name_before_the_title_colon():
         ambiguous.resolve_paper("MuseTalk")
 
 
-def test_catalog_caches_public_paper_lookups_including_misses():
-    class CountingLookup:
+def test_catalog_reads_public_metadata_and_caches_lookups_including_misses():
+    from pwc_cli.transport import HTTPStatusError
+
+    class PublicTransport:
         def __init__(self):
             self.calls = []
 
-        def lookup(self, reference):
-            self.calls.append(reference)
-            return {"id": "2108.05103", "title": "Found"} if reference == "2108.05103" else None
+        def get(self, path, params=None):
+            self.calls.append(path)
+            if path == "papers/2610.18869/public-metadata":
+                return Response(
+                    json.dumps({"in_catalog": False, "title": "Found"}).encode(), {}
+                )
+            if path.startswith("papers/Down"):
+                raise HTTPStatusError(503, "unavailable")
+            if path.startswith("papers/Some"):
+                raise HTTPStatusError(400, "titles are not identifiers")
+            raise HTTPStatusError(404, "Paper not found")
 
-    lookup = CountingLookup()
-    catalog = CatalogClient(transport=StubTransport({}), public=lookup)
+    transport = PublicTransport()
+    catalog = CatalogClient(transport=transport)
 
-    assert catalog.public_paper(" 2108.05103 ")["title"] == "Found"
-    assert catalog.public_paper("2108.05103")["title"] == "Found"
-    assert catalog.public_paper("Unknown title") is None
-    assert catalog.public_paper("Unknown title") is None
-    assert lookup.calls == ["2108.05103", "Unknown title"]
+    assert catalog.public_paper(" 2610.18869 ")["title"] == "Found"
+    assert catalog.public_paper("2610.18869")["title"] == "Found"
+    assert catalog.public_paper("10.1/x y") is None
+    assert catalog.public_paper("10.1/x y") is None
+    assert catalog.public_paper("Some Title") is None
+    assert catalog.public_paper("Some Title") is None
+    # Upstream failures are best effort and not cached as misses.
+    assert catalog.public_paper("Down") is None
+    assert catalog.public_paper("Down") is None
+    assert transport.calls == [
+        "papers/2610.18869/public-metadata",
+        "papers/10.1/x%20y/public-metadata",
+        "papers/Some%20Title/public-metadata",
+        "papers/Down/public-metadata",
+        "papers/Down/public-metadata",
+    ]

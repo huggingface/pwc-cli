@@ -73,10 +73,12 @@ support rotation without accepting unsigned state.
 Paper references accept arXiv IDs, numeric PwC external IDs, arXiv/Hugging
 Face/Papers With Code URLs, exact titles, and the unique short name before a
 title's colon. Ambiguous exact titles fail rather than selecting one result.
-A reference the catalog does not hold falls back to public metadata (Hugging
-Face Papers, the arXiv abstract page or API, Crossref for DOIs), cached for an
-hour including misses, and marked `in_catalog: false`; full text is never
-fetched from outside the catalog.
+A reference the catalog does not hold falls back to the public API's
+`papers/{reference}/public-metadata` endpoint (Hugging Face Papers, arXiv, or
+Crossref metadata with labelled `available_at` links), cached for an hour
+including misses, and marked `in_catalog: false`; full text is never fetched
+from outside the catalog. The endpoint does not take titles. A reference it maps
+to a catalog paper is retried with that paper's arXiv or catalog ID.
 
 Paper evaluations and benchmark leaderboards paginate. Leaderboards merge equivalent model rows across
 task scopes while retaining scoped ranks, protocol, split, shots, source,

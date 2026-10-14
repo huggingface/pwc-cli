@@ -676,6 +676,83 @@ def paper_read(args: argparse.Namespace, client: Client) -> int:
     return 0
 
 
+def _is_missing_paper(error: Exception) -> bool:
+    if isinstance(error, HTTPStatusError):
+        return error.status == 404
+    return isinstance(error, ResponseError) and str(error).startswith(
+        "Paper title not found"
+    )
+
+
+def _public_paper(reference: str, client: Client) -> dict[str, Any] | None:
+    """The public-metadata API's record for a reference, or None (best effort)."""
+    try:
+        payload = client.get(
+            f"papers/{quote(reference.strip(), safe='/:')}/public-metadata"
+        ).json()
+    except (TransportError, ResponseError):
+        return None
+    return payload if isinstance(payload, dict) and payload.get("title") else None
+
+
+def _print_public_paper(record: dict[str, Any]) -> None:
+    links = [
+        link
+        for link in record.get("available_at") or []
+        if isinstance(link, dict) and link.get("url")
+    ]
+    lines = [
+        "Not indexed on Papers With Code — available at:"
+        if links
+        else "Not indexed on Papers With Code."
+    ]
+    lines.extend(
+        f"- {_clean(link.get('label') or link.get('kind') or 'Link')}: "
+        f"{_clean(link['url'])}"
+        for link in links
+    )
+    lines.append("")
+    for label, value in (
+        ("title", record.get("title")),
+        ("published", record.get("published")),
+        ("authors", ", ".join(str(name) for name in record.get("authors") or [])),
+        ("metadata_source", record.get("metadata_source")),
+    ):
+        if value:
+            lines.append(f"{label}: {_clean(value)}")
+    if record.get("abstract"):
+        lines.extend(["", "## Abstract", "", str(record["abstract"]).strip()])
+    print("\n".join(lines) + "\n", file=sys.stderr)
+
+
+def _with_public_metadata(args: argparse.Namespace, client: Client) -> int:
+    """Run ``paper info`` or ``paper read``, explaining papers outside the catalog.
+
+    The error and exit status of a miss stay unchanged for scripts; stderr adds
+    the public-metadata API's record and where the paper is available. A
+    reference the API resolves to a catalog paper (an arXiv or Hugging Face
+    URL, say) is retried with its arXiv or catalog ID. Embedders calling the handlers directly (the MCP server)
+    get the plain error and run their own fallback.
+    """
+    try:
+        return args.handler(args, client)
+    except (HTTPStatusError, ResponseError) as error:
+        if not _is_missing_paper(error):
+            raise
+        record = _public_paper(args.paper, client)
+        if record is None:
+            raise
+        # Markdown reads key arXiv papers by arXiv ID, not the numeric ID.
+        catalog_id = str(record.get("arxiv_id") or record.get("catalog_id") or "")
+        if record.get("in_catalog") is not True:
+            _print_public_paper(record)
+            raise
+        if not catalog_id.strip() or catalog_id.strip() == args.paper.strip():
+            raise
+    args.paper = catalog_id.strip()
+    return args.handler(args, client)
+
+
 def paper_list(args: argparse.Namespace, client: Client) -> int:
     _validate_date_range(args)
     if len(args.author) > 10:
@@ -3004,6 +3081,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.handler in (paper_info, paper_read):
+            return _with_public_metadata(args, Client())
         return args.handler(args, Client())
     except TransportError as error:
         print(f"pwc: {error}", file=sys.stderr)

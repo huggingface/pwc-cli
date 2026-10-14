@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.5`" in skill
+    assert "Generated with `pwc v0.4.6`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2313,7 +2313,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.5\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.6\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -3143,3 +3143,150 @@ def test_entity_names_match_ignoring_punctuation_and_trailing_acronyms():
     assert _without_abbreviation("Person Re-Identification (Video)") is None
     assert _without_abbreviation("MVTec AD (Unified Multi-Class)") is None
     assert _without_abbreviation("Knowledge Distillation") is None
+
+
+PUBLIC_METADATA = {
+    "in_catalog": False,
+    "catalog_id": None,
+    "catalog_url": None,
+    "metadata_source": "huggingface",
+    "note": "Not indexed on Papers With Code.",
+    "id": "2610.18869",
+    "arxiv_id": "2610.18869",
+    "doi": None,
+    "title": "A Paper Outside The Catalog",
+    "authors": ["Ada Lovelace", "Alan Turing"],
+    "abstract": "An abstract.",
+    "published": "2026-10-12",
+    "url": "https://arxiv.org/abs/2610.18869",
+    "pdf_url": "https://arxiv.org/pdf/2610.18869",
+    "hf_url": "https://huggingface.co/papers/2610.18869",
+    "repositories": [],
+    "project_pages": [],
+    "available_at": [
+        {"label": "arXiv", "url": "https://arxiv.org/abs/2610.18869", "kind": "abstract"},
+        {"label": "Hugging Face Papers", "url": "https://huggingface.co/papers/2610.18869", "kind": "huggingface"},
+    ],
+}
+
+
+def _outside_catalog_client(public):
+    paths = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            paths.append(path)
+            if path.endswith("/public-metadata"):
+                if path in public:
+                    return Response(json.dumps(public[path]).encode(), {})
+                raise HTTPStatusError(404, '{"detail":"Paper not found"}')
+            if path in {"papers/1706.03762", "research/papers/1706.03762/read"}:
+                if path.endswith("/read"):
+                    return Response(b"# Attention\n", {})
+                return Response(
+                    json.dumps({"id": "755", "title": "Attention Is All You Need"}).encode(),
+                    {},
+                )
+            if path == "papers/search":
+                return Response(json.dumps({"results": []}).encode(), {})
+            raise HTTPStatusError(404, '{"detail":"Paper not found"}')
+
+    return Client, paths
+
+
+@pytest.mark.parametrize("command", ["info", "read"])
+@pytest.mark.parametrize("json_flag", [[], ["--json"]])
+def test_paper_outside_the_catalog_shows_where_it_is_available(
+    monkeypatch, command, json_flag
+):
+    Client, paths = _outside_catalog_client(
+        {"papers/2610.18869/public-metadata": PUBLIC_METADATA}
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output, errors = io.StringIO(), io.StringIO()
+    with redirect_stdout(output), redirect_stderr(errors):
+        # The exit status and stdout of a miss are unchanged for scripts.
+        assert main(["paper", command, "2610.18869", *json_flag]) == 3
+
+    assert output.getvalue() == ""
+    assert errors.getvalue() == (
+        "Not indexed on Papers With Code — available at:\n"
+        "- arXiv: https://arxiv.org/abs/2610.18869\n"
+        "- Hugging Face Papers: https://huggingface.co/papers/2610.18869\n"
+        "\n"
+        "title: A Paper Outside The Catalog\n"
+        "published: 2026-10-12\n"
+        "authors: Ada Lovelace, Alan Turing\n"
+        "metadata_source: huggingface\n"
+        "\n"
+        "## Abstract\n"
+        "\n"
+        "An abstract.\n"
+        "\n"
+        'pwc: API request failed (404): {"detail":"Paper not found"}\n'
+    )
+    assert paths[-1] == "papers/2610.18869/public-metadata"
+
+
+def test_paper_title_outside_the_catalog_keeps_its_exit_status(monkeypatch):
+    path = "papers/Some%20Unindexed%20Title/public-metadata"
+    Client, _paths = _outside_catalog_client({path: PUBLIC_METADATA})
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    errors = io.StringIO()
+    with redirect_stdout(io.StringIO()), redirect_stderr(errors):
+        assert main(["paper", "info", "Some Unindexed Title"]) == 4
+
+    assert errors.getvalue().startswith("Not indexed on Papers With Code — available at:\n")
+    assert errors.getvalue().endswith(
+        "pwc: Paper title not found: Some Unindexed Title\n"
+    )
+
+
+def test_paper_unknown_everywhere_keeps_the_plain_error(monkeypatch):
+    Client, paths = _outside_catalog_client({})
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    errors = io.StringIO()
+    with redirect_stdout(io.StringIO()), redirect_stderr(errors):
+        assert main(["paper", "info", "2610.99999"]) == 3
+
+    assert errors.getvalue() == (
+        'pwc: API request failed (404): {"detail":"Paper not found"}\n'
+    )
+    assert paths == ["papers/2610.99999", "papers/2610.99999/public-metadata"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [("info", "title: Attention Is All You Need\n"), ("read", "# Attention\n")],
+)
+def test_paper_reference_the_api_finds_in_the_catalog_is_retried(
+    monkeypatch, command, expected
+):
+    # The CLI resolves only IDs and titles; the API also maps arXiv URLs.
+    url = "https://arxiv.org/abs/1706.03762v7"
+    record = {**PUBLIC_METADATA, "in_catalog": True, "catalog_id": "755",
+              "arxiv_id": "1706.03762"}
+    Client, _paths = _outside_catalog_client(
+        {f"papers/{url}/public-metadata": record}
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output, errors = io.StringIO(), io.StringIO()
+    with redirect_stdout(output), redirect_stderr(errors):
+        assert main(["paper", command, url]) == 0
+
+    assert expected in output.getvalue()
+    assert errors.getvalue() == ""
+
+
+def test_embedded_paper_queries_do_not_call_the_public_metadata_api():
+    from pwc_cli.queries import query
+
+    Client, paths = _outside_catalog_client(
+        {"papers/2610.18869/public-metadata": PUBLIC_METADATA}
+    )
+    with pytest.raises(HTTPStatusError):
+        query(("paper", "info"), {"paper": "2610.18869"}, Client())
+    assert not any(path.endswith("/public-metadata") for path in paths)

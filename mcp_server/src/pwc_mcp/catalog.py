@@ -10,9 +10,13 @@ from typing import Any, Protocol
 from urllib.parse import quote, urlparse
 
 from pwc_cli import queries
-from pwc_cli.transport import Client, HTTPStatusError, Response, ResponseError
-
-from pwc_mcp.external import PublicPaperLookup, normalize_title, short_name
+from pwc_cli.transport import (
+    Client,
+    HTTPStatusError,
+    Response,
+    ResponseError,
+    TransportError,
+)
 
 PAPER_ID = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z][a-z0-9.-]*/\d{7}|\d+)", re.IGNORECASE)
 ARXIV_VERSION = re.compile(r"v\d+$", re.IGNORECASE)
@@ -75,6 +79,15 @@ def _freeze(value: object) -> object:
         return tuple(_freeze(item) for item in value)
     return value
 
+
+def normalize_title(value: object) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(value or "").casefold()))
+
+
+def short_name(title: object) -> str:
+    """The name before a title's colon: "MuseTalk" for "MuseTalk: Real-Time ..."."""
+    text = str(title or "")
+    return normalize_title(text.split(":", 1)[0]) if ":" in text else ""
 
 class _TTLCache:
     def __init__(self, maximum: int = 256):
@@ -150,13 +163,8 @@ class _MarkdownChunkCache:
 class CatalogClient:
     """Typed, cached catalog operations shared by every MCP tool."""
 
-    def __init__(
-        self,
-        transport: Transport | None = None,
-        public: PublicPaperLookup | None = None,
-    ):
+    def __init__(self, transport: Transport | None = None):
         self.transport = transport or Client(timeout=25)
-        self.public = public or PublicPaperLookup()
         self.cache = _TTLCache()
         self.markdown_cache = _MarkdownChunkCache()
 
@@ -374,13 +382,31 @@ class CatalogClient:
         return self._resolve_paper(paper)
 
     def public_paper(self, reference: str) -> dict[str, Any] | None:
-        """Public arXiv, Hugging Face, or Crossref metadata for a catalog miss."""
+        """The public-metadata API's record for a catalog miss, or None.
+
+        The API resolves an arXiv ID or URL, Hugging Face paper URL, DOI, or
+        catalog ID against the catalog first, then Hugging Face Papers, arXiv,
+        or Crossref; titles are rejected (400). Lookups are best effort: any
+        failure yields None so the caller keeps its original not-found error.
+        """
         key = ("public-paper", reference.strip())
         cached = self.cache.get(key)
         if isinstance(cached, dict):
             return cached or None
-        value = self.public.lookup(reference.strip())
-        # An empty dict caches a miss so retries do not hit the sources again.
+        # The route takes the reference as a path, slashes included (DOIs, URLs).
+        path = f"papers/{quote(reference.strip(), safe='/:')}/public-metadata"
+        try:
+            value = self.transport.get(path).json()
+        except HTTPStatusError as error:
+            # 429 and 503 are transient; only unknown references are cached.
+            if error.status not in {400, 404}:
+                return None
+            value = None
+        except (ResponseError, TransportError):
+            return None
+        if not isinstance(value, dict) or not value.get("title"):
+            value = None
+        # An empty dict caches a miss so retries do not hit the API again.
         self.cache.put(key, value or {}, PUBLIC_PAPER_CACHE_SECONDS)
         return value
 
