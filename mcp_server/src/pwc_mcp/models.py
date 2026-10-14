@@ -44,6 +44,18 @@ class PaperSummary(OutputModel):
     code_repository_count: int
 
 
+class PaperLink(OutputModel):
+    label: str
+    url: str
+    kind: str | None = None
+
+
+AVAILABLE_AT = (
+    "Where a paper outside the catalog can be read (abstract page, PDF, Hugging "
+    "Face Papers, DOI, code); link to these, not to a Papers With Code paper page."
+)
+
+
 class PaperPage(QueryResult):
     items: list[PaperSummary]
     next_page: int | None = None
@@ -51,6 +63,7 @@ class PaperPage(QueryResult):
         default=None,
         description="Set when the requested paper is not in the catalog and the items are a search fallback.",
     )
+    available_at: list[PaperLink] | None = Field(default=None, description=AVAILABLE_AT)
 
 
 class CatalogReference(OutputModel):
@@ -111,9 +124,10 @@ class PaperInfoResult(QueryResult):
     evaluations: list[PaperEvaluation] | None = None
     in_catalog: bool = Field(
         default=True,
-        description="False when the paper is not in the Papers With Code catalog and the metadata comes from public arXiv, Hugging Face Papers, or Crossref records.",
+        description="False when the paper is not indexed on Papers With Code; the metadata then comes from public Hugging Face Papers, arXiv, or Crossref records.",
     )
     note: str | None = None
+    available_at: list[PaperLink] | None = Field(default=None, description=AVAILABLE_AT)
 
 
 class PaperReadResult(OutputModel):
@@ -124,8 +138,9 @@ class PaperReadResult(OutputModel):
     next_cursor: str | None = None
     in_catalog: bool = Field(
         default=True,
-        description="False when the paper is not in the catalog; markdown then holds public metadata and the abstract, not the full text.",
+        description="False when the paper is not indexed on Papers With Code; markdown then holds public metadata and the abstract, not the full text.",
     )
+    available_at: list[PaperLink] | None = Field(default=None, description=AVAILABLE_AT)
 
 
 class PaperReference(OutputModel):
@@ -560,3 +575,11 @@ def public_paper_detail(item: dict[str, Any], *, repo_limit: int = 5) -> PaperDe
         repositories=repositories,
         project_pages=_urls(item.get("project_pages"))[:repo_limit],
     )
+
+
+def available_at(item: dict[str, Any]) -> list[PaperLink]:
+    return [
+        PaperLink(label=str(link["label"]), url=str(link["url"]), kind=_text(link.get("kind")))
+        for link in item.get("available_at") or []
+        if isinstance(link, dict) and link.get("label") and link.get("url")
+    ]

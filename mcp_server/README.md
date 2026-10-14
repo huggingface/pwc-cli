@@ -72,11 +72,13 @@ numeric catalog ID after starting from the arXiv ID, say) may carry the cursor.
 A placeholder cursor such as `"next"` with nothing saved reads from the
 beginning.
 
-Paper tools fall back to public metadata for papers the catalog does not hold:
-`get_paper_info` and `read_paper` return arXiv, Hugging Face Papers, or Crossref
-(DOI) metadata and the abstract with `in_catalog: false`, and
-`get_related_papers` returns a catalog search for the public title with a
-`note`. A DOI whose public title is in the catalog returns the catalog paper.
+Paper tools fall back to the public API's `public-metadata` endpoint for papers
+the catalog does not hold: `get_paper_info` and `read_paper` return Hugging Face
+Papers, arXiv, or Crossref (DOI) metadata and the abstract with
+`in_catalog: false`, a `note`, and labelled `available_at` links to cite instead
+of a Papers With Code page; `get_related_papers` returns a catalog search for the
+public title with the same `note` and links. A reference the endpoint maps to a
+catalog paper returns the catalog paper; titles are not looked up publicly.
 `get_benchmark` answers a metric the leaderboard does not report with the
 unfiltered leaderboard and a `metric_note` naming the available metrics.
 

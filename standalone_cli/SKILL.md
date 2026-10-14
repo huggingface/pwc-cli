@@ -3,7 +3,7 @@ name: pwc-cli
 description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, organizations, frameworks, and benchmark leaderboards, and submitting authenticated paper edits through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or `pwc-cli`."
 ---
 
-Generated with `pwc v0.4.5`. Run `pwc skills add --force` to regenerate.
+Generated with `pwc v0.4.6`. Run `pwc skills add --force` to regenerate.
 
 Research commands query the public [Papers With Code](https://paperswithcode.co) catalog anonymously.
 Paper editing requires explicit browser authorization through `pwc auth login --paper PAPER`.
@@ -38,6 +38,10 @@ excluded from constrained results.
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
 exact paper title. Quote titles containing spaces. Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs.
+When `pwc paper info` or `pwc paper read` names a paper Papers With Code has
+not indexed, stderr shows "Not indexed on Papers With Code — available at:"
+with public links and metadata before the usual not-found error; cite those
+links, not a Papers With Code page.
 
 ## Commands
 

@@ -4,7 +4,7 @@ description: "Papers With Code MCP tools for searching and reading AI/ML papers,
 compatibility: "Requires an MCP client connected to https://paperswithcode.co/mcp with the Papers With Code tools available."
 ---
 
-Generated for `pwc-mcp v0.2.6` and stock-client MCP protocol `2025-11-25`.
+Generated for `pwc-mcp v0.2.7` and stock-client MCP protocol `2025-11-25`.
 
 The tools query the public [Papers With Code](https://paperswithcode.co) catalog
 anonymously and are read-only. Every tool runs the matching `pwc` CLI research
@@ -46,10 +46,11 @@ leaderboard with a `metric_note` naming the available metrics.
 arXiv, Hugging Face, or Papers With Code URL, an exact paper title, or the
 short name before a title's colon ("MuseTalk"). Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs. When
-a paper is not in the catalog, `get_paper_info`, `read_paper`, and
-`get_related_papers` return public arXiv, Hugging Face Papers, or Crossref (for
-DOIs) metadata marked `in_catalog: false` or with a `note`; say so when citing
-it. Task, method, conference, organization, framework, and benchmark
+a paper is not indexed on Papers With Code, `get_paper_info`, `read_paper`, and
+`get_related_papers` return public Hugging Face Papers, arXiv, or Crossref (for
+DOIs) metadata marked `in_catalog: false` with a `note` and `available_at`
+links; say the paper is not indexed on Papers With Code and link to those
+sources, never to a Papers With Code paper page. Task, method, conference, organization, framework, and benchmark
 arguments take an exact name, slug, or ID.
 
 ## Tools

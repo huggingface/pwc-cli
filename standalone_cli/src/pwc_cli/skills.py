@@ -61,6 +61,10 @@ excluded from constrained results.
 `PAPER` accepts a modern or legacy arXiv ID, a numeric external-paper ID, or an
 exact paper title. Quote titles containing spaces. Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs.
+When `pwc paper info` or `pwc paper read` names a paper Papers With Code has
+not indexed, stderr shows "Not indexed on Papers With Code — available at:"
+with public links and metadata before the usual not-found error; cite those
+links, not a Papers With Code page.
 """
 
 _WORKFLOW = """

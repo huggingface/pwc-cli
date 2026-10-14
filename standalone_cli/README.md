@@ -28,6 +28,12 @@ pwc skills add
 
 Every `PAPER` argument accepts an arXiv ID, numeric external-paper ID, or quoted
 exact title. Title matching is case-insensitive and rejects ambiguity.
+When `pwc paper info` or `pwc paper read` names a paper Papers With Code has not
+indexed, stderr shows "Not indexed on Papers With Code — available at:" with its
+public links (arXiv, Hugging Face Papers, DOI, code) and metadata from the
+`papers/{reference}/public-metadata` API. Stdout and the not-found exit status
+are unchanged; an arXiv or Hugging Face URL the API maps to a catalog paper is
+read from the catalog.
 
 `pwc paper info PAPER --include-evals` fetches every evaluation associated with
 the resolved paper. Human-readable output adds an Evaluations Markdown table;

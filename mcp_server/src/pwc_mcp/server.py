@@ -28,7 +28,6 @@ from pydantic import BaseModel, Field
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import PaperMarkdownChunk, PaperVersionMismatchError
-from pwc_mcp.external import NOT_IN_CATALOG
 from pwc_mcp.cursors import (
     CURSOR_LIFETIME_SECONDS,
     MAX_CHUNK_BYTES,
@@ -50,6 +49,7 @@ from pwc_mcp.models import (
     QueryResult,
     TaskDetail,
     TaskResult,
+    available_at,
     benchmark_summary,
     catalog_reference,
     evaluation,
@@ -96,7 +96,8 @@ GENERIC_ERROR = "the Papers With Code catalog request failed"
 INVALID_ARGUMENT_STATUSES = frozenset({400, 422})
 MAX_UPSTREAM_DETAIL_CHARS = 200
 # Lookup failures meaning the paper itself is absent from the catalog; the
-# paper tools then fall back to public arXiv, Hugging Face, or Crossref records.
+# paper tools then fall back to the public-metadata API (Hugging Face Papers,
+# arXiv, or Crossref records with the places the paper is available).
 MISSING_PAPER_ERRORS = (
     "Paper not found",
     "Paper title not found",
@@ -107,6 +108,12 @@ MISSING_PAPER_ERRORS = (
 PLACEHOLDER_CURSORS = frozenset(
     {"next", "start", "begin", "beginning", "first", "0", "1", "none", "null"}
 )
+NOT_IN_CATALOG = "not indexed on Papers With Code"
+METADATA_SOURCES = {
+    "huggingface": "Hugging Face Papers",
+    "arxiv": "arXiv",
+    "crossref": "Crossref",
+}
 
 
 class PaperNotInCatalog(ToolError):
@@ -123,27 +130,37 @@ def _is_missing_paper(error: Exception) -> bool:
     )
 
 
+def _public_note(record: dict[str, Any]) -> str:
+    links = "; ".join(f"{link.label}: {link.url}" for link in available_at(record))
+    return (
+        f"This paper is {NOT_IN_CATALOG}, so there is no Papers With Code page, "
+        "catalog tasks, methods, evaluations, or curated code for it; metadata comes "
+        "from public "
+        f"{METADATA_SOURCES.get(str(record.get('metadata_source')), 'arXiv')} "
+        "records. "
+        + (
+            f"Link to where it is available instead: {links}."
+            if links
+            else "Do not link to a Papers With Code page for it."
+        )
+    )
+
+
 def _public_markdown(record: dict[str, Any]) -> str:
     lines = [
         f"# {record.get('title') or 'Untitled paper'}",
         "",
-        (
-            f"> This paper is {NOT_IN_CATALOG}. Full text is unavailable here; "
-            f"this is public {record.get('metadata_source') or 'arXiv'} metadata."
-        ),
+        f"> {_public_note(record)} Full text is unavailable here.",
         "",
     ]
     if record.get("authors"):
         lines.append(f"**Authors:** {', '.join(record['authors'])}")
     if record.get("published"):
         lines.append(f"**Published:** {record['published']}")
-    for label, key in (("Paper", "url"), ("PDF", "pdf_url"), ("Hugging Face", "hf_url")):
-        if record.get(key):
-            lines.append(f"**{label}:** {record[key]}")
-    for url in record.get("repositories") or []:
-        lines.append(f"**Code:** {url}")
-    for url in record.get("project_pages") or []:
-        lines.append(f"**Project page:** {url}")
+    links = available_at(record)
+    if links:
+        lines.extend(["", "## Available at", ""])
+        lines.extend(f"- [{link.label}]({link.url})" for link in links)
     if record.get("abstract"):
         lines.extend(["", "## Abstract", "", str(record["abstract"])])
     return "\n".join(lines) + "\n"
@@ -445,24 +462,47 @@ def build_server(
         record = catalog.public_paper(reference)
         if not record:
             raise ToolError(
-                f"{missing}; it is {NOT_IN_CATALOG} and no public arXiv or "
-                "Hugging Face Papers record matched it"
+                f"{missing}; it is {NOT_IN_CATALOG} and no public Hugging Face "
+                "Papers, arXiv, or Crossref record matched it"
             ) from missing
         return record
 
-    def catalog_retry(tool: str, reference: str, record: dict[str, Any], **parameters: Any) -> Any:
-        """Retry the catalog with the public record's arXiv ID or exact title.
+    def catalog_alternatives(reference: str, record: dict[str, Any]) -> list[str]:
+        """Catalog IDs the public-metadata API resolved a missed reference to.
 
-        A DOI or a mistyped title may name a paper the catalog holds under its
-        arXiv ID or canonical title.
+        An arXiv URL or versioned ID the catalog lookup missed may name a
+        catalog paper. The arXiv ID comes first: Markdown reads key arXiv papers
+        by it, not by the numeric catalog ID.
         """
-        for alternative in (record.get("arxiv_id"), record.get("title")):
-            if not alternative or str(alternative).strip() == reference.strip():
-                continue
+        if record.get("in_catalog") is not True:
+            return []
+        candidates = (record.get("arxiv_id"), record.get("catalog_id"))
+        return [
+            str(value).strip()
+            for value in candidates
+            if value and str(value).strip() != reference.strip()
+        ]
+
+    def catalog_retry(
+        tool: str,
+        reference: str,
+        record: dict[str, Any],
+        missing: ToolError,
+        **parameters: Any,
+    ) -> Any:
+        """Retry the catalog with the catalog ID the public-metadata API found.
+
+        Returns None for a paper outside the catalog; a cataloged paper that
+        still cannot be read keeps the original error rather than being
+        presented as outside the catalog.
+        """
+        for alternative in catalog_alternatives(reference, record):
             try:
                 return run(tool, paper=str(alternative), **parameters)
             except ToolError:
                 continue
+        if record.get("in_catalog") is True:
+            raise missing
         return None
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -502,7 +542,7 @@ def build_server(
         repo_limit: ResourceLimit = 5,
         include_evaluations: bool = False,
     ) -> PaperInfoResult:
-        """Get compact paper metadata and official-first code. Set include_resources for additional repositories, project pages, Hugging Face artifacts, and author X threads introducing the paper, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`). A paper outside the catalog returns public arXiv, Hugging Face Papers, or Crossref metadata with in_catalog=false."""
+        """Get compact paper metadata and official-first code. Set include_resources for additional repositories, project pages, Hugging Face artifacts, and author X threads introducing the paper, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`). A paper not indexed on Papers With Code returns public Hugging Face Papers, arXiv, or Crossref metadata with in_catalog=false, a note, and available_at links to cite instead of a Papers With Code page."""
         options = {
             # Fetch once so the compact default can retain official code while
             # omitting hundreds of community repositories from the response.
@@ -513,16 +553,16 @@ def build_server(
             data = run("get_paper_info", paper=paper, **options)
         except PaperNotInCatalog as missing:
             record = public_paper(paper, missing)
-            data = catalog_retry("get_paper_info", paper, record, **options)
+            data = catalog_retry("get_paper_info", paper, record, missing, **options)
             if data is None:
                 detail = public_paper_detail(record, repo_limit=repo_limit)
-                note = (
-                    f"This paper is {NOT_IN_CATALOG}; metadata comes from public "
-                    f"{record.get('metadata_source') or 'arXiv'} records, so it has "
-                    "no catalog tasks, methods, evaluations, or curated code."
-                )
+                note = _public_note(record)
                 result = PaperInfoResult(
-                    paper=detail, in_catalog=False, note=note, data=None
+                    paper=detail,
+                    in_catalog=False,
+                    note=note,
+                    available_at=available_at(record),
+                    data=None,
                 )
                 return _tool_result(result, f"## {detail.title}\n\n{note}")
         if not isinstance(data, dict):
@@ -573,7 +613,7 @@ def build_server(
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def read_paper(paper: Reference, cursor: str | None = None) -> PaperReadResult:
-        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning. A paper outside the catalog returns its public metadata and abstract with in_catalog=false."""
+        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning. A paper not indexed on Papers With Code returns its public metadata and abstract as Markdown with in_catalog=false and available_at links to cite instead of a Papers With Code page."""
         if cursor is not None and cursor.strip().casefold() in PLACEHOLDER_CURSORS:
             # Not a token: nothing was saved to continue from.
             cursor = None
@@ -668,27 +708,26 @@ def build_server(
     def public_read(
         reference: str, error: Exception, *, follow: bool
     ) -> PaperReadResult:
-        record = public_paper(
-            reference, PaperNotInCatalog(catalog_error_message(error))
-        )
-        # A DOI may name a catalog paper under its arXiv ID or title. The
-        # result names that reference, so continuation cursors match it.
-        for alternative in (record.get("arxiv_id"), record.get("title")):
-            alternative = str(alternative or "").strip()
-            if not follow or not alternative or alternative == reference:
-                continue
+        missing = PaperNotInCatalog(catalog_error_message(error))
+        record = public_paper(reference, missing)
+        # The public-metadata API may resolve the reference to a catalog paper.
+        # The result names that paper's ID, so continuation cursors match it.
+        for alternative in catalog_alternatives(reference, record) if follow else []:
             try:
                 result = read(alternative, None, follow_public=False)
             except ToolError:
                 continue
             if result.in_catalog:
                 return result
+        if record.get("in_catalog") is True:
+            raise missing
         return PaperReadResult(
             paper=reference,
             markdown=_public_markdown(record),
             truncated=False,
             next_cursor=None,
             in_catalog=False,
+            available_at=available_at(record),
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -759,12 +798,14 @@ def build_server(
     def get_related_papers(
         paper: Reference, limit: Annotated[int, Field(ge=1, le=20)] = 4
     ) -> PaperPage:
-        """Find catalog papers related to one paper (`pwc paper related`). A paper outside the catalog falls back to a catalog search for its public title, with a note."""
+        """Find catalog papers related to one paper (`pwc paper related`). A paper not indexed on Papers With Code falls back to a catalog search for its public title, with a note and available_at links for the paper itself."""
         try:
             return _paper_page(run("get_related_papers", paper=paper, limit=limit))
         except PaperNotInCatalog as missing:
             record = public_paper(paper, missing)
-        data = catalog_retry("get_related_papers", paper, record, limit=limit)
+            data = catalog_retry(
+                "get_related_papers", paper, record, missing, limit=limit
+            )
         if data is not None:
             return _paper_page(data)
         result = _paper_page(
@@ -778,8 +819,10 @@ def build_server(
         )
         result.note = (
             f"{record.get('title') or paper} is {NOT_IN_CATALOG}; these are catalog "
-            "search results for its title, not curated related papers."
+            "search results for its title, not curated related papers. Link to the "
+            "paper itself through available_at, not a Papers With Code page."
         )
+        result.available_at = available_at(record)
         return _tool_result(result, result.note)
 
     @server.tool(annotations=READ_ONLY, structured_output=True)

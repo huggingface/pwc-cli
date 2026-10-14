@@ -282,6 +282,7 @@ def test_search_papers_is_a_read_only_structured_tool():
         ],
         "next_page": 2,
         "note": None,
+        "available_at": None,
         "data": PAPER_PAGE,
     }
     assert catalog.queries == [
@@ -455,6 +456,7 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
         "truncated": False,
         "next_cursor": None,
         "in_catalog": True,
+        "available_at": None,
     }
     assert catalog.resolve_calls == 1
     assert catalog.read_calls == [(0, None, 5), (5, "a" * 64, 5)]
@@ -907,6 +909,10 @@ def test_paper_detail_includes_x_threads_only_with_resources():
 
 
 PUBLIC_PAPER = {
+    "in_catalog": False,
+    "catalog_id": None,
+    "catalog_url": None,
+    "note": "Not indexed on Papers With Code.",
     "id": "2309.06920",
     "arxiv_id": "2309.06920",
     "doi": None,
@@ -920,6 +926,11 @@ PUBLIC_PAPER = {
     "repositories": ["https://github.com/example/outside"],
     "project_pages": [],
     "metadata_source": "huggingface",
+    "available_at": [
+        {"label": "arXiv", "url": "https://arxiv.org/abs/2309.06920", "kind": "abstract"},
+        {"label": "PDF", "url": "https://arxiv.org/pdf/2309.06920", "kind": "pdf"},
+        {"label": "Code", "url": "https://github.com/example/outside", "kind": "code"},
+    ],
 }
 
 
@@ -969,8 +980,13 @@ def test_paper_tools_fall_back_to_public_metadata_outside_the_catalog():
 
     assert info.is_error is False
     assert info.structured_content["in_catalog"] is False
-    assert "not in the Papers With Code catalog" in info.structured_content["note"]
-    assert "not in the Papers With Code catalog" in info.content[0].text
+    note = info.structured_content["note"]
+    assert "not indexed on Papers With Code" in note
+    assert "no Papers With Code page" in note
+    assert "public Hugging Face Papers records" in note
+    assert "arXiv: https://arxiv.org/abs/2309.06920" in note
+    assert "not indexed on Papers With Code" in info.content[0].text
+    assert info.structured_content["available_at"] == PUBLIC_PAPER["available_at"]
     paper = info.structured_content["paper"]
     assert paper["title"] == "A Paper Outside The Catalog"
     assert paper["authors"] == ["Ada Lovelace"]
@@ -986,14 +1002,17 @@ def test_paper_tools_fall_back_to_public_metadata_outside_the_catalog():
     assert read.structured_content["in_catalog"] is False
     assert read.structured_content["truncated"] is False
     assert read.structured_content["next_cursor"] is None
+    assert read.structured_content["available_at"] == PUBLIC_PAPER["available_at"]
     markdown = read.structured_content["markdown"]
     assert markdown.startswith("# A Paper Outside The Catalog\n")
-    assert "not in the Papers With Code catalog" in markdown
-    assert "**Code:** https://github.com/example/outside" in markdown
+    assert "not indexed on Papers With Code" in markdown
+    assert "## Available at\n\n- [arXiv](https://arxiv.org/abs/2309.06920)" in markdown
+    assert "- [Code](https://github.com/example/outside)" in markdown
     assert markdown.endswith("An abstract.\n")
 
     assert related.is_error is False
-    assert "not in the Papers With Code catalog" in related.structured_content["note"]
+    assert "not indexed on Papers With Code" in related.structured_content["note"]
+    assert related.structured_content["available_at"] == PUBLIC_PAPER["available_at"]
     assert catalog.options(("search",)) == {
         "query": "A Paper Outside The Catalog",
         "mode": "hybrid",
@@ -1008,15 +1027,17 @@ def test_paper_misses_without_public_metadata_keep_an_explicit_not_found():
     assert info.is_error is True
     assert info.content[0].text == (
         "Error executing tool get_paper_info: not_found: the requested catalog record "
-        "does not exist; it is not in the Papers With Code catalog and no public arXiv "
-        "or Hugging Face Papers record matched it"
+        "does not exist; it is not indexed on Papers With Code and no public Hugging "
+        "Face Papers, arXiv, or Crossref record matched it"
     )
 
 
-def test_a_doi_whose_public_title_is_cataloged_returns_the_catalog_paper():
-    doi = "10.5555/attention"
-    record = {**PUBLIC_PAPER, "id": doi, "arxiv_id": None, "doi": doi,
-              "title": "Attention Is All You Need", "metadata_source": "crossref"}
+def test_a_reference_the_public_metadata_api_finds_in_the_catalog_returns_the_catalog_paper():
+    doi = "10.48550/arXiv.1706.03762"
+    record = {**PUBLIC_PAPER, "in_catalog": True, "catalog_id": "755",
+              "id": doi, "arxiv_id": "1706.03762", "doi": doi,
+              "title": "Attention Is All You Need",
+              "metadata_source": "paperswithcode"}
     catalog = OutsideCatalog(public={doi: record})
     info, read = _call(
         catalog,
@@ -1026,8 +1047,23 @@ def test_a_doi_whose_public_title_is_cataloged_returns_the_catalog_paper():
     assert info.structured_content["in_catalog"] is True
     assert info.structured_content["paper"]["arxiv_id"] == "1706.03762"
     assert read.structured_content["in_catalog"] is True
-    assert read.structured_content["paper"] == "Attention Is All You Need"
+    assert read.structured_content["paper"] == "1706.03762"
     assert read.structured_content["markdown"] == "abcdefgh"
+
+
+def test_a_cataloged_record_that_cannot_be_read_keeps_the_original_error():
+    # The API says the reference is cataloged, but the catalog ID still misses:
+    # never present a cataloged paper as outside the catalog.
+    doi = "10.5555/gone"
+    record = {**PUBLIC_PAPER, "in_catalog": True, "arxiv_id": "2108.05103",
+              "catalog_id": "99"}
+    (info, read) = _call(
+        OutsideCatalog(public={doi: record}),
+        [("get_paper_info", {"paper": doi}), ("read_paper", {"paper": doi})],
+    )
+
+    assert info.is_error is True and "not_found" in info.content[0].text
+    assert read.is_error is True
 
 
 def test_read_paper_treats_a_placeholder_cursor_as_the_beginning():
