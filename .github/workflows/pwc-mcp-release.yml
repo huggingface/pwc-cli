@@ -10,11 +10,13 @@ on:
     tags:
       - "pwc-mcp-*"
 
-permissions:
-  contents: read
+
+permissions: {}
 
 jobs:
   test:
+    permissions:
+      contents: read
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -55,6 +57,8 @@ jobs:
         run: docker build --file mcp_server/Dockerfile --tag pwc-mcp:${GITHUB_SHA} .
 
   deploy-space:
+    permissions:
+      contents: read
     if: startsWith(github.ref, 'refs/tags/pwc-mcp-')
     needs: test
     runs-on: ubuntu-24.04
