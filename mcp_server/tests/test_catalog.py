@@ -424,3 +424,45 @@ def test_catalog_keeps_exact_matches_found_before_the_page_budget_runs_out():
     )
     with pytest.raises(ResponseError, match="Too many results"):
         inconclusive.resolve_paper("Attention Is All You Need")
+
+
+def test_catalog_resolves_a_unique_short_name_before_the_title_colon():
+    # Production chat: get_paper_info("MuseTalk") failed although the catalog
+    # holds "MuseTalk: Real-Time High-Fidelity Video Dubbing ..." (2410.10122).
+    musetalk = {
+        "id": "90",
+        "arxiv_id": "2410.10122",
+        "title": "MuseTalk: Real-Time High-Fidelity Video Dubbing via Spatio-Temporal Sampling",
+    }
+    citing = {"id": "91", "arxiv_id": "2501.00001", "title": "Beyond MuseTalk: Faster Dubbing"}
+    transport = TitleSearchTransport(phrase_results=[musetalk, citing], plain_has_exact=False)
+    catalog = CatalogClient(transport=transport)
+
+    assert catalog.resolve_paper("MuseTalk") == "2410.10122"
+    assert catalog.resolve_paper("musetalk") == "2410.10122"
+
+    twins = [musetalk, {**musetalk, "id": "92", "arxiv_id": "2502.00002"}]
+    ambiguous = CatalogClient(
+        transport=TitleSearchTransport(phrase_results=twins, plain_has_exact=False)
+    )
+    with pytest.raises(ResponseError, match="Paper title is ambiguous: MuseTalk"):
+        ambiguous.resolve_paper("MuseTalk")
+
+
+def test_catalog_caches_public_paper_lookups_including_misses():
+    class CountingLookup:
+        def __init__(self):
+            self.calls = []
+
+        def lookup(self, reference):
+            self.calls.append(reference)
+            return {"id": "2108.05103", "title": "Found"} if reference == "2108.05103" else None
+
+    lookup = CountingLookup()
+    catalog = CatalogClient(transport=StubTransport({}), public=lookup)
+
+    assert catalog.public_paper(" 2108.05103 ")["title"] == "Found"
+    assert catalog.public_paper("2108.05103")["title"] == "Found"
+    assert catalog.public_paper("Unknown title") is None
+    assert catalog.public_paper("Unknown title") is None
+    assert lookup.calls == ["2108.05103", "Unknown title"]

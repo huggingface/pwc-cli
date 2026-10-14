@@ -71,8 +71,12 @@ resolves to the cursor's canonical paper. The current and previous signing keys
 support rotation without accepting unsigned state.
 
 Paper references accept arXiv IDs, numeric PwC external IDs, arXiv/Hugging
-Face/Papers With Code URLs, and exact titles. Ambiguous exact titles fail rather
-than selecting one result.
+Face/Papers With Code URLs, exact titles, and the unique short name before a
+title's colon. Ambiguous exact titles fail rather than selecting one result.
+A reference the catalog does not hold falls back to public metadata (Hugging
+Face Papers, the arXiv abstract page or API, Crossref for DOIs), cached for an
+hour including misses, and marked `in_catalog: false`; full text is never
+fetched from outside the catalog.
 
 Paper evaluations and benchmark leaderboards paginate. Leaderboards merge equivalent model rows across
 task scopes while retaining scoped ranks, protocol, split, shots, source,

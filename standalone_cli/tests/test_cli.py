@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.4`" in skill
+    assert "Generated with `pwc v0.4.5`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2313,7 +2313,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.4\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.5\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -3009,12 +3009,32 @@ def test_closest_results_rank_by_shared_words_not_search_order():
     ]
 
     assert _closest_names("person re-identification", candidates) == (
-        "Person Re-Identification (Video), "
-        "Unsupervised Person Re-Identification, "
-        "Spoken Language Identification"
+        "Person Re-Identification (Video), Unsupervised Person Re-Identification"
     )
     with pytest.raises(ResponseError, match="closest results: Person Re-Identification"):
         _exact_entity_match("person re-identification", candidates, label="Task")
+
+
+def test_closest_results_omit_unrelated_candidates():
+    from pwc_cli.cli import _closest_names, _exact_entity_match
+
+    # Production chat: "FaceNet" suggested WaveNet, and "person
+    # re-identification" suggested Spoken Language Identification.
+    assert _closest_names("FaceNet", [{"name": "WaveNet"}, {"name": "ResNet"}]) == ""
+    assert (
+        _closest_names(
+            "person re-identification",
+            [{"name": "Spoken Language Identification"}, {"name": "Face Recognition"}],
+        )
+        == ""
+    )
+    with pytest.raises(ResponseError) as error:
+        _exact_entity_match("FaceNet", [{"name": "WaveNet"}], label="Method")
+    assert str(error.value) == "Method not found: FaceNet"
+    # Near spellings and containment still produce a hint.
+    assert _closest_names("Transfomer", [{"name": "Transformer"}]) == "Transformer"
+    assert _closest_names("ViT", [{"name": "ViTDet"}]) == ""
+    assert _closest_names("Swin", [{"name": "Swin Transformer"}]) == "Swin Transformer"
 
 
 def test_metric_requests_resolve_through_case_and_common_aliases():

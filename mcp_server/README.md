@@ -69,6 +69,16 @@ continuation cursor when more Markdown remains. Continuations stay pinned to
 the resolved paper and content version, so a changed paper fails with an
 explicit restart response; any reference that resolves to the same paper (the
 numeric catalog ID after starting from the arXiv ID, say) may carry the cursor.
+A placeholder cursor such as `"next"` with nothing saved reads from the
+beginning.
+
+Paper tools fall back to public metadata for papers the catalog does not hold:
+`get_paper_info` and `read_paper` return arXiv, Hugging Face Papers, or Crossref
+(DOI) metadata and the abstract with `in_catalog: false`, and
+`get_related_papers` returns a catalog search for the public title with a
+`note`. A DOI whose public title is in the catalog returns the catalog paper.
+`get_benchmark` answers a metric the leaderboard does not report with the
+unfiltered leaderboard and a `metric_note` naming the available metrics.
 
 ## Resources
 
