@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import sys
@@ -187,25 +188,42 @@ def _name_tokens(value: object) -> frozenset[str]:
     return frozenset(re.findall(r"[a-z0-9]+", str(value or "").casefold()))
 
 
+def _is_close_name(reference: str, name: str) -> bool:
+    """Whether a candidate is a plausible hint for a failed lookup.
+
+    It must share at least half of the reference's words, contain or be
+    contained in it, or be a near spelling ("Transfomer"). One shared generic
+    word ("identification") or a shared suffix ("FaceNet" and "WaveNet") is
+    not enough.
+    """
+    target = _name_tokens(reference)
+    if target and len(target & _name_tokens(name)) * 2 >= len(target):
+        return True
+    left = re.sub(r"[^a-z0-9]+", "", reference.casefold())
+    right = re.sub(r"[^a-z0-9]+", "", name.casefold())
+    if len(left) >= 4 and len(right) >= 4 and (left in right or right in left):
+        return True
+    return difflib.SequenceMatcher(None, left, right).ratio() >= 0.8
+
+
 def _closest_names(reference: str, items: list[dict[str, Any]], limit: int = 3) -> str:
-    """Name the candidates sharing the most words with the reference.
+    """Name the close candidates sharing the most words with the reference.
 
     The search API ranks by its own relevance, which for short taxonomy names
     can put an unrelated entry first; word overlap with the reference keeps the
     hint useful ("person re-identification" suggests re-identification tasks,
-    not language identification).
+    not language identification). No hint beats a misleading one.
     """
     target = _name_tokens(reference)
     ranked = sorted(
         (
-            (
-                -len(target & _name_tokens(item.get("name") or item.get("slug"))),
-                index,
-                str(item.get("name") or item.get("slug")),
-            )
-            for index, item in enumerate(items)
-            if item.get("name") or item.get("slug")
-        ),
+            -len(target & _name_tokens(name)),
+            index,
+            name,
+        )
+        for index, item in enumerate(items)
+        if (name := str(item.get("name") or item.get("slug") or ""))
+        and _is_close_name(reference, name)
     )
     return ", ".join(name for _score, _index, name in ranked[:limit])
 

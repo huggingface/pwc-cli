@@ -47,6 +47,10 @@ class PaperSummary(OutputModel):
 class PaperPage(QueryResult):
     items: list[PaperSummary]
     next_page: int | None = None
+    note: str | None = Field(
+        default=None,
+        description="Set when the requested paper is not in the catalog and the items are a search fallback.",
+    )
 
 
 class CatalogReference(OutputModel):
@@ -105,6 +109,11 @@ class PaperInfoResult(QueryResult):
     paper: PaperDetail
     evaluation_count: int | None = None
     evaluations: list[PaperEvaluation] | None = None
+    in_catalog: bool = Field(
+        default=True,
+        description="False when the paper is not in the Papers With Code catalog and the metadata comes from public arXiv, Hugging Face Papers, or Crossref records.",
+    )
+    note: str | None = None
 
 
 class PaperReadResult(OutputModel):
@@ -113,6 +122,10 @@ class PaperReadResult(OutputModel):
     markdown: str
     truncated: bool
     next_cursor: str | None = None
+    in_catalog: bool = Field(
+        default=True,
+        description="False when the paper is not in the catalog; markdown then holds public metadata and the abstract, not the full text.",
+    )
 
 
 class PaperReference(OutputModel):
@@ -231,6 +244,10 @@ class BenchmarkResult(QueryResult):
     metric_directions: dict[str, Literal["higher", "lower", "unknown"]]
     page: int
     next_page: int | None = None
+    metric_note: str | None = Field(
+        default=None,
+        description="Set when a requested metric is not on this leaderboard; the rows are then unfiltered and the note lists the available metrics.",
+    )
     ranking_note: str = (
         "Ranks are scoped by task and are not necessarily comparable across "
         "rank_scopes."
@@ -516,3 +533,30 @@ def metric_directions(
         else:
             result[name] = "unknown"
     return result
+
+
+def public_paper_detail(item: dict[str, Any], *, repo_limit: int = 5) -> PaperDetail:
+    """Project public metadata for a paper outside the catalog.
+
+    Linked repositories come from Hugging Face Papers or the abstract, not
+    catalog curation, so none is marked official.
+    """
+    repositories = [
+        RepositoryReference(url=url, is_official=False)
+        for url in _urls(item.get("repositories"))
+    ][:repo_limit]
+    return PaperDetail(
+        id=str(item.get("id") or ""),
+        arxiv_id=_text(item.get("arxiv_id")),
+        title=str(item.get("title") or "Untitled paper"),
+        abstract=_text(item.get("abstract")),
+        authors=[str(author) for author in item.get("authors") or []],
+        published=_text(item.get("published")),
+        url=_text(item.get("url")),
+        pdf_url=_text(item.get("pdf_url")),
+        code_repository_count=len(repositories),
+        tasks=[],
+        methods=[],
+        repositories=repositories,
+        project_pages=_urls(item.get("project_pages"))[:repo_limit],
+    )

@@ -12,6 +12,8 @@ from urllib.parse import quote, urlparse
 from pwc_cli import queries
 from pwc_cli.transport import Client, HTTPStatusError, Response, ResponseError
 
+from pwc_mcp.external import PublicPaperLookup, normalize_title, short_name
+
 PAPER_ID = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z][a-z0-9.-]*/\d{7}|\d+)", re.IGNORECASE)
 ARXIV_VERSION = re.compile(r"v\d+$", re.IGNORECASE)
 CONTENT_VERSION = re.compile(r"[0-9a-f]{64}")
@@ -19,6 +21,7 @@ MARKDOWN_CHUNK_BYTES = 65_536
 MARKDOWN_CACHE_ENTRIES = 256
 MARKDOWN_CACHE_BYTES = 16 * 1024 * 1024
 MARKDOWN_CACHE_SECONDS = 3600
+PUBLIC_PAPER_CACHE_SECONDS = 3600
 # Search and paper listings change quickly; taxonomy is stable; the rest sits
 # between (SPEC.md: one minute, ten minutes, and five minutes respectively).
 VOLATILE_PATHS = frozenset(
@@ -147,8 +150,13 @@ class _MarkdownChunkCache:
 class CatalogClient:
     """Typed, cached catalog operations shared by every MCP tool."""
 
-    def __init__(self, transport: Transport | None = None):
+    def __init__(
+        self,
+        transport: Transport | None = None,
+        public: PublicPaperLookup | None = None,
+    ):
         self.transport = transport or Client(timeout=25)
+        self.public = public or PublicPaperLookup()
         self.cache = _TTLCache()
         self.markdown_cache = _MarkdownChunkCache()
 
@@ -278,9 +286,18 @@ class CatalogClient:
         # hits). The plain query remains the fallback for titles the phrase
         # parser cannot express.
         phrase = '"' + " ".join(query.replace('"', " ").split()) + '"'
-        exact, exhausted = self._exact_title_matches(phrase, target, slug_from_url)
+        exact, named, exhausted = self._exact_title_matches(
+            phrase, target, slug_from_url
+        )
         if not exact:
-            exact, exhausted = self._exact_title_matches(query, target, slug_from_url)
+            exact, more_named, exhausted = self._exact_title_matches(
+                query, target, slug_from_url
+            )
+            named = named or more_named
+        if not exact and not slug_from_url:
+            # Agents name a paper by the short name before its title's colon
+            # ("MuseTalk" for "MuseTalk: Real-Time ..."); a unique one resolves.
+            exact = named
         if len(exact) == 1:
             return next(iter(exact))
         if exact:
@@ -294,13 +311,16 @@ class CatalogClient:
 
     def _exact_title_matches(
         self, query: str, target: str, slug_from_url: str | None
-    ) -> tuple[dict[str, dict[str, Any]], bool]:
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], bool]:
         """Collect papers whose title (or slug) equals the target.
 
-        Returns the matches and whether the search was read to its end within
+        Returns the matches, the papers whose short name before a title colon
+        equals the target, and whether the search was read to its end within
         the page budget; an unexhausted search with no match is inconclusive.
         """
         exact: dict[str, dict[str, Any]] = {}
+        named: dict[str, dict[str, Any]] = {}
+        target_name = normalize_title(target)
         page = 1
         while page <= 10:
             payload = self._json(
@@ -318,11 +338,13 @@ class CatalogClient:
                     title == target or (slug_from_url and item_slug == slug_from_url)
                 ):
                     exact.setdefault(paper, item)
+                elif paper and target_name and short_name(item.get("title")) == target_name:
+                    named.setdefault(paper, item)
             next_page = payload.get("next_page")
             if not isinstance(next_page, int) or next_page <= page:
-                return exact, True
+                return exact, named, True
             page = next_page
-        return exact, False
+        return exact, named, False
 
     def _canonical_paper_id(self, catalog_id: str) -> str:
         """Prefer the arXiv ID for a numeric catalog ID so every route accepts it.
@@ -350,6 +372,17 @@ class CatalogClient:
 
     def resolve_paper(self, paper: str) -> str:
         return self._resolve_paper(paper)
+
+    def public_paper(self, reference: str) -> dict[str, Any] | None:
+        """Public arXiv, Hugging Face, or Crossref metadata for a catalog miss."""
+        key = ("public-paper", reference.strip())
+        cached = self.cache.get(key)
+        if isinstance(cached, dict):
+            return cached or None
+        value = self.public.lookup(reference.strip())
+        # An empty dict caches a miss so retries do not hit the sources again.
+        self.cache.put(key, value or {}, PUBLIC_PAPER_CACHE_SECONDS)
+        return value
 
     def read_paper_chunk(
         self,

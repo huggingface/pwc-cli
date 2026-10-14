@@ -4,7 +4,7 @@ description: "Papers With Code MCP tools for searching and reading AI/ML papers,
 compatibility: "Requires an MCP client connected to https://paperswithcode.co/mcp with the Papers With Code tools available."
 ---
 
-Generated for `pwc-mcp v0.2.5` and stock-client MCP protocol `2025-11-25`.
+Generated for `pwc-mcp v0.2.6` and stock-client MCP protocol `2025-11-25`.
 
 The tools query the public [Papers With Code](https://paperswithcode.co) catalog
 anonymously and are read-only. Every tool runs the matching `pwc` CLI research
@@ -39,12 +39,17 @@ inclusive parameter limit. It accepts values such as `"500M"`, `"1.5B"`, `"3B"`,
 and raw integers. Models without one consistent parameter count are excluded
 from constrained results. Combine `require_metrics`, `minimum_metrics`,
 `maximum_metrics`, `sort_metric`, and `pareto` to select leaderboard rows by
-metric; unknown metric names fail with the available metric names.
+metric; a metric the leaderboard does not report returns the unfiltered
+leaderboard with a `metric_note` naming the available metrics.
 
 `paper` accepts a modern or legacy arXiv ID, a numeric external-paper ID, an
-arXiv, Hugging Face, or Papers With Code URL, or an exact paper title. Title
-matching is case-insensitive but exact; ambiguous titles fail with their
-matching IDs. Task, method, conference, organization, framework, and benchmark
+arXiv, Hugging Face, or Papers With Code URL, an exact paper title, or the
+short name before a title's colon ("MuseTalk"). Title matching is
+case-insensitive but exact; ambiguous titles fail with their matching IDs. When
+a paper is not in the catalog, `get_paper_info`, `read_paper`, and
+`get_related_papers` return public arXiv, Hugging Face Papers, or Crossref (for
+DOIs) metadata marked `in_catalog: false` or with a `note`; say so when citing
+it. Task, method, conference, organization, framework, and benchmark
 arguments take an exact name, slug, or ID.
 
 ## Tools
@@ -52,7 +57,7 @@ arguments take an exact name, slug, or ID.
 - `search_papers({"query": QUERY, "mode": "hybrid"|"keyword"|"semantic", "page": PAGE, "limit": LIMIT, "published_after": START_DATE, "published_before": END_DATE, "has_official_implementation": BOOLEAN})` — search papers by title, topic, author, or arXiv ID (`pwc search`). Omit optional arguments when they are not needed.
 - `get_paper_info({"paper": PAPER, "include_resources": BOOLEAN, "repo_limit": LIMIT, "include_evaluations": BOOLEAN})` — show compact paper metadata, official-first code, and the total repository count; opt into capped additional resources (`pwc paper info`).
 - `get_paper_evaluations({"paper": PAPER, "page": PAGE, "limit": LIMIT})` — page through one paper's benchmark evaluations, including protocol, sources, openness, and task-scoped ranks (`pwc paper evaluations`).
-- `read_paper({"paper": PAPER, "cursor": CURSOR})` — read one stored paper Markdown chunk (`pwc paper read`). If `truncated` is true, call `read_paper` again with the same `paper` and the returned `next_cursor`; repeat until `truncated` is false. Treat the cursor as opaque and use it within one hour.
+- `read_paper({"paper": PAPER, "cursor": CURSOR})` — read one stored paper Markdown chunk (`pwc paper read`). If `truncated` is true, call `read_paper` again with the same `paper` and the returned `next_cursor`; repeat until `truncated` is false. Treat the cursor as opaque and use it within one hour; omit it (or pass `"next"` before any read) to start from the beginning.
 - `list_papers({"search": SEARCH, "task": TASK, "method": METHOD, "conference": CONFERENCE, "framework": FRAMEWORK, "organization": ORGANIZATION, "authors": [AUTHOR], "published_after": START_DATE, "published_before": END_DATE, "all_versions": BOOLEAN, "order_by": "trending"|"date_published"|"citation_count", "order_direction": "asc"|"desc", "include_resources": BOOLEAN, "has_official_implementation": BOOLEAN, "page": PAGE, "limit": LIMIT})` — list and filter papers by exact catalog associations (`pwc paper list`). Omit optional arguments when they are not needed.
 - `list_recent_papers({"limit": LIMIT})` — list the most recently added papers (`pwc paper recent`).
 - `list_trending_papers({"limit": LIMIT, "max_age_days": DAYS, "min_velocity": VELOCITY})` — list trending papers by repository velocity (`pwc paper trending`).

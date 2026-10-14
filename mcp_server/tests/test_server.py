@@ -221,6 +221,9 @@ class StubCatalog:
             return GROUPED_BENCHMARKS
         return PAYLOADS[tuple(command)]
 
+    def public_paper(self, reference: str):
+        return None
+
     def options(self, command):
         return next(options for called, options in self.queries if called == command)
 
@@ -278,6 +281,7 @@ def test_search_papers_is_a_read_only_structured_tool():
             }
         ],
         "next_page": 2,
+        "note": None,
         "data": PAPER_PAGE,
     }
     assert catalog.queries == [
@@ -450,6 +454,7 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
         "markdown": "fgh",
         "truncated": False,
         "next_cursor": None,
+        "in_catalog": True,
     }
     assert catalog.resolve_calls == 1
     assert catalog.read_calls == [(0, None, 5), (5, "a" * 64, 5)]
@@ -899,3 +904,172 @@ def test_paper_detail_includes_x_threads_only_with_resources():
         }
     ]
     assert paper_detail(item, include_resources=False, repo_limit=5).x_threads == []
+
+
+PUBLIC_PAPER = {
+    "id": "2309.06920",
+    "arxiv_id": "2309.06920",
+    "doi": None,
+    "title": "A Paper Outside The Catalog",
+    "authors": ["Ada Lovelace"],
+    "abstract": "An abstract.",
+    "published": "2023-09-13",
+    "url": "https://arxiv.org/abs/2309.06920",
+    "pdf_url": "https://arxiv.org/pdf/2309.06920",
+    "hf_url": "https://huggingface.co/papers/2309.06920",
+    "repositories": ["https://github.com/example/outside"],
+    "project_pages": [],
+    "metadata_source": "huggingface",
+}
+
+
+class OutsideCatalog(StubCatalog):
+    """Holds only 1706.03762; knows public metadata for other references."""
+
+    def __init__(self, public=None):
+        super().__init__()
+        self.public = {"2309.06920": PUBLIC_PAPER} if public is None else public
+        self.public_calls = []
+
+    def resolve_paper(self, paper):
+        self.resolve_calls += 1
+        if paper in {"1706.03762", "Attention Is All You Need"}:
+            return "1706.03762"
+        if paper[0].isdigit() and "/" not in paper:
+            return paper
+        raise ResponseError(f"Paper title not found: {paper}")
+
+    def read_paper_chunk(self, paper, **options):
+        if paper != "1706.03762":
+            raise ResponseError(f"Paper not found: {paper}")
+        return super().read_paper_chunk(paper, **options)
+
+    def query(self, command, options):
+        paper = options.get("paper")
+        if paper is not None and self.resolve_paper(paper) != "1706.03762":
+            self.queries.append((tuple(command), dict(options)))
+            raise HTTPStatusError(404, "Paper not found")
+        return super().query(command, options)
+
+    def public_paper(self, reference):
+        self.public_calls.append(reference)
+        return self.public.get(reference)
+
+
+def test_paper_tools_fall_back_to_public_metadata_outside_the_catalog():
+    catalog = OutsideCatalog()
+    info, read, related = _call(
+        catalog,
+        [
+            ("get_paper_info", {"paper": "2309.06920"}),
+            ("read_paper", {"paper": "2309.06920"}),
+            ("get_related_papers", {"paper": "2309.06920", "limit": 3}),
+        ],
+    )
+
+    assert info.is_error is False
+    assert info.structured_content["in_catalog"] is False
+    assert "not in the Papers With Code catalog" in info.structured_content["note"]
+    assert "not in the Papers With Code catalog" in info.content[0].text
+    paper = info.structured_content["paper"]
+    assert paper["title"] == "A Paper Outside The Catalog"
+    assert paper["authors"] == ["Ada Lovelace"]
+    assert paper["abstract"] == "An abstract."
+    assert paper["published"] == "2023-09-13"
+    assert paper["url"] == "https://arxiv.org/abs/2309.06920"
+    assert paper["repositories"] == [
+        {"url": "https://github.com/example/outside", "is_official": False}
+    ]
+    assert paper["tasks"] == [] and paper["methods"] == []
+
+    assert read.is_error is False
+    assert read.structured_content["in_catalog"] is False
+    assert read.structured_content["truncated"] is False
+    assert read.structured_content["next_cursor"] is None
+    markdown = read.structured_content["markdown"]
+    assert markdown.startswith("# A Paper Outside The Catalog\n")
+    assert "not in the Papers With Code catalog" in markdown
+    assert "**Code:** https://github.com/example/outside" in markdown
+    assert markdown.endswith("An abstract.\n")
+
+    assert related.is_error is False
+    assert "not in the Papers With Code catalog" in related.structured_content["note"]
+    assert catalog.options(("search",)) == {
+        "query": "A Paper Outside The Catalog",
+        "mode": "hybrid",
+        "page": 1,
+        "limit": 3,
+    }
+
+
+def test_paper_misses_without_public_metadata_keep_an_explicit_not_found():
+    (info,) = _call(OutsideCatalog(public={}), [("get_paper_info", {"paper": "2108.05103"})])
+
+    assert info.is_error is True
+    assert info.content[0].text == (
+        "Error executing tool get_paper_info: not_found: the requested catalog record "
+        "does not exist; it is not in the Papers With Code catalog and no public arXiv "
+        "or Hugging Face Papers record matched it"
+    )
+
+
+def test_a_doi_whose_public_title_is_cataloged_returns_the_catalog_paper():
+    doi = "10.5555/attention"
+    record = {**PUBLIC_PAPER, "id": doi, "arxiv_id": None, "doi": doi,
+              "title": "Attention Is All You Need", "metadata_source": "crossref"}
+    catalog = OutsideCatalog(public={doi: record})
+    info, read = _call(
+        catalog,
+        [("get_paper_info", {"paper": doi}), ("read_paper", {"paper": doi})],
+    )
+
+    assert info.structured_content["in_catalog"] is True
+    assert info.structured_content["paper"]["arxiv_id"] == "1706.03762"
+    assert read.structured_content["in_catalog"] is True
+    assert read.structured_content["paper"] == "Attention Is All You Need"
+    assert read.structured_content["markdown"] == "abcdefgh"
+
+
+def test_read_paper_treats_a_placeholder_cursor_as_the_beginning():
+    # Production chat sent cursor="next" before any read (28 failures a week,
+    # then identical retries).
+    catalog = StubCatalog()
+    next_read, start_read = _call(
+        catalog,
+        [
+            ("read_paper", {"paper": "1706.03762", "cursor": "next"}),
+            ("read_paper", {"paper": "1706.03762", "cursor": " Start "}),
+        ],
+    )
+
+    assert next_read.is_error is False
+    assert next_read.structured_content["markdown"] == "abcdefgh"
+    assert start_read.is_error is False
+    assert catalog.read_calls == [(0, None, 65_536), (0, None, 65_536)]
+
+
+def test_get_benchmark_returns_the_leaderboard_when_a_metric_is_unknown():
+    class MetricCatalog(StubCatalog):
+        def query(self, command, options):
+            if options.get("sort_metric") or options.get("require_metrics"):
+                self.queries.append((tuple(command), dict(options)))
+                raise UsageError(
+                    "unknown metric(s): overall; available metrics: Accuracy, F1"
+                )
+            return super().query(command, options)
+
+    catalog = MetricCatalog()
+    (result,) = _call(
+        catalog,
+        [("get_benchmark", {"benchmark": "imagenet-1k", "sort_metric": "overall"})],
+    )
+
+    assert result.is_error is False
+    assert result.structured_content["metric_note"] == (
+        "unknown metric(s): overall; available metrics: Accuracy, F1; returned the "
+        "leaderboard without metric filters or metric sorting"
+    )
+    assert result.structured_content["evaluations"][0]["model_name"] == "ExampleNet"
+    assert "available metrics: Accuracy, F1" in result.content[0].text
+    retried = catalog.queries[-1][1]
+    assert "sort_metric" not in retried and "require_metrics" not in retried

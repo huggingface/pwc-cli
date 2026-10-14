@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import PaperMarkdownChunk, PaperVersionMismatchError
+from pwc_mcp.external import NOT_IN_CATALOG
 from pwc_mcp.cursors import (
     CURSOR_LIFETIME_SECONDS,
     MAX_CHUNK_BYTES,
@@ -57,6 +58,7 @@ from pwc_mcp.models import (
     paper_evaluation,
     paper_reference,
     paper_summary,
+    public_paper_detail,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,6 +95,58 @@ GENERIC_ERROR = "the Papers With Code catalog request failed"
 # public API's own message, bounded and stripped of control characters.
 INVALID_ARGUMENT_STATUSES = frozenset({400, 422})
 MAX_UPSTREAM_DETAIL_CHARS = 200
+# Lookup failures meaning the paper itself is absent from the catalog; the
+# paper tools then fall back to public arXiv, Hugging Face, or Crossref records.
+MISSING_PAPER_ERRORS = (
+    "Paper not found",
+    "Paper title not found",
+    "Paper URL not supported",
+)
+# Placeholder cursors agents send instead of a next_cursor token ("next" with
+# nothing saved); they mean "keep reading", which starts at the beginning.
+PLACEHOLDER_CURSORS = frozenset(
+    {"next", "start", "begin", "beginning", "first", "0", "1", "none", "null"}
+)
+
+
+class PaperNotInCatalog(ToolError):
+    """A paper tool's reference does not name a catalog paper."""
+
+
+def _is_missing_paper(error: Exception) -> bool:
+    if isinstance(error, HTTPStatusError):
+        return error.status == 404
+    return (
+        isinstance(error, ResponseError)
+        and not isinstance(error, TransportError)
+        and str(error).startswith(MISSING_PAPER_ERRORS)
+    )
+
+
+def _public_markdown(record: dict[str, Any]) -> str:
+    lines = [
+        f"# {record.get('title') or 'Untitled paper'}",
+        "",
+        (
+            f"> This paper is {NOT_IN_CATALOG}. Full text is unavailable here; "
+            f"this is public {record.get('metadata_source') or 'arXiv'} metadata."
+        ),
+        "",
+    ]
+    if record.get("authors"):
+        lines.append(f"**Authors:** {', '.join(record['authors'])}")
+    if record.get("published"):
+        lines.append(f"**Published:** {record['published']}")
+    for label, key in (("Paper", "url"), ("PDF", "pdf_url"), ("Hugging Face", "hf_url")):
+        if record.get(key):
+            lines.append(f"**{label}:** {record[key]}")
+    for url in record.get("repositories") or []:
+        lines.append(f"**Code:** {url}")
+    for url in record.get("project_pages") or []:
+        lines.append(f"**Project page:** {url}")
+    if record.get("abstract"):
+        lines.extend(["", "## Abstract", "", str(record["abstract"])])
+    return "\n".join(lines) + "\n"
 
 
 def _upstream_detail(error: HTTPStatusError) -> str:
@@ -337,6 +391,8 @@ class Catalog(Protocol):
 
     def query(self, command: tuple[str, ...], options: Mapping[str, Any]) -> Any: ...
 
+    def public_paper(self, reference: str) -> dict[str, Any] | None: ...
+
 
 def build_server(
     catalog: Catalog,
@@ -380,7 +436,34 @@ def build_server(
         except UsageError as error:
             raise ToolError(str(error)) from error
         except (ResponseError, TransportError) as error:
+            if "paper" in parameters and _is_missing_paper(error):
+                raise PaperNotInCatalog(catalog_error_message(error)) from error
             raise ToolError(catalog_error_message(error)) from error
+
+    def public_paper(reference: str, missing: ToolError) -> dict[str, Any]:
+        """Public metadata for a catalog miss, or the original error."""
+        record = catalog.public_paper(reference)
+        if not record:
+            raise ToolError(
+                f"{missing}; it is {NOT_IN_CATALOG} and no public arXiv or "
+                "Hugging Face Papers record matched it"
+            ) from missing
+        return record
+
+    def catalog_retry(tool: str, reference: str, record: dict[str, Any], **parameters: Any) -> Any:
+        """Retry the catalog with the public record's arXiv ID or exact title.
+
+        A DOI or a mistyped title may name a paper the catalog holds under its
+        arXiv ID or canonical title.
+        """
+        for alternative in (record.get("arxiv_id"), record.get("title")):
+            if not alternative or str(alternative).strip() == reference.strip():
+                continue
+            try:
+                return run(tool, paper=str(alternative), **parameters)
+            except ToolError:
+                continue
+        return None
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def search_papers(
@@ -419,15 +502,29 @@ def build_server(
         repo_limit: ResourceLimit = 5,
         include_evaluations: bool = False,
     ) -> PaperInfoResult:
-        """Get compact paper metadata and official-first code. Set include_resources for additional repositories, project pages, Hugging Face artifacts, and author X threads introducing the paper, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`)."""
-        data = run(
-            "get_paper_info",
-            paper=paper,
+        """Get compact paper metadata and official-first code. Set include_resources for additional repositories, project pages, Hugging Face artifacts, and author X threads introducing the paper, repo_limit to cap each list, and include_evaluations only for bounded legacy compatibility (`pwc paper info`). A paper outside the catalog returns public arXiv, Hugging Face Papers, or Crossref metadata with in_catalog=false."""
+        options = {
             # Fetch once so the compact default can retain official code while
             # omitting hundreds of community repositories from the response.
-            include_resources=True,
-            include_evaluations=include_evaluations,
-        )
+            "include_resources": True,
+            "include_evaluations": include_evaluations,
+        }
+        try:
+            data = run("get_paper_info", paper=paper, **options)
+        except PaperNotInCatalog as missing:
+            record = public_paper(paper, missing)
+            data = catalog_retry("get_paper_info", paper, record, **options)
+            if data is None:
+                detail = public_paper_detail(record, repo_limit=repo_limit)
+                note = (
+                    f"This paper is {NOT_IN_CATALOG}; metadata comes from public "
+                    f"{record.get('metadata_source') or 'arXiv'} records, so it has "
+                    "no catalog tasks, methods, evaluations, or curated code."
+                )
+                result = PaperInfoResult(
+                    paper=detail, in_catalog=False, note=note, data=None
+                )
+                return _tool_result(result, f"## {detail.title}\n\n{note}")
         if not isinstance(data, dict):
             raise TypeError("paper response did not contain a paper")
         evaluations = data.get("evaluations")
@@ -476,8 +573,15 @@ def build_server(
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def read_paper(paper: Reference, cursor: str | None = None) -> PaperReadResult:
-        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning."""
-        reference = paper.strip()
+        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning. A paper outside the catalog returns its public metadata and abstract with in_catalog=false."""
+        if cursor is not None and cursor.strip().casefold() in PLACEHOLDER_CURSORS:
+            # Not a token: nothing was saved to continue from.
+            cursor = None
+        return read(paper.strip(), cursor, follow_public=True)
+
+    def read(
+        reference: str, cursor: str | None, *, follow_public: bool
+    ) -> PaperReadResult:
         try:
             state = codec.decode(cursor, reference=reference) if cursor else None
         except CursorReferenceMismatch as error:
@@ -502,6 +606,8 @@ def build_server(
             try:
                 canonical = catalog.resolve_paper(reference)
             except (ResponseError, TransportError) as error:
+                if _is_missing_paper(error):
+                    return public_read(reference, error, follow=follow_public)
                 raise ToolError(catalog_error_message(error)) from error
             offset = 0
             content_version = None
@@ -534,6 +640,8 @@ def build_server(
                 ) from error
             raise ToolError(catalog_error_message(error)) from error
         except (ResponseError, TransportError) as error:
+            if state is None and _is_missing_paper(error):
+                return public_read(reference, error, follow=follow_public)
             raise ToolError(catalog_error_message(error)) from error
         if chunk.paper != canonical or chunk.source != source:
             raise ToolError("paper changed; restart reading from the beginning")
@@ -555,6 +663,32 @@ def build_server(
             markdown=chunk.markdown,
             truncated=chunk.truncated,
             next_cursor=next_cursor,
+        )
+
+    def public_read(
+        reference: str, error: Exception, *, follow: bool
+    ) -> PaperReadResult:
+        record = public_paper(
+            reference, PaperNotInCatalog(catalog_error_message(error))
+        )
+        # A DOI may name a catalog paper under its arXiv ID or title. The
+        # result names that reference, so continuation cursors match it.
+        for alternative in (record.get("arxiv_id"), record.get("title")):
+            alternative = str(alternative or "").strip()
+            if not follow or not alternative or alternative == reference:
+                continue
+            try:
+                result = read(alternative, None, follow_public=False)
+            except ToolError:
+                continue
+            if result.in_catalog:
+                return result
+        return PaperReadResult(
+            paper=reference,
+            markdown=_public_markdown(record),
+            truncated=False,
+            next_cursor=None,
+            in_catalog=False,
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
@@ -625,8 +759,28 @@ def build_server(
     def get_related_papers(
         paper: Reference, limit: Annotated[int, Field(ge=1, le=20)] = 4
     ) -> PaperPage:
-        """Find catalog papers related to one paper (`pwc paper related`)."""
-        return _paper_page(run("get_related_papers", paper=paper, limit=limit))
+        """Find catalog papers related to one paper (`pwc paper related`). A paper outside the catalog falls back to a catalog search for its public title, with a note."""
+        try:
+            return _paper_page(run("get_related_papers", paper=paper, limit=limit))
+        except PaperNotInCatalog as missing:
+            record = public_paper(paper, missing)
+        data = catalog_retry("get_related_papers", paper, record, limit=limit)
+        if data is not None:
+            return _paper_page(data)
+        result = _paper_page(
+            run(
+                "search_papers",
+                query=str(record.get("title") or paper)[:500],
+                mode=DEFAULT_SEARCH_MODE,
+                page=1,
+                limit=limit,
+            )
+        )
+        result.note = (
+            f"{record.get('title') or paper} is {NOT_IN_CATALOG}; these are catalog "
+            "search results for its title, not curated related papers."
+        )
+        return _tool_result(result, result.note)
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_paper_lineage(paper: Reference) -> PaperLineageResult:
@@ -835,20 +989,35 @@ def build_server(
         sort_metric: SortMetric | None = None,
         pareto: ParetoObjectives | None = None,
     ) -> BenchmarkResult:
-        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit. Metric names are matched case-insensitively, through common aliases (AP/mAP, top1/Accuracy, AUROC/AUC, Pass@1/Pass Rate), and by the one leaderboard metric containing the request or an alias of it (Normalized Score for "D4RL Normalized Score", GenEval Score for "Overall"); an unknown metric error lists the leaderboard's actual metric names."""
-        data = run(
-            "get_benchmark",
-            benchmark=benchmark,
-            page=page,
-            limit=limit,
-            is_open=is_open,
-            max_parameters=max_parameters,
-            require_metrics=require_metrics,
-            minimum_metrics=minimum_metrics,
-            maximum_metrics=maximum_metrics,
-            sort_metric=sort_metric,
-            pareto=pareto,
-        )
+        """Get one exact benchmark and its leaderboard (`pwc benchmark --name`). Use max_parameters (for example "4B") to keep models at or below a size, sort_metric to rank by a metric, and minimum_metrics, maximum_metrics, require_metrics, or pareto to select rows; matched_count reports how many rows passed before limit. Metric names are matched case-insensitively, through common aliases (AP/mAP, top1/Accuracy, AUROC/AUC, Pass@1/Pass Rate), and by the one leaderboard metric containing the request or an alias of it (Normalized Score for "D4RL Normalized Score", GenEval Score for "Overall"); a metric the leaderboard does not report returns the unfiltered leaderboard with metric_note listing its actual metric names."""
+        options = {
+            "benchmark": benchmark,
+            "page": page,
+            "limit": limit,
+            "is_open": is_open,
+            "max_parameters": max_parameters,
+        }
+        metric_note = None
+        try:
+            data = run(
+                "get_benchmark",
+                **options,
+                require_metrics=require_metrics,
+                minimum_metrics=minimum_metrics,
+                maximum_metrics=maximum_metrics,
+                sort_metric=sort_metric,
+                pareto=pareto,
+            )
+        except ToolError as error:
+            # A metric the leaderboard does not report ("overall", "pass@1")
+            # still deserves the leaderboard, with its real metric names.
+            if not str(error).startswith("unknown metric"):
+                raise
+            data = run("get_benchmark", **options)
+            metric_note = (
+                f"{error}; returned the leaderboard without metric filters or "
+                "metric sorting"
+            )
         item = data.get("benchmark") if isinstance(data, dict) else None
         if not isinstance(item, dict):
             raise TypeError("benchmark response did not contain a benchmark")
@@ -862,12 +1031,14 @@ def build_server(
             metric_directions=metric_directions(evaluations),
             page=page,
             next_page=_next_page(data),
+            metric_note=metric_note,
             data=None,
         )
         return _tool_result(
             result,
             f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models on page {page}. Ranks are task-scoped."
-            + (f" Next page: {result.next_page}." if result.next_page else ""),
+            + (f" Next page: {result.next_page}." if result.next_page else "")
+            + (f" Note: {metric_note}." if metric_note else ""),
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
