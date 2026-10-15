@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import threading
+from difflib import SequenceMatcher
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -88,6 +89,24 @@ def short_name(title: object) -> str:
     """The name before a title's colon: "MuseTalk" for "MuseTalk: Real-Time ..."."""
     text = str(title or "")
     return normalize_title(text.split(":", 1)[0]) if ":" in text else ""
+
+
+# A near match tolerates a typo or variant spelling in a full title
+# ("Heterogeneous" for BEIR's "Heterogenous"), never a short name.
+NEAR_TITLE_MIN_CHARS = 24
+NEAR_TITLE_MIN_RATIO = 0.95
+
+
+def near_title(title: str, target: str) -> bool:
+    """Whether two normalized titles differ only by a small spelling change.
+
+    Numbers must agree, so a sequel or another year's edition never matches.
+    """
+    if len(target) < NEAR_TITLE_MIN_CHARS or title == target:
+        return False
+    if re.findall(r"\d+", title) != re.findall(r"\d+", target):
+        return False
+    return SequenceMatcher(None, title, target).ratio() >= NEAR_TITLE_MIN_RATIO
 
 class _TTLCache:
     def __init__(self, maximum: int = 256):
@@ -294,18 +313,20 @@ class CatalogClient:
         # hits). The plain query remains the fallback for titles the phrase
         # parser cannot express.
         phrase = '"' + " ".join(query.replace('"', " ").split()) + '"'
-        exact, named, exhausted = self._exact_title_matches(
+        exact, named, near, exhausted = self._exact_title_matches(
             phrase, target, slug_from_url
         )
         if not exact:
-            exact, more_named, exhausted = self._exact_title_matches(
+            exact, more_named, more_near, exhausted = self._exact_title_matches(
                 query, target, slug_from_url
             )
             named = named or more_named
+            near = near or more_near
         if not exact and not slug_from_url:
             # Agents name a paper by the short name before its title's colon
-            # ("MuseTalk" for "MuseTalk: Real-Time ..."); a unique one resolves.
-            exact = named
+            # ("MuseTalk" for "MuseTalk: Real-Time ..."), or misspell one word
+            # of a full title; a unique such match resolves.
+            exact = named or near
         if len(exact) == 1:
             return next(iter(exact))
         if exact:
@@ -319,15 +340,19 @@ class CatalogClient:
 
     def _exact_title_matches(
         self, query: str, target: str, slug_from_url: str | None
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], bool]:
+    ) -> tuple[
+        dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]], bool
+    ]:
         """Collect papers whose title (or slug) equals the target.
 
         Returns the matches, the papers whose short name before a title colon
-        equals the target, and whether the search was read to its end within
-        the page budget; an unexhausted search with no match is inconclusive.
+        equals the target, the papers whose title is a near match (see
+        `near_title`), and whether the search was read to its end within the
+        page budget; an unexhausted search with no match is inconclusive.
         """
         exact: dict[str, dict[str, Any]] = {}
         named: dict[str, dict[str, Any]] = {}
+        near: dict[str, dict[str, Any]] = {}
         target_name = normalize_title(target)
         page = 1
         while page <= 10:
@@ -348,11 +373,13 @@ class CatalogClient:
                     exact.setdefault(paper, item)
                 elif paper and target_name and short_name(item.get("title")) == target_name:
                     named.setdefault(paper, item)
+                elif paper and near_title(normalize_title(title), target_name):
+                    near.setdefault(paper, item)
             next_page = payload.get("next_page")
             if not isinstance(next_page, int) or next_page <= page:
-                return exact, named, True
+                return exact, named, near, True
             page = next_page
-        return exact, named, False
+        return exact, named, near, False
 
     def _canonical_paper_id(self, catalog_id: str) -> str:
         """Prefer the arXiv ID for a numeric catalog ID so every route accepts it.
