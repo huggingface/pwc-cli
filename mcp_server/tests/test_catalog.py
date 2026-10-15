@@ -5,7 +5,7 @@ import json
 import pytest
 from pwc_cli.cli import UsageError
 from pwc_cli.transport import Response, ResponseError
-from pwc_mcp.catalog import CatalogClient, cache_ttl
+from pwc_mcp.catalog import CatalogClient, cache_ttl, near_title, normalize_title
 
 
 class StubTransport:
@@ -447,6 +447,54 @@ def test_catalog_resolves_a_unique_short_name_before_the_title_colon():
     )
     with pytest.raises(ResponseError, match="Paper title is ambiguous: MuseTalk"):
         ambiguous.resolve_paper("MuseTalk")
+
+
+def test_catalog_resolves_a_unique_near_match_of_a_full_title():
+    # Production chat: get_paper_info("BEIR: A Heterogeneous Benchmark ...")
+    # failed although the catalog holds the arXiv spelling "Heterogenous"
+    # (2104.08663), which keyword search returns first.
+    beir = {
+        "id": "5505",
+        "arxiv_id": "2104.08663",
+        "title": "BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models",
+    }
+    beir_nl = {
+        "id": "93",
+        "arxiv_id": "2412.08329",
+        "title": "BEIR-NL: Zero-shot Information Retrieval Benchmark for the Dutch Language",
+    }
+    catalog = CatalogClient(
+        transport=TitleSearchTransport(phrase_results=[beir, beir_nl], plain_has_exact=False)
+    )
+
+    assert catalog.resolve_paper(
+        "BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models"
+    ) == "2104.08663"
+
+    twins = [beir, {**beir, "id": "94", "arxiv_id": "2502.00003"}]
+    ambiguous = CatalogClient(
+        transport=TitleSearchTransport(phrase_results=twins, plain_has_exact=False)
+    )
+    with pytest.raises(ResponseError, match="Paper title is ambiguous"):
+        ambiguous.resolve_paper(
+            "BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models"
+        )
+
+
+def test_near_title_rejects_short_names_and_other_editions():
+    assert near_title(
+        normalize_title("BEIR: A Heterogenous Benchmark for Zero-shot Evaluation"),
+        normalize_title("BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation"),
+    )
+    assert not near_title(normalize_title("MuseTalks"), normalize_title("MuseTalk"))
+    assert not near_title(
+        normalize_title("The Llama 3 Herd of Language Foundation Models"),
+        normalize_title("The Llama 4 Herd of Language Foundation Models"),
+    )
+    assert not near_title(
+        normalize_title("Deep Residual Learning for Image Recognition"),
+        normalize_title("Deep Residual Learning for Video Recognition"),
+    )
 
 
 def test_catalog_reads_public_metadata_and_caches_lookups_including_misses():
