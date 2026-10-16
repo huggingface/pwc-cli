@@ -1411,6 +1411,66 @@ def test_method_detail_resolves_exact_name_and_renders_source(monkeypatch):
     ]
 
 
+def _keyword_method_client(monkeypatch, catalog):
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            if path == "methods/" and params.get("q"):
+                payload = {"count": 0, "results": []}
+            elif path == "methods/":
+                payload = {"count": len(catalog), "results": catalog}
+            elif path == "areas/":
+                payload = {"count": 0, "results": []}
+            else:
+                method_id = path.split("/")[1]
+                payload = next(m for m in catalog if m["id"] == method_id)
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    return calls
+
+
+def test_method_detail_resolves_keyword_alias(monkeypatch):
+    catalog = [
+        {
+            "id": "1205",
+            "slug": "gbdt",
+            "name": "Gradient Boosted Decision Trees",
+            "full_name": "Gradient Boosted Decision Trees (GBDT)",
+            "keywords": "GBDT, GBDTs, GDBT, gradient boosting machine",
+        },
+        {
+            "id": "9",
+            "slug": "pi0",
+            "name": "pi0",
+            "full_name": "pi0",
+            "keywords": "pi-0, pi zero",
+        },
+    ]
+    calls = _keyword_method_client(monkeypatch, catalog)
+    for alias, slug in (("gdbt", "gbdt"), ("GDBT", "gbdt"), ("pi 0", "pi0")):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            assert main(["method", "--name", alias, "--json"]) == 0
+        assert json.loads(output.getvalue())["data"]["method"]["slug"] == slug
+    assert ("methods/", {"page": 1, "page_size": 500}) in calls
+
+
+def test_method_detail_keyword_alias_must_be_unique(monkeypatch, capsys):
+    catalog = [
+        {"id": "1", "slug": "a", "name": "Alpha", "keywords": "shared, one"},
+        {"id": "2", "slug": "b", "name": "Beta", "keywords": "Shared"},
+    ]
+    _keyword_method_client(monkeypatch, catalog)
+    assert main(["method", "--name", "shared"]) != 0
+    assert "Method not found: shared" in capsys.readouterr().err
+
+
 def test_conference_list_filters_complete_response_by_year(monkeypatch):
     payload = {
         "count": 2,

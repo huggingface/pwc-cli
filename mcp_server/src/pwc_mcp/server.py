@@ -942,7 +942,7 @@ def build_server(
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_method(method: Entity) -> MethodResult:
-        """Get one exact method by name, full name, slug, or ID (`pwc method --name`)."""
+        """Get one method by name, full name, slug, ID, or curated keyword alias (`pwc method --name`)."""
         data = run("get_method", method=method)
         item = data.get("method") if isinstance(data, dict) else None
         if not isinstance(item, dict):
