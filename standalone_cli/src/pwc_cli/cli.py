@@ -1413,6 +1413,29 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
     return 0
 
 
+def _method_keyword_match(
+    reference: str, methods: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Resolve a curated alias such as "GDBT" from the methods' keywords.
+
+    The methods search ignores keywords, so callers pass the full list. Only a
+    unique match resolves; an alias shared by several methods stays ambiguous.
+    """
+    target = _normalize_entity_name(reference)
+    if len(target) < 3:
+        return None
+    matches = [
+        method
+        for method in methods
+        if target
+        in {
+            _normalize_entity_name(keyword)
+            for keyword in str(method.get("keywords") or "").split(",")
+        }
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def method_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("method inspection requires --name")
@@ -1424,12 +1447,20 @@ def method_detail(args: argparse.Namespace, client: Client) -> int:
             {"q": args.name, "page": 1, "page_size": 100},
         ).json()
         candidates, _total = _rows(payload)
-        summary = _exact_entity_match(
-            args.name,
-            candidates,
-            label="Method",
-            fields=("name", "full_name", "slug", "id"),
-        )
+        try:
+            summary = _exact_entity_match(
+                args.name,
+                candidates,
+                label="Method",
+                fields=("name", "full_name", "slug", "id"),
+            )
+        except ResponseError:
+            catalog, _total = _rows(
+                client.get("methods/", {"page": 1, "page_size": 500}).json()
+            )
+            summary = _method_keyword_match(args.name, catalog)
+            if summary is None:
+                raise
         method_id = quote(str(summary.get("id") or summary.get("slug")), safe="")
         method = client.get(f"methods/{method_id}").json()
     area = next(
