@@ -78,7 +78,9 @@ Papers, arXiv, or Crossref (DOI) metadata and the abstract with
 `in_catalog: false`, a `note`, and labelled `available_at` links to cite instead
 of a Papers With Code page; `get_related_papers` returns a catalog search for the
 public title with the same `note` and links. A reference the endpoint maps to a
-catalog paper returns the catalog paper; titles are not looked up publicly.
+catalog paper returns the catalog paper. Titles go to the sibling
+`public-metadata/search` endpoint, which accepts only an exact arXiv or Crossref
+title match, or the single arXiv paper sharing the "Name:" before its colon.
 `get_benchmark` answers a metric the leaderboard does not report with the
 unfiltered leaderboard and a `metric_note` naming the available metrics.
 

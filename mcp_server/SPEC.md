@@ -77,8 +77,12 @@ A reference the catalog does not hold falls back to the public API's
 `papers/{reference}/public-metadata` endpoint (Hugging Face Papers, arXiv, or
 Crossref metadata with labelled `available_at` links), cached for an hour
 including misses, and marked `in_catalog: false`; full text is never fetched
-from outside the catalog. The endpoint does not take titles. A reference it maps
-to a catalog paper is retried with that paper's arXiv or catalog ID.
+from outside the catalog. A title the endpoint rejects goes to
+`papers/public-metadata/search?title=`, which matches exact normalized titles on
+arXiv and Crossref (or the single arXiv paper sharing a "Name:" prefix, noted
+in the result). Misses say whether an identifier or a title was tried, or that
+the lookup was unavailable. A reference either endpoint maps to a catalog paper
+is retried with that paper's arXiv or catalog ID.
 
 Paper evaluations and benchmark leaderboards paginate. Leaderboards merge equivalent model rows across
 task scopes while retaining scoped ranks, protocol, split, shots, source,

@@ -5,7 +5,13 @@ import json
 import pytest
 from pwc_cli.cli import UsageError
 from pwc_cli.transport import Response, ResponseError
-from pwc_mcp.catalog import CatalogClient, cache_ttl, near_title, normalize_title
+from pwc_mcp.catalog import (
+    CatalogClient,
+    PublicPaperMiss,
+    cache_ttl,
+    near_title,
+    normalize_title,
+)
 
 
 class StubTransport:
@@ -505,14 +511,26 @@ def test_catalog_reads_public_metadata_and_caches_lookups_including_misses():
             self.calls = []
 
         def get(self, path, params=None):
-            self.calls.append(path)
+            self.calls.append((path, params))
             if path == "papers/2610.18869/public-metadata":
                 return Response(
                     json.dumps({"in_catalog": False, "title": "Found"}).encode(), {}
                 )
-            if path.startswith("papers/Down"):
+            if path == "papers/public-metadata/search":
+                title = params["title"]
+                if title == "Down Title":
+                    raise HTTPStatusError(503, "unavailable")
+                if title == "BERT":
+                    raise HTTPStatusError(400, "title too short")
+                if title == "Some Title":
+                    return Response(
+                        json.dumps({"in_catalog": False, "title": "Some title"}).encode(),
+                        {},
+                    )
+                raise HTTPStatusError(404, "no exact title")
+            if path.startswith("papers/Down/"):
                 raise HTTPStatusError(503, "unavailable")
-            if path.startswith("papers/Some"):
+            if "%20" in path or path == "papers/BERT/public-metadata":
                 raise HTTPStatusError(400, "titles are not identifiers")
             raise HTTPStatusError(404, "Paper not found")
 
@@ -521,17 +539,37 @@ def test_catalog_reads_public_metadata_and_caches_lookups_including_misses():
 
     assert catalog.public_paper(" 2610.18869 ")["title"] == "Found"
     assert catalog.public_paper("2610.18869")["title"] == "Found"
-    assert catalog.public_paper("10.1/x y") is None
-    assert catalog.public_paper("10.1/x y") is None
-    assert catalog.public_paper("Some Title") is None
-    assert catalog.public_paper("Some Title") is None
+    assert catalog.public_paper("10.1/x") == PublicPaperMiss("identifier")
+    assert catalog.public_paper("10.1/x") == PublicPaperMiss("identifier")
+    # Titles the identifier route rejects are searched as exact titles.
+    assert catalog.public_paper("Some Title") == {
+        "in_catalog": False,
+        "title": "Some title",
+        "requested_title": "Some Title",
+    }
+    assert catalog.public_paper("Some Title")["title"] == "Some title"
+    assert catalog.public_paper("Unknown Title") == PublicPaperMiss("title")
+    assert catalog.public_paper("Unknown Title") == PublicPaperMiss("title")
+    assert catalog.public_paper("BERT") == PublicPaperMiss("unsupported")
     # Upstream failures are best effort and not cached as misses.
-    assert catalog.public_paper("Down") is None
-    assert catalog.public_paper("Down") is None
+    assert catalog.public_paper("Down") == PublicPaperMiss("unavailable")
+    assert catalog.public_paper("Down") == PublicPaperMiss("unavailable")
+    assert catalog.public_paper("Down Title") == PublicPaperMiss("unavailable")
+    assert catalog.public_paper("Down Title") == PublicPaperMiss("unavailable")
+    search = "papers/public-metadata/search"
     assert transport.calls == [
-        "papers/2610.18869/public-metadata",
-        "papers/10.1/x%20y/public-metadata",
-        "papers/Some%20Title/public-metadata",
-        "papers/Down/public-metadata",
-        "papers/Down/public-metadata",
+        ("papers/2610.18869/public-metadata", None),
+        ("papers/10.1/x/public-metadata", None),
+        ("papers/Some%20Title/public-metadata", None),
+        (search, {"title": "Some Title"}),
+        ("papers/Unknown%20Title/public-metadata", None),
+        (search, {"title": "Unknown Title"}),
+        ("papers/BERT/public-metadata", None),
+        (search, {"title": "BERT"}),
+        ("papers/Down/public-metadata", None),
+        ("papers/Down/public-metadata", None),
+        ("papers/Down%20Title/public-metadata", None),
+        (search, {"title": "Down Title"}),
+        ("papers/Down%20Title/public-metadata", None),
+        (search, {"title": "Down Title"}),
     ]

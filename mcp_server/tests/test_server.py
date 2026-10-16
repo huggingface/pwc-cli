@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import pytest
 from mcp.client import Client
 from pwc_cli.cli import UsageError
 from pwc_cli.transport import HTTPStatusError, ResponseError
-from pwc_mcp.catalog import PaperMarkdownChunk
+from pwc_mcp.catalog import PaperMarkdownChunk, PublicPaperMiss
 from pwc_mcp.models import paper_detail
 from pwc_mcp.server import TOOL_COMMANDS, build_server
 
@@ -222,7 +223,7 @@ class StubCatalog:
         return PAYLOADS[tuple(command)]
 
     def public_paper(self, reference: str):
-        return None
+        return PublicPaperMiss("identifier")
 
     def options(self, command):
         return next(options for called, options in self.queries if called == command)
@@ -964,7 +965,7 @@ class OutsideCatalog(StubCatalog):
 
     def public_paper(self, reference):
         self.public_calls.append(reference)
-        return self.public.get(reference)
+        return self.public.get(reference, PublicPaperMiss("identifier"))
 
 
 def test_paper_tools_fall_back_to_public_metadata_outside_the_catalog():
@@ -1109,3 +1110,67 @@ def test_get_benchmark_returns_the_leaderboard_when_a_metric_is_unknown():
     assert "available metrics: Accuracy, F1" in result.content[0].text
     retried = catalog.queries[-1][1]
     assert "sort_metric" not in retried and "require_metrics" not in retried
+
+
+@pytest.mark.parametrize(
+    ("reason", "wording"),
+    [
+        ("title", "no arXiv or Crossref paper has exactly this title"),
+        ("unsupported", "it was not looked up publicly"),
+        ("unavailable", "the public Hugging Face Papers, arXiv, and Crossref lookup is"),
+    ],
+)
+def test_paper_misses_say_what_the_public_lookup_tried(reason, wording):
+    title = "A Classic Paper Title"
+    catalog = OutsideCatalog(public={title: PublicPaperMiss(reason)})
+
+    (info,) = _call(catalog, [("get_paper_info", {"paper": title})])
+
+    assert info.is_error is True
+    text = info.content[0].text
+    assert "it is not indexed on Papers With Code and " + wording in text
+    assert "no public Hugging Face Papers" not in text
+
+
+def test_a_title_resolved_by_its_name_says_the_full_title_differs():
+    requested = "GlobalTrack: A Simple and Universal Tracker with Global Features"
+    record = {
+        **PUBLIC_PAPER,
+        "title": "GlobalTrack: A Simple and Strong Baseline for Long-term Tracking",
+        "requested_title": requested,
+    }
+    exact = {**PUBLIC_PAPER, "title": "Same Title.", "requested_title": "same title"}
+    catalog = OutsideCatalog(public={requested: record, "same title": exact})
+
+    renamed, same = _call(
+        catalog,
+        [
+            ("get_paper_info", {"paper": requested}),
+            ("get_paper_info", {"paper": "same title"}),
+        ],
+    )
+
+    assert renamed.structured_content["in_catalog"] is False
+    assert renamed.structured_content["note"].startswith(
+        f'No paper is titled exactly "{requested}"; this is the paper with the '
+        'same name, titled "GlobalTrack: A Simple and Strong Baseline'
+    )
+    assert same.structured_content["note"].startswith("This paper is not indexed")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"minimum_evaluations": 0}, None),
+        ({"minimum_evaluations": -3}, None),
+        ({"minimum_evaluations": 2}, 2),
+        ({"minimum_evaluations": 0, "group_by_area": True}, 0),
+    ],
+)
+def test_list_benchmarks_never_sends_a_minimum_the_api_rejects(arguments, expected):
+    catalog = StubCatalog()
+
+    (result,) = _call(catalog, [("list_benchmarks", arguments)])
+
+    assert result.is_error is False
+    assert catalog.queries[0][1]["min_eval_count"] == expected

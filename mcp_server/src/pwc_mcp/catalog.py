@@ -27,6 +27,18 @@ MARKDOWN_CACHE_ENTRIES = 256
 MARKDOWN_CACHE_BYTES = 16 * 1024 * 1024
 MARKDOWN_CACHE_SECONDS = 3600
 PUBLIC_PAPER_CACHE_SECONDS = 3600
+
+
+@dataclass(frozen=True)
+class PublicPaperMiss:
+    """Why the public-metadata API returned no record.
+
+    ``identifier``: no public source knows the ID, DOI, or URL. ``title``: no
+    arXiv or Crossref paper has exactly that title. ``unsupported``: neither an
+    identifier nor a searchable title. ``unavailable``: the lookup failed.
+    """
+
+    reason: str
 # Search and paper listings change quickly; taxonomy is stable; the rest sits
 # between (SPEC.md: one minute, ten minutes, and five minutes respectively).
 VOLATILE_PATHS = frozenset(
@@ -408,33 +420,53 @@ class CatalogClient:
     def resolve_paper(self, paper: str) -> str:
         return self._resolve_paper(paper)
 
-    def public_paper(self, reference: str) -> dict[str, Any] | None:
-        """The public-metadata API's record for a catalog miss, or None.
+    def public_paper(self, reference: str) -> dict[str, Any] | PublicPaperMiss:
+        """The public-metadata API's record for a catalog miss, or why none.
 
         The API resolves an arXiv ID or URL, Hugging Face paper URL, DOI, or
         catalog ID against the catalog first, then Hugging Face Papers, arXiv,
-        or Crossref; titles are rejected (400). Lookups are best effort: any
-        failure yields None so the caller keeps its original not-found error.
+        or Crossref. It rejects anything else (400), which is then looked up
+        as an exact title on arXiv and Crossref; a record found that way
+        carries ``requested_title``. Lookups are best effort: a failure is an
+        ``unavailable`` miss, and only definitive misses are cached.
         """
-        key = ("public-paper", reference.strip())
+        reference = reference.strip()
+        key = ("public-paper", reference)
         cached = self.cache.get(key)
-        if isinstance(cached, dict):
-            return cached or None
+        if isinstance(cached, (dict, PublicPaperMiss)):
+            return cached
         # The route takes the reference as a path, slashes included (DOIs, URLs).
-        path = f"papers/{quote(reference.strip(), safe='/:')}/public-metadata"
+        result = self._public_metadata(
+            f"papers/{quote(reference, safe='/:')}/public-metadata",
+            None,
+            PublicPaperMiss("identifier"),
+        )
+        if result == PublicPaperMiss("unsupported"):
+            result = self._public_metadata(
+                "papers/public-metadata/search",
+                {"title": reference},
+                PublicPaperMiss("title"),
+            )
+            if isinstance(result, dict):
+                result = {**result, "requested_title": reference}
+        if result != PublicPaperMiss("unavailable"):
+            self.cache.put(key, result, PUBLIC_PAPER_CACHE_SECONDS)
+        return result
+
+    def _public_metadata(
+        self, path: str, params: dict[str, Any] | None, not_found: PublicPaperMiss
+    ) -> dict[str, Any] | PublicPaperMiss:
         try:
-            value = self.transport.get(path).json()
+            value = self.transport.get(path, params).json()
         except HTTPStatusError as error:
-            # 429 and 503 are transient; only unknown references are cached.
-            if error.status not in {400, 404}:
-                return None
-            value = None
+            if error.status == 404:
+                return not_found
+            # 429 and 503 are transient.
+            return PublicPaperMiss("unsupported" if error.status == 400 else "unavailable")
         except (ResponseError, TransportError):
-            return None
+            return PublicPaperMiss("unavailable")
         if not isinstance(value, dict) or not value.get("title"):
-            value = None
-        # An empty dict caches a miss so retries do not hit the API again.
-        self.cache.put(key, value or {}, PUBLIC_PAPER_CACHE_SECONDS)
+            return PublicPaperMiss("unavailable")
         return value
 
     def read_paper_chunk(
