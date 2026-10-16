@@ -27,7 +27,12 @@ from pwc_cli.transport import HTTPStatusError, ResponseError, TransportError
 from pydantic import BaseModel, Field
 
 from pwc_mcp import __version__
-from pwc_mcp.catalog import PaperMarkdownChunk, PaperVersionMismatchError
+from pwc_mcp.catalog import (
+    PaperMarkdownChunk,
+    PaperVersionMismatchError,
+    PublicPaperMiss,
+    normalize_title,
+)
 from pwc_mcp.cursors import (
     CURSOR_LIFETIME_SECONDS,
     MAX_CHUNK_BYTES,
@@ -130,10 +135,35 @@ def _is_missing_paper(error: Exception) -> bool:
     )
 
 
+# Why a catalog miss has no public record, worded by what was actually tried.
+PUBLIC_MISSES: dict[str, str] = {
+    "identifier": "no public Hugging Face Papers, arXiv, or Crossref record matched it",
+    "title": (
+        "no arXiv or Crossref paper has exactly this title; check the title or "
+        "retry with the paper's arXiv ID, DOI, or URL"
+    ),
+    "unsupported": (
+        "it was not looked up publicly, because that needs an arXiv ID, DOI, "
+        "arXiv or Hugging Face URL, or the full title"
+    ),
+    "unavailable": (
+        "the public Hugging Face Papers, arXiv, and Crossref lookup is "
+        "unavailable right now, so whether a public record exists is unknown"
+    ),
+}
+
+
 def _public_note(record: dict[str, Any]) -> str:
     links = "; ".join(f"{link.label}: {link.url}" for link in available_at(record))
+    requested = record.get("requested_title")
+    renamed = (
+        f'No paper is titled exactly "{requested}"; this is the paper with the '
+        f'same name, titled "{record.get("title")}". '
+        if requested and normalize_title(requested) != normalize_title(record.get("title"))
+        else ""
+    )
     return (
-        f"This paper is {NOT_IN_CATALOG}, so there is no Papers With Code page, "
+        f"{renamed}This paper is {NOT_IN_CATALOG}, so there is no Papers With Code page, "
         "catalog tasks, methods, evaluations, or curated code for it; metadata comes "
         "from public "
         f"{METADATA_SOURCES.get(str(record.get('metadata_source')), 'arXiv')} "
@@ -408,7 +438,7 @@ class Catalog(Protocol):
 
     def query(self, command: tuple[str, ...], options: Mapping[str, Any]) -> Any: ...
 
-    def public_paper(self, reference: str) -> dict[str, Any] | None: ...
+    def public_paper(self, reference: str) -> dict[str, Any] | PublicPaperMiss: ...
 
 
 def build_server(
@@ -460,10 +490,9 @@ def build_server(
     def public_paper(reference: str, missing: ToolError) -> dict[str, Any]:
         """Public metadata for a catalog miss, or the original error."""
         record = catalog.public_paper(reference)
-        if not record:
+        if isinstance(record, PublicPaperMiss):
             raise ToolError(
-                f"{missing}; it is {NOT_IN_CATALOG} and no public Hugging Face "
-                "Papers, arXiv, or Crossref record matched it"
+                f"{missing}; it is {NOT_IN_CATALOG} and {PUBLIC_MISSES[record.reason]}"
             ) from missing
         return record
 
@@ -1117,6 +1146,10 @@ def build_server(
             area = None
             notes.append("area cannot be combined with filters; returned the filtered list")
         grouped = group_by_area or area is not None
+        if minimum_evaluations is not None and minimum_evaluations < 1:
+            # The flat listing has no minimum by default and rejects 0 (it
+            # needs at least 1); the grouped one accepts 0 but defaults to 2.
+            minimum_evaluations = 0 if grouped else None
         # Grouped listings are not paginated; the CLI rejects page/limit there.
         data = run(
             "list_benchmarks",

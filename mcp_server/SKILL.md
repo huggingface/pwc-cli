@@ -48,7 +48,7 @@ short name before a title's colon ("MuseTalk"). Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs. When
 a paper is not indexed on Papers With Code, `get_paper_info`, `read_paper`, and
 `get_related_papers` return public Hugging Face Papers, arXiv, or Crossref (for
-DOIs) metadata marked `in_catalog: false` with a `note` and `available_at`
+DOIs and exact titles) metadata marked `in_catalog: false` with a `note` and `available_at`
 links; say the paper is not indexed on Papers With Code and link to those
 sources, never to a Papers With Code paper page. Task, method, conference, organization, framework, and benchmark
 arguments take an exact name, slug, or ID.
