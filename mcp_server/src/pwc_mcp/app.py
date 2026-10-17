@@ -185,7 +185,42 @@ CLIENT_IDENTITY_HEADER = "x-pwc-mcp-client"
 CLIENT_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 
 
-def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -> str:
+# Hosts that put the server behind a non-loopback reverse proxy, such as the
+# Hugging Face Spaces ingress, list the proxy's networks in
+# PWC_MCP_TRUSTED_PROXY_CIDRS. A request from such a peer is attributed to the
+# right-most X-Forwarded-For hop outside those networks: hops to its left are
+# client-supplied and can be forged. A proxied request never names its own
+# identity through CLIENT_IDENTITY_HEADER.
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def _trusted_proxy_networks(value: str) -> tuple[IPNetwork, ...]:
+    try:
+        return tuple(
+            ipaddress.ip_network(item.strip())
+            for item in value.split(",")
+            if item.strip()
+        )
+    except ValueError as error:
+        raise ValueError(
+            f"PWC_MCP_TRUSTED_PROXY_CIDRS must list CIDR networks: {error}"
+        ) from None
+
+
+def _in_networks(address: str, networks: tuple[IPNetwork, ...]) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return any(ip in network for network in networks)
+
+
+def _client_address(
+    scope: Scope,
+    headers: Headers,
+    trust_proxy_headers: bool,
+    trusted_proxies: tuple[IPNetwork, ...] = (),
+) -> str:
     client = scope.get("client")
     direct_address = str(client[0]) if client else "unknown"
     try:
@@ -199,6 +234,14 @@ def _client_address(scope: Scope, headers: Headers, trust_proxy_headers: bool) -
         identity = headers.get(CLIENT_IDENTITY_HEADER, "")
         if CLIENT_IDENTITY.fullmatch(identity):
             return f"client:{identity}"
+    elif trust_proxy_headers and _in_networks(direct_address, trusted_proxies):
+        hops = ",".join(headers.getlist("x-forwarded-for")).split(",")
+        for hop in reversed([hop.strip() for hop in hops if hop.strip()]):
+            if not _in_networks(hop, trusted_proxies):
+                try:
+                    return str(ipaddress.ip_address(hop))
+                except ValueError:
+                    break
     return direct_address
 
 
@@ -310,6 +353,7 @@ class RateLimitMiddleware:
         concurrency_limit: int,
         global_concurrency_limit: int,
         trust_proxy_headers: bool,
+        trusted_proxies: tuple[IPNetwork, ...] = (),
         identity_limit: int = 10_000,
     ):
         self.app = app
@@ -318,6 +362,7 @@ class RateLimitMiddleware:
         self.concurrency_limit = concurrency_limit
         self.global_concurrency_limit = global_concurrency_limit
         self.trust_proxy_headers = trust_proxy_headers
+        self.trusted_proxies = trusted_proxies
         self.identity_limit = identity_limit
         self.key = secrets.token_bytes(32)
         self.requests: dict[str, deque[float]] = defaultdict(deque)
@@ -373,7 +418,9 @@ class RateLimitMiddleware:
         tool, semantic = _tool_and_semantic(headers, body)
         scope.setdefault("state", {})["pwc_tool_name"] = tool
         identity = self._identity(
-            _client_address(scope, headers, self.trust_proxy_headers)
+            _client_address(
+                scope, headers, self.trust_proxy_headers, self.trusted_proxies
+            )
         )
         now = time.monotonic()
         limited = False
@@ -482,6 +529,7 @@ def create_app(
     concurrency_limit: int | None = None,
     global_concurrency_limit: int | None = None,
     trust_proxy_headers: bool = True,
+    trusted_proxy_cidrs: str | None = None,
 ) -> ASGIApp:
     if request_limit is None:
         request_limit = _int_env("PWC_MCP_REQUEST_LIMIT", DEFAULT_REQUEST_LIMIT)
@@ -495,6 +543,9 @@ def create_app(
         global_concurrency_limit = _int_env(
             "PWC_MCP_GLOBAL_CONCURRENCY_LIMIT", DEFAULT_GLOBAL_CONCURRENCY_LIMIT
         )
+    if trusted_proxy_cidrs is None:
+        trusted_proxy_cidrs = os.environ.get("PWC_MCP_TRUSTED_PROXY_CIDRS", "")
+    trusted_proxies = _trusted_proxy_networks(trusted_proxy_cidrs)
     hosts = allowed_hosts or _csv_env(
         "PWC_MCP_ALLOWED_HOSTS",
         [
@@ -544,6 +595,7 @@ def create_app(
         concurrency_limit=concurrency_limit,
         global_concurrency_limit=global_concurrency_limit,
         trust_proxy_headers=trust_proxy_headers,
+        trusted_proxies=trusted_proxies,
     )
     wrapped = MCPMethodMiddleware(wrapped)
     wrapped = ResponseSizeLimitMiddleware(wrapped)
