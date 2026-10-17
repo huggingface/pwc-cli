@@ -6,7 +6,7 @@ colorTo: blue
 sdk: docker
 app_port: 7860
 suggested_hardware: cpu-upgrade
-short_description: Read-only MCP access to the Papers With Code research catalog
+short_description: Read-only MCP access to the Papers With Code catalog
 ---
 
 # Papers With Code MCP

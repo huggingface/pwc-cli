@@ -106,6 +106,7 @@ unfiltered leaderboard and a `metric_note` naming the available metrics.
 | `PWC_MCP_SEMANTIC_LIMIT` | Semantic or hybrid searches per client per minute; defaults to `10` |
 | `PWC_MCP_CONCURRENCY_LIMIT` | Concurrent requests per client; defaults to `4` |
 | `PWC_MCP_GLOBAL_CONCURRENCY_LIMIT` | Concurrent requests across all clients; defaults to `128` and sizes the tool thread pool |
+| `PWC_MCP_TRUSTED_PROXY_CIDRS` | Comma-separated networks of a non-loopback reverse proxy whose `X-Forwarded-For` is trusted; empty by default |
 | `LOG_LEVEL` | Content-free operational log level |
 
 Native clients may omit `Origin`. Browser requests must match the configured
@@ -114,6 +115,15 @@ allowlist. A first-party client on the same host may send
 hashed chat session); the header counts only on a direct loopback connection
 without `X-Forwarded-For`, so proxied public traffic cannot use it. The server does not log queries, paper references, request bodies,
 raw IP addresses, or authorization headers.
+
+Behind a reverse proxy that does not run on the same host, such as the Hugging
+Face Spaces ingress, set `PWC_MCP_TRUSTED_PROXY_CIDRS` to the proxy's networks.
+A request whose direct peer falls in one of them is limited by the right-most
+`X-Forwarded-For` hop outside those networks; hops further left are
+client-supplied and ignored. Such requests can never name an identity with
+`X-PwC-MCP-Client`. Loopback peers keep the behaviour above. List only
+networks that hold nothing but the proxy: any peer inside them can choose its
+own rate-limit identity.
 
 The hosted defaults allow 60 total requests and 10 semantic or hybrid searches per minute
 per client IP, with at most four concurrent requests per IP and 128 globally.
