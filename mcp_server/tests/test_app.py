@@ -5,7 +5,9 @@ import logging
 from pwc_mcp.app import (
     MAX_RESPONSE_BODY_SIZE,
     ResponseSizeLimitMiddleware,
+    RateLimitMiddleware,
     _client_address,
+    _trusted_proxy_networks,
     create_app,
 )
 from starlette.applications import Starlette
@@ -254,6 +256,109 @@ def test_loopback_first_party_clients_may_name_their_rate_limit_identity():
     assert _client_address({"client": ("127.0.0.1", 1)}, bad, True) == "127.0.0.1"
     long = Headers({"x-pwc-mcp-client": "a" * 129})
     assert _client_address({"client": ("127.0.0.1", 1)}, long, True) == "127.0.0.1"
+
+
+HF_PROXIES = _trusted_proxy_networks("10.0.0.0/8, fd00::/8")
+
+
+def test_trusted_proxy_peer_uses_the_rightmost_untrusted_forwarded_hop():
+    def address(peer: str, forwarded: str | None, **extra: str) -> str:
+        values = dict(extra)
+        if forwarded is not None:
+            values["x-forwarded-for"] = forwarded
+        return _client_address(
+            {"client": (peer, 1)}, Headers(values), True, HF_PROXIES
+        )
+
+    assert address("10.1.2.3", "203.0.113.9") == "203.0.113.9"
+    # Hops left of the proxy's own entry are client-supplied and ignored.
+    assert address("10.1.2.3", "198.51.100.1, 203.0.113.9") == "203.0.113.9"
+    # Trusted intermediate proxies are skipped from the right.
+    assert address("10.1.2.3", "203.0.113.9, 10.9.9.9") == "203.0.113.9"
+    assert address("fd00::5", "2001:db8::7, fd00::6") == "2001:db8::7"
+    # Repeated headers are read as one list in arrival order.
+    repeated = Headers(
+        raw=[(b"x-forwarded-for", b"198.51.100.1"), (b"x-forwarded-for", b"203.0.113.9")]
+    )
+    assert (
+        _client_address({"client": ("10.1.2.3", 1)}, repeated, True, HF_PROXIES)
+        == "203.0.113.9"
+    )
+    # Missing, fully trusted, or malformed chains fall back to the proxy peer.
+    assert address("10.1.2.3", None) == "10.1.2.3"
+    assert address("10.1.2.3", "10.4.4.4, 10.5.5.5") == "10.1.2.3"
+    assert address("10.1.2.3", "203.0.113.9, not-an-ip") == "10.1.2.3"
+    # Untrusted peers and disabled trust ignore the header entirely.
+    assert address("192.0.2.4", "203.0.113.9") == "192.0.2.4"
+    assert (
+        _client_address(
+            {"client": ("10.1.2.3", 1)},
+            Headers({"x-forwarded-for": "203.0.113.9"}),
+            False,
+            HF_PROXIES,
+        )
+        == "10.1.2.3"
+    )
+
+
+def test_proxied_hops_never_name_their_own_identity():
+    tagged = {"x-pwc-mcp-client": "chat-0123abcd"}
+    assert (
+        _client_address({"client": ("10.1.2.3", 1)}, Headers(tagged), True, HF_PROXIES)
+        == "10.1.2.3"
+    )
+    forwarded = Headers({**tagged, "x-forwarded-for": "203.0.113.9"})
+    assert (
+        _client_address({"client": ("10.1.2.3", 1)}, forwarded, True, HF_PROXIES)
+        == "203.0.113.9"
+    )
+    # Loopback behaviour is unchanged when proxies are configured.
+    assert (
+        _client_address({"client": ("127.0.0.1", 1)}, Headers(tagged), True, HF_PROXIES)
+        == "client:chat-0123abcd"
+    )
+
+
+def test_trusted_proxy_cidrs_are_opt_in_and_validated(monkeypatch):
+    def middleware(app):
+        while not isinstance(app, RateLimitMiddleware):
+            app = app.app
+        return app
+
+    monkeypatch.delenv("PWC_MCP_TRUSTED_PROXY_CIDRS", raising=False)
+    assert middleware(create_app(StubCatalog())).trusted_proxies == ()
+    monkeypatch.setenv("PWC_MCP_TRUSTED_PROXY_CIDRS", " 10.0.0.0/8 ,fd00::/8,")
+    assert [str(n) for n in middleware(create_app(StubCatalog())).trusted_proxies] == [
+        "10.0.0.0/8",
+        "fd00::/8",
+    ]
+    for invalid in ("10.0.0.1/8", "not-a-cidr", "10.0.0.0/33"):
+        monkeypatch.setenv("PWC_MCP_TRUSTED_PROXY_CIDRS", invalid)
+        try:
+            create_app(StubCatalog())
+        except ValueError as error:
+            assert "PWC_MCP_TRUSTED_PROXY_CIDRS" in str(error)
+            continue
+        raise AssertionError(invalid)
+
+
+def test_clients_behind_a_trusted_proxy_get_separate_rate_limits():
+    app = create_app(
+        StubCatalog(),
+        allowed_hosts=["testserver"],
+        request_limit=1,
+        trusted_proxy_cidrs="10.0.0.0/8",
+    )
+    with TestClient(app, client=("10.1.2.3", 50000)) as client:
+        first = client.post("/mcp", json={}, headers={"x-forwarded-for": "203.0.113.9"})
+        other = client.post("/mcp", json={}, headers={"x-forwarded-for": "203.0.113.10"})
+        repeat = client.post(
+            "/mcp", json={}, headers={"x-forwarded-for": "1.2.3.4, 203.0.113.9"}
+        )
+
+    assert first.status_code != 429
+    assert other.status_code != 429
+    assert repeat.status_code == 429
 
 
 def test_serialized_mcp_response_limit_fails_closed():

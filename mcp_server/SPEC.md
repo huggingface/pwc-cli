@@ -108,7 +108,9 @@ openness, and update time. Metric direction is explicit when known.
   256-entry and 16 MiB ceiling.
 - Bind to loopback on the VPS, trust forwarded identity only from an exact
   loopback peer, let a direct loopback client without `X-Forwarded-For` name
-  its own rate-limit identity with `X-PwC-MCP-Client`, and expose cached catalog readiness without making `/health`
+  its own rate-limit identity with `X-PwC-MCP-Client`, optionally trust the
+  right-most untrusted `X-Forwarded-For` hop from peers in
+  `PWC_MCP_TRUSTED_PROXY_CIDRS` (never their `X-PwC-MCP-Client`), and expose cached catalog readiness without making `/health`
   wait on an upstream call.
 
 ## Release
