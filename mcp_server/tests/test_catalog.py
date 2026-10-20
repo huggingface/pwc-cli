@@ -365,11 +365,43 @@ def test_catalog_reports_titles_missing_from_an_empty_search_as_not_found():
 
     with pytest.raises(ResponseError, match="Paper title not found: Dropout"):
         catalog.resolve_paper("Dropout: A Simple Way to Prevent Overfitting")
-    # One phrase query, then one plain keyword query as the fallback.
-    assert [params["q"] for _path, params in transport.calls] == [
-        '"Dropout: A Simple Way to Prevent Overfitting"',
-        "Dropout: A Simple Way to Prevent Overfitting",
+    # One phrase query, one plain keyword query as the fallback, then one
+    # hybrid query for the closest catalog papers (none here, so no hint).
+    assert [(params["q"], params["mode"]) for _path, params in transport.calls] == [
+        ('"Dropout: A Simple Way to Prevent Overfitting"', "keyword"),
+        ("Dropout: A Simple Way to Prevent Overfitting", "keyword"),
+        ("Dropout: A Simple Way to Prevent Overfitting", "hybrid"),
     ]
+
+
+def test_catalog_title_miss_names_the_closest_catalog_papers():
+    class HybridTransport(StubTransport):
+        def get(self, path, params=None):
+            self.calls.append((path, params))
+            rows = []
+            if params["mode"] == "hybrid":
+                rows = [
+                    {
+                        "id": "88",
+                        "arxiv_id": "2309.06180",
+                        "title": "Efficient Memory Management for Large Language "
+                        "Model Serving with PagedAttention",
+                    },
+                    {"id": "91", "title": "An External Report"},
+                ]
+            body = {"next_page": None, "previous_page": None, "results": rows}
+            return Response(json.dumps(body).encode(), {"content-type": "application/json"})
+
+    catalog = CatalogClient(transport=HybridTransport({}))
+
+    with pytest.raises(ResponseError) as missed:
+        catalog.resolve_paper("vLLM: Easy, Fast, and Cheap LLM Serving with PagedAttention")
+    assert str(missed.value) == (
+        "Paper title not found: vLLM: Easy, Fast, and Cheap LLM Serving with "
+        "PagedAttention; closest catalog papers: Efficient Memory Management for "
+        "Large Language Model Serving with PagedAttention (2309.06180); "
+        "An External Report (91)"
+    )
 
 
 EXACT_TITLE_ROW = {"id": "755", "arxiv_id": "1706.03762", "title": "Attention Is All You Need"}

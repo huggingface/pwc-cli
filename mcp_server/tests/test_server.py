@@ -1132,6 +1132,36 @@ def test_paper_misses_say_what_the_public_lookup_tried(reason, wording):
     assert "no public Hugging Face Papers" not in text
 
 
+class RenamedInCatalog(OutsideCatalog):
+    """The catalog holds the paper under its arXiv title, not the blog title."""
+
+    def resolve_paper(self, paper):
+        if paper.startswith("vLLM"):
+            raise ResponseError(
+                f"Paper title not found: {paper}; closest catalog papers: "
+                "Efficient Memory Management for Large Language Model Serving "
+                "with PagedAttention (2309.06180)"
+            )
+        return super().resolve_paper(paper)
+
+
+def test_a_title_miss_names_the_closest_catalog_papers_last():
+    title = "vLLM: Easy, Fast, and Cheap LLM Serving with PagedAttention"
+    catalog = RenamedInCatalog(public={title: PublicPaperMiss("title")})
+
+    (info,) = _call(catalog, [("get_paper_info", {"paper": title})])
+
+    assert info.is_error is True
+    text = info.content[0].text
+    assert "no Papers With Code paper has exactly this title and no arXiv" in text
+    assert "it is not indexed" not in text
+    assert text.endswith(
+        "If one of the closest catalog papers is the paper meant, call again with "
+        "its ID: Efficient Memory Management for Large Language Model Serving with "
+        "PagedAttention (2309.06180)"
+    )
+
+
 def test_a_title_resolved_by_its_name_says_the_full_title_differs():
     requested = "GlobalTrack: A Simple and Universal Tracker with Global Features"
     record = {
