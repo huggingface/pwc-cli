@@ -27,6 +27,8 @@ MARKDOWN_CACHE_ENTRIES = 256
 MARKDOWN_CACHE_BYTES = 16 * 1024 * 1024
 MARKDOWN_CACHE_SECONDS = 3600
 PUBLIC_PAPER_CACHE_SECONDS = 3600
+# Separates a title miss from the catalog papers a relevance search ranked first.
+CLOSEST_CATALOG_PAPERS = "; closest catalog papers: "
 
 
 @dataclass(frozen=True)
@@ -348,7 +350,28 @@ class CatalogClient:
             raise ResponseError(f"Paper title is ambiguous: {candidate}; {choices}")
         if not exhausted:
             raise ResponseError("Too many results to resolve paper title safely")
-        raise ResponseError(f"Paper title not found: {candidate}")
+        suggestions = self._closest_titles(query)
+        suffix = f"{CLOSEST_CATALOG_PAPERS}{suggestions}" if suggestions else ""
+        raise ResponseError(f"Paper title not found: {candidate}{suffix}")
+
+    def _closest_titles(self, query: str) -> str:
+        """Name the catalog papers a relevance search ranks first for a missed title.
+
+        Agents often cite a catalog paper by a blog or repository title ("vLLM:
+        Easy, Fast, and Cheap LLM Serving with PagedAttention") or a garbled
+        version of it; a hybrid search usually ranks the real paper near the
+        top, so the miss can name it instead of implying the paper is absent.
+        """
+        payload = self._json(
+            "papers/search",
+            {"q": query, "page": 1, "page_size": 3, "mode": "hybrid"},
+            ttl=60,
+        )
+        return "; ".join(
+            f"{' '.join(str(item.get('title') or 'Untitled').split())} ({paper})"
+            for item in self._rows(payload)
+            if (paper := str(item.get("arxiv_id") or item.get("id") or ""))
+        )
 
     def _exact_title_matches(
         self, query: str, target: str, slug_from_url: str | None

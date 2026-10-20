@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import (
+    CLOSEST_CATALOG_PAPERS,
     PaperMarkdownChunk,
     PaperVersionMismatchError,
     PublicPaperMiss,
@@ -491,8 +492,18 @@ def build_server(
         """Public metadata for a catalog miss, or the original error."""
         record = catalog.public_paper(reference)
         if isinstance(record, PublicPaperMiss):
+            message, _, closest = str(missing).partition(CLOSEST_CATALOG_PAPERS)
+            if not closest:
+                raise ToolError(
+                    f"{message}; it is {NOT_IN_CATALOG} and {PUBLIC_MISSES[record.reason]}"
+                ) from missing
+            # The paper may be in the catalog under another title (a blog or
+            # repository name); the candidates come last so the agent reads
+            # them as the next step, not as part of "not indexed".
             raise ToolError(
-                f"{missing}; it is {NOT_IN_CATALOG} and {PUBLIC_MISSES[record.reason]}"
+                f"{message}; no Papers With Code paper has exactly this title and "
+                f"{PUBLIC_MISSES[record.reason]}. If one of the closest catalog "
+                f"papers is the paper meant, call again with its ID: {closest}"
             ) from missing
         return record
 
