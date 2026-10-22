@@ -32,7 +32,7 @@ to typed projections such as `items` or `evaluations`.
 | `search_papers` | `pwc search` |
 | `get_paper_info` | `pwc paper info` |
 | `get_paper_evaluations` | `pwc paper evaluations` |
-| `read_paper` | `pwc paper read` (64 KiB chunks with a continuation cursor) |
+| `read_paper` | `pwc paper read` (64 KiB chunks with a continuation cursor; MCP-only `offset` starts at a byte already held) |
 | `list_papers` | `pwc paper list` |
 | `list_recent_papers` | `pwc paper recent` |
 | `list_trending_papers` | `pwc paper trending` |
