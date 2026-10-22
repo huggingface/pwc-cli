@@ -709,6 +709,16 @@ def build_server(
                 raise ToolError(catalog_error_message(error)) from error
             offset = start_offset or 0
             content_version = None
+            if offset:
+                # The Papers API rejects a nonzero offset without the content
+                # version, so learn the current version from a one-byte read.
+                try:
+                    probe = catalog.read_paper_chunk(
+                        canonical, offset=0, limit=1, resolved=True
+                    )
+                except (ResponseError, TransportError) as error:
+                    raise ToolError(catalog_error_message(error)) from error
+                content_version = probe.content_version
             limit = read_chunk_bytes
             expires_at = int(time.time()) + CURSOR_LIFETIME_SECONDS
             source = "external" if canonical.isdigit() else "arxiv"
