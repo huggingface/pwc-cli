@@ -195,6 +195,8 @@ class StubCatalog:
         assert resolved is True
         version = "a" * 64
         assert content_version in {None, version}
+        # The Papers API rejects a nonzero offset without the content version.
+        assert offset == 0 or content_version == version
         self.read_calls.append((offset, content_version, limit))
         raw = b"abcdefgh"
         markdown = raw[offset : offset + limit].decode()
@@ -528,7 +530,8 @@ def test_read_paper_starts_at_an_offset_and_then_continues_with_a_cursor():
 
     first, second, both = asyncio.run(exercise())
 
-    assert catalog.read_calls[0] == (2, None, 5)
+    assert catalog.read_calls[0] == (0, None, 1)
+    assert catalog.read_calls[1] == (2, "a" * 64, 5)
     assert first.structured_content["markdown"] == "cdefg"
     assert first.structured_content["truncated"] is True
     assert second.structured_content["markdown"] == "h"
