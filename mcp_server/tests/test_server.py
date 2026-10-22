@@ -505,6 +505,38 @@ class AliasedStubCatalog(StubCatalog):
         return {"1706.03762": "1706.03762", "755": "1706.03762", "1810.04805": "1810.04805"}[paper]
 
 
+def test_read_paper_starts_at_an_offset_and_then_continues_with_a_cursor():
+    catalog = StubCatalog()
+
+    async def exercise():
+        async with Client(build_server(catalog, read_chunk_bytes=5)) as client:
+            first = await client.call_tool(
+                "read_paper", {"paper": "1706.03762", "offset": 2}
+            )
+            second = await client.call_tool(
+                "read_paper",
+                {
+                    "paper": "1706.03762",
+                    "cursor": first.structured_content["next_cursor"],
+                },
+            )
+            both = await client.call_tool(
+                "read_paper",
+                {"paper": "1706.03762", "cursor": "x.y", "offset": 2},
+            )
+        return first, second, both
+
+    first, second, both = asyncio.run(exercise())
+
+    assert catalog.read_calls[0] == (2, None, 5)
+    assert first.structured_content["markdown"] == "cdefg"
+    assert first.structured_content["truncated"] is True
+    assert second.structured_content["markdown"] == "h"
+    assert second.structured_content["next_cursor"] is None
+    assert both.is_error is True
+    assert "pass either cursor or offset, not both" in both.content[0].text
+
+
 def test_read_paper_continues_with_another_reference_to_the_same_paper():
     # Agents start from the arXiv ID and continue with the numeric ID that
     # list tools hand out; the cursor must follow the paper, not the spelling.

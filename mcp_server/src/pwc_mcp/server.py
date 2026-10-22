@@ -270,9 +270,10 @@ ENTITY_PARAMETERS: dict[str, str] = {
     "get_framework": "framework",
     "get_benchmark": "benchmark",
 }
-# Parameters with no CLI flag; ``read_paper`` continues with a signed cursor.
+# Parameters with no CLI flag; ``read_paper`` continues with a signed cursor or
+# starts at a byte offset the caller already holds.
 MCP_ONLY_PARAMETERS: dict[str, frozenset[str]] = {
-    "read_paper": frozenset({"cursor"}),
+    "read_paper": frozenset({"cursor", "offset"}),
     "get_paper_info": frozenset({"repo_limit"}),
     "get_task": frozenset({"benchmark_limit"}),
 }
@@ -652,15 +653,32 @@ def build_server(
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def read_paper(paper: Reference, cursor: str | None = None) -> PaperReadResult:
-        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning. A paper not indexed on Papers With Code returns its public metadata and abstract as Markdown with in_catalog=false and available_at links to cite instead of a Papers With Code page."""
+    def read_paper(
+        paper: Reference,
+        cursor: str | None = None,
+        offset: Annotated[
+            int | None,
+            Field(
+                ge=0,
+                le=2**63 - 1,
+                description="UTF-8 byte offset to start reading from, for text the caller already holds.",
+            ),
+        ] = None,
+    ) -> PaperReadResult:
+        """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning. To continue after text already supplied in context, pass offset (the byte count of that text) with the same paper and no cursor; offset cannot be combined with cursor. A paper not indexed on Papers With Code returns its public metadata and abstract as Markdown with in_catalog=false and available_at links to cite instead of a Papers With Code page."""
         if cursor is not None and cursor.strip().casefold() in PLACEHOLDER_CURSORS:
             # Not a token: nothing was saved to continue from.
             cursor = None
-        return read(paper.strip(), cursor, follow_public=True)
+        if offset is not None and cursor is not None:
+            raise ToolError("pass either cursor or offset, not both")
+        return read(paper.strip(), cursor, follow_public=True, start_offset=offset)
 
     def read(
-        reference: str, cursor: str | None, *, follow_public: bool
+        reference: str,
+        cursor: str | None,
+        *,
+        follow_public: bool,
+        start_offset: int | None = None,
     ) -> PaperReadResult:
         try:
             state = codec.decode(cursor, reference=reference) if cursor else None
@@ -689,7 +707,7 @@ def build_server(
                 if _is_missing_paper(error):
                     return public_read(reference, error, follow=follow_public)
                 raise ToolError(catalog_error_message(error)) from error
-            offset = 0
+            offset = start_offset or 0
             content_version = None
             limit = read_chunk_bytes
             expires_at = int(time.time()) + CURSOR_LIFETIME_SECONDS
