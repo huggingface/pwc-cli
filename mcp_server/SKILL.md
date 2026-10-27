@@ -66,7 +66,7 @@ arguments take an exact name, slug, or ID.
 - `get_paper_lineage({"paper": PAPER})` — list explicit predecessors and successors (`pwc paper lineage list`).
 - `get_task({"task": TASK})` — inspect one exact task, including its area, hierarchy, sister tasks, ranked benchmarks, common methods, recommended frameworks, and trending papers (`pwc task --name`).
 - `list_tasks({"search": SEARCH, "area": AREA, "level": LEVEL, "visible_only": BOOLEAN, "group_by_area": BOOLEAN, "order_by": "name"|"created_at"|"level"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — search, list, and filter research tasks, or set `group_by_area: true` for the complete visible top-level taxonomy without pagination (`pwc task list`).
-- `get_method({"method": METHOD})` — inspect one exact method with its area (`pwc method --name`).
+- `get_method({"method": METHOD})` — inspect one exact method with its area (`pwc method --name`). Methods are general techniques; a miss lists papers matching the name (usually a specific model or system), so call `get_paper_info` with one of their IDs instead of retrying.
 - `list_methods({"search": SEARCH, "area": AREA, "introduced_year": YEAR, "order_by": "name"|"full_name"|"introduced_year"|"created_at"|"paper_count", "order_direction": "asc"|"desc", "page": PAGE, "limit": LIMIT})` — search, list, and filter research methods (`pwc method list`).
 - `get_conference({"conference": CONFERENCE})` — inspect one exact conference (`pwc conference --name`).
 - `list_conferences({"year": YEAR})` — list conferences with imported papers (`pwc conference list`).
