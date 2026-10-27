@@ -45,7 +45,7 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.2.11",
+        "version": "0.2.12",
         "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403

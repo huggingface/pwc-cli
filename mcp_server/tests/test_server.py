@@ -1239,3 +1239,84 @@ def test_list_benchmarks_never_sends_a_minimum_the_api_rejects(arguments, expect
 
     assert result.is_error is False
     assert catalog.queries[0][1]["min_eval_count"] == expected
+
+
+class MethodMissCatalog(StubCatalog):
+    """A method lookup miss followed by the keyword paper search it triggers."""
+
+    def __init__(self, papers=None, search_error=None):
+        super().__init__()
+        self.papers = papers
+        self.search_error = search_error
+
+    def query(self, command, options):
+        self.queries.append((tuple(command), dict(options)))
+        if command == ("method",):
+            raise ResponseError("Method not found: ViLT; closest results: ViT, CLIP")
+        if self.search_error:
+            raise self.search_error
+        return {"next_page": None, "results": self.papers}
+
+
+def test_method_miss_appends_keyword_paper_hits():
+    papers = [
+        dict(
+            PAPER_ROW,
+            id="2102.03334",
+            title=(
+                "ViLT: Vision-and-Language Transformer Without Convolution or "
+                "Region Supervision"
+            ),
+        ),
+        dict(PAPER_ROW, id="901", title="Short Title"),
+    ]
+    catalog = MethodMissCatalog(papers)
+    (result,) = _call(catalog, [("get_method", {"method": "ViLT"})])
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert text.startswith(
+        "Error executing tool get_method: not_found: Method not found: ViLT; "
+        "closest results: ViT, CLIP; papers matching it (likely a model or "
+        "system, not a method): ViLT: Vision-and-Language Transformer Without "
+        "Convolution… (paper 2102.03334)"
+    )
+    assert "(paper 2102.03334); Short Title (paper 901)" in text
+    search = [options for command, options in catalog.queries if command == ("search",)]
+    assert len(search) == 1
+    assert search[0]["query"] == "ViLT"
+    assert search[0]["mode"] == "keyword"
+    assert search[0]["limit"] == 3
+
+
+def test_method_miss_hits_fit_the_chat_error_budget():
+    papers = [
+        dict(PAPER_ROW, id=f"2410.{index:05d}", title="T" * 300) for index in range(10)
+    ]
+    (result,) = _call(MethodMissCatalog(papers), [("get_method", {"method": "ViLT"})])
+
+    message = result.content[0].text.removeprefix("Error executing tool get_method: ")
+    assert message.count("(paper ") == 3
+    assert len(message) <= 400
+
+
+@pytest.mark.parametrize(
+    "search_error",
+    [ResponseError("API returned invalid JSON"), HTTPStatusError(429, "slow down")],
+)
+def test_method_miss_keeps_the_plain_error_when_search_fails(search_error):
+    (result,) = _call(
+        MethodMissCatalog(search_error=search_error),
+        [("get_method", {"method": "ViLT"})],
+    )
+
+    assert result.content[0].text == (
+        "Error executing tool get_method: not_found: Method not found: ViLT; "
+        "closest results: ViT, CLIP"
+    )
+
+
+def test_method_miss_without_paper_hits_keeps_the_plain_error():
+    (result,) = _call(MethodMissCatalog([]), [("get_method", {"method": "ViLT"})])
+
+    assert result.content[0].text.endswith("closest results: ViT, CLIP")

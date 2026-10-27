@@ -97,6 +97,11 @@ CLIENT_FACING_ERRORS = (
     "Papers API did not confirm",
 )
 GENERIC_ERROR = "the Papers With Code catalog request failed"
+# A method miss is usually a specific model or system, which the catalog holds
+# as a paper: append a few keyword-search hits so the agent can go straight to
+# get_paper_info. Chat clients keep about 400 characters of a tool error.
+METHOD_MISS_PAPERS = 3
+METHOD_MISS_TITLE_CHARS = 60
 # Upstream validation failures the caller can correct; the detail is the
 # public API's own message, bounded and stripped of control characters.
 INVALID_ARGUMENT_STATUSES = frozenset({400, 422})
@@ -488,6 +493,35 @@ def build_server(
             if "paper" in parameters and _is_missing_paper(error):
                 raise PaperNotInCatalog(catalog_error_message(error)) from error
             raise ToolError(catalog_error_message(error)) from error
+
+    def method_miss_papers(method: str) -> str:
+        """Keyword-search hits for a method name the catalog does not hold."""
+        try:
+            page = _paper_page(
+                run(
+                    "search_papers",
+                    query=method,
+                    mode="keyword",
+                    page=1,
+                    limit=METHOD_MISS_PAPERS,
+                )
+            )
+        except (ToolError, TypeError):
+            return ""
+        hits = []
+        for paper in page.items[:METHOD_MISS_PAPERS]:
+            title = paper.title.strip()
+            if len(title) > METHOD_MISS_TITLE_CHARS:
+                cut = title[: METHOD_MISS_TITLE_CHARS - 1]
+                words = cut.rsplit(" ", 1)[0] if " " in cut else cut
+                title = words.rstrip(" :,;-") + "…"
+            hits.append(f"{title} (paper {paper.id})")
+        if not hits:
+            return ""
+        return (
+            "; papers matching it (likely a model or system, not a method): "
+            + "; ".join(hits)
+        )
 
     def public_paper(reference: str, missing: ToolError) -> dict[str, Any]:
         """Public metadata for a catalog miss, or the original error."""
@@ -982,7 +1016,12 @@ def build_server(
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_method(method: Entity) -> MethodResult:
         """Get one method by name, full name, slug, ID, or curated keyword alias (`pwc method --name`)."""
-        data = run("get_method", method=method)
+        try:
+            data = run("get_method", method=method)
+        except ToolError as error:
+            if not str(error).startswith("not_found: Method not found"):
+                raise
+            raise ToolError(f"{error}{method_miss_papers(method)}") from error
         item = data.get("method") if isinstance(data, dict) else None
         if not isinstance(item, dict):
             raise TypeError("method response did not contain a method")
