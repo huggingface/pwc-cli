@@ -12,6 +12,34 @@ legacy 2025-era clients from one endpoint, with one tool per `pwc` research
 command: papers, related work, lineage, tasks, methods, conferences,
 organizations, frameworks, benchmarks, and filtered leaderboard evaluations.
 
+A hosted instance runs at `https://paperswithcode.co/mcp`. It needs no API key
+or sign-in. Connect your client:
+
+```bash
+# Claude Code
+claude mcp add --transport http paperswithcode https://paperswithcode.co/mcp
+
+# Codex
+codex mcp add paperswithcode --url https://paperswithcode.co/mcp
+```
+
+For Cursor (`.cursor/mcp.json`) and other clients that read an `mcpServers`
+config:
+
+```json
+{
+  "mcpServers": {
+    "paperswithcode": {
+      "url": "https://paperswithcode.co/mcp"
+    }
+  }
+}
+```
+
+In VS Code (`.vscode/mcp.json`), use `"servers"` with `"type": "http"` and the
+same URL. In Claude.ai or Claude Desktop, add it under Settings → Connectors →
+Add custom connector.
+
 Run it locally with:
 
 ```bash
