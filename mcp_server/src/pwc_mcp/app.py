@@ -264,9 +264,16 @@ class ResponseSizeLimitMiddleware:
         messages: list[Message] = []
         size = 0
         oversized = False
+        streaming = False
 
         async def capture(message: Message) -> None:
-            nonlocal size, oversized
+            nonlocal size, oversized, streaming
+            if message["type"] == "http.response.start":
+                content_type = Headers(raw=message["headers"]).get("content-type", "")
+                streaming = content_type.split(";", 1)[0].strip() == "text/event-stream"
+            if streaming:
+                await send(message)
+                return
             if message["type"] == "http.response.body":
                 size += len(message.get("body", b""))
                 oversized = oversized or size > MAX_RESPONSE_BODY_SIZE

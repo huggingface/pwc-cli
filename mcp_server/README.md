@@ -128,7 +128,9 @@ own rate-limit identity.
 The hosted defaults allow 60 total requests and 10 semantic or hybrid searches per minute
 per client IP, with at most four concurrent requests per IP and 128 globally.
 Tool inputs cap list results at 25, catalog calls time out after 25 seconds, and
-request, upstream, and serialized MCP response bodies are bounded to 2 MiB.
+request, upstream, and serialized JSON MCP response bodies are bounded to 2 MiB.
+MCP subscription event streams forward headers and events immediately, so the
+subscription acknowledgement does not wait for the stream to close.
 The global ceiling is 128 concurrent requests by default.
 Markdown chunks use a bounded 256-entry/16 MiB in-memory cache.
 
