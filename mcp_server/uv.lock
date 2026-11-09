@@ -443,7 +443,7 @@ source = { editable = "../standalone_cli" }
 
 [[package]]
 name = "pwc-mcp"
-version = "0.2.12"
+version = "0.2.13"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

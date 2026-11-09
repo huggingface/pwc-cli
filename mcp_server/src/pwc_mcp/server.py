@@ -947,7 +947,7 @@ def build_server(
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_task(task: Entity, benchmark_limit: ResourceLimit = 10) -> TaskResult:
-        """Get one exact task by name, slug, or ID with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`). Start here for any question about the best or state-of-the-art models for a task, then inspect a leaderboard with get_benchmark."""
+        """Get one task by name, slug, ID, or curated keyword synonym with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`). Start here for any question about the best or state-of-the-art models for a task, then inspect a leaderboard with get_benchmark."""
         data = run("get_task", task=task)
         item = data.get("task") if isinstance(data, dict) else None
         if not isinstance(item, dict):

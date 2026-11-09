@@ -1471,6 +1471,102 @@ def test_method_detail_keyword_alias_must_be_unique(monkeypatch, capsys):
     assert "Method not found: shared" in capsys.readouterr().err
 
 
+def _keyword_task_client(monkeypatch, catalog):
+    calls = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append((path, params))
+            if path == "tasks/" and params.get("q"):
+                payload = {"count": 0, "results": []}
+            elif path == "tasks/":
+                start = (params["page"] - 1) * params["page_size"]
+                payload = {
+                    "count": len(catalog),
+                    "results": catalog[start : start + params["page_size"]],
+                }
+            elif path == "areas/":
+                payload = {"count": 0, "results": []}
+            elif path.endswith("/page"):
+                task_id = path.split("/")[1]
+                task = next(t for t in catalog if t["id"] == task_id)
+                payload = {"task": task, "benchmarks": [], "subtask_benchmarks": []}
+            elif path.endswith("/trending-benchmarks"):
+                payload = {"results": []}
+            else:
+                payload = {"count": 0, "results": []}
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    return calls
+
+
+def _task_catalog_rows(count):
+    return [
+        {"id": str(i), "slug": f"task-{i}", "name": f"Task {i}", "level": 0}
+        for i in range(count)
+    ]
+
+
+def test_task_detail_resolves_keyword_synonym_across_pages(monkeypatch):
+    catalog = _task_catalog_rows(150) + [
+        {
+            "id": "900",
+            "slug": "visual-speech-recognition",
+            "name": "Visual Speech Recognition",
+            "level": 1,
+            "keywords": "visual speech recognition, lip reading, lip-reading, AVSR",
+        }
+    ]
+    calls = _keyword_task_client(monkeypatch, catalog)
+    for alias in ("lip reading", "Lip-Reading", "avsr"):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            assert main(["task", "--name", alias, "--json"]) == 0
+        task = json.loads(output.getvalue())["data"]["task"]
+        assert task["slug"] == "visual-speech-recognition"
+    assert ("tasks/", {"page": 2, "page_size": 100}) in calls
+
+
+def test_task_detail_keyword_prefers_the_only_deepest_match(monkeypatch):
+    catalog = [
+        {
+            "id": "1",
+            "slug": "image-restoration",
+            "name": "Image Restoration",
+            "level": 0,
+            "keywords": "image restoration, dehazing",
+        },
+        {
+            "id": "2",
+            "slug": "image-dehazing",
+            "name": "Image Dehazing",
+            "level": 1,
+            "keywords": "image dehazing, dehazing",
+        },
+    ]
+    _keyword_task_client(monkeypatch, catalog)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["task", "--name", "dehazing", "--json"]) == 0
+    assert json.loads(output.getvalue())["data"]["task"]["slug"] == "image-dehazing"
+
+
+def test_task_detail_keyword_shared_at_one_level_stays_unresolved(
+    monkeypatch, capsys
+):
+    catalog = [
+        {"id": "1", "slug": "a", "name": "Alpha", "level": 0, "keywords": "shared"},
+        {"id": "2", "slug": "b", "name": "Beta", "level": 0, "keywords": "Shared"},
+    ]
+    _keyword_task_client(monkeypatch, catalog)
+    assert main(["task", "--name", "shared"]) != 0
+    assert "Task not found: shared" in capsys.readouterr().err
+
+
 def test_conference_list_filters_complete_response_by_year(monkeypatch):
     payload = {
         "count": 2,
