@@ -1122,6 +1122,49 @@ def _task_match(name: str, items: list[dict[str, Any]]) -> dict[str, Any] | None
     return _normalized_entity_match(name, items, fields)
 
 
+def _task_catalog(client: Client) -> list[dict[str, Any]]:
+    """Return every task; the task list API serves at most 100 per page."""
+    tasks: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        rows, total = _rows(
+            client.get("tasks/", {"page": page, "page_size": 100}).json()
+        )
+        tasks.extend(rows)
+        if not rows or total is None or len(tasks) >= total:
+            return tasks
+        page += 1
+
+
+def _task_keyword_match(
+    reference: str, tasks: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Resolve a curated synonym such as "lip reading" from the tasks' keywords.
+
+    The task search matches names only. Parents often repeat a subtask's
+    keywords ("dehazing" is on Image Restoration and Image Dehazing), so the
+    most specific task wins when it is the only match at the deepest level;
+    any other shared keyword stays unresolved.
+    """
+    target = _normalize_entity_name(reference)
+    if len(target) < 3:
+        return None
+    matches = [
+        task
+        for task in tasks
+        if target
+        in {
+            _normalize_entity_name(keyword)
+            for keyword in str(task.get("keywords") or "").split(",")
+        }
+    ]
+    if not matches:
+        return None
+    deepest = max(int(task.get("level") or 0) for task in matches)
+    specific = [task for task in matches if int(task.get("level") or 0) == deepest]
+    return specific[0] if len(specific) == 1 else None
+
+
 def _task_reference(item: dict[str, Any], *, markdown: bool) -> str:
     name = str(item.get("name") or item.get("slug") or item.get("id") or "Task")
     slug = item.get("slug") or item.get("id")
@@ -1207,7 +1250,9 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
             {"q": args.name, "page": 1, "page_size": 100},
         ).json()
         candidates, _total = _rows(search_payload)
-        summary = _task_match(args.name, candidates)
+        summary = _task_match(args.name, candidates) or _task_keyword_match(
+            args.name, _task_catalog(client)
+        )
         if summary is None:
             suggestions = _closest_names(args.name, candidates)
             suffix = f"; closest results: {suggestions}" if suggestions else ""
