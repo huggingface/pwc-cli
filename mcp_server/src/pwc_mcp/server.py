@@ -580,7 +580,12 @@ def build_server(
             raise missing
         return None
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    def catalog_tool(title: str):
+        """Register a read-only tool; MCP directories require a title on each."""
+        annotations = READ_ONLY.model_copy(update={"title": title})
+        return server.tool(title=title, annotations=annotations, structured_output=True)
+
+    @catalog_tool("Search papers")
     def search_papers(
         query: Query,
         mode: Literal["hybrid", "keyword", "semantic"] = DEFAULT_SEARCH_MODE,
@@ -610,7 +615,7 @@ def build_server(
             + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get paper details")
     def get_paper_info(
         paper: Reference,
         include_resources: bool = False,
@@ -664,7 +669,7 @@ def build_server(
             f"## {result.paper.title}\n\n{result.paper.code_repository_count} code repositories; returned {len(result.paper.repositories)}.",
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get paper evaluations")
     def get_paper_evaluations(
         paper: Reference, page: Page = 1, limit: Limit = 20
     ) -> EvaluationPage:
@@ -686,7 +691,7 @@ def build_server(
             + (f" Next page: {result.next_page}." if result.next_page else ""),
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Read paper full text")
     def read_paper(
         paper: Reference,
         cursor: str | None = None,
@@ -832,7 +837,7 @@ def build_server(
             available_at=available_at(record),
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List papers")
     def list_papers(
         search: str | None = None,
         task: str | None = None,
@@ -875,12 +880,12 @@ def build_server(
             )
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List recent papers")
     def list_recent_papers(limit: Limit = 10) -> PaperPage:
         """List the most recently added papers (`pwc paper recent`)."""
         return _paper_page(run("list_recent_papers", limit=limit))
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List trending papers")
     def list_trending_papers(
         limit: Limit = 20,
         max_age_days: Annotated[int, Field(ge=1, le=365)] = 180,
@@ -896,7 +901,7 @@ def build_server(
             )
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get related papers")
     def get_related_papers(
         paper: Reference, limit: Annotated[int, Field(ge=1, le=20)] = 4
     ) -> PaperPage:
@@ -927,7 +932,7 @@ def build_server(
         result.available_at = available_at(record)
         return _tool_result(result, result.note)
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get paper lineage")
     def get_paper_lineage(paper: Reference) -> PaperLineageResult:
         """Get explicit predecessor and successor papers (`pwc paper lineage list`)."""
         data = run("get_paper_lineage", paper=paper)
@@ -945,7 +950,7 @@ def build_server(
             data=data,
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get task")
     def get_task(task: Entity, benchmark_limit: ResourceLimit = 10) -> TaskResult:
         """Get one task by name, slug, ID, or curated keyword synonym with its hierarchy, ranked benchmarks, common methods, and trending papers (`pwc task --name`). Start here for any question about the best or state-of-the-art models for a task, then inspect a leaderboard with get_benchmark."""
         data = run("get_task", task=task)
@@ -985,7 +990,7 @@ def build_server(
             f"## {result.task.name}\n\n{result.task.paper_count} papers; returned {len(result.task.benchmarks)} benchmarks.",
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List tasks")
     def list_tasks(
         search: str | None = None,
         area: Area | None = None,
@@ -1013,7 +1018,7 @@ def build_server(
             )
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get method")
     def get_method(method: Entity) -> MethodResult:
         """Get one method by name, full name, slug, ID, or curated keyword alias (`pwc method --name`)."""
         try:
@@ -1062,7 +1067,7 @@ def build_server(
             result, f"## {result.method.name}\n\n{result.method.paper_count} papers."
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List methods")
     def list_methods(
         search: str | None = None,
         area: Area | None = None,
@@ -1088,32 +1093,32 @@ def build_server(
             )
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get conference")
     def get_conference(conference: Entity) -> QueryResult:
         """Get one exact conference by name, slug, or ID (`pwc conference --name`)."""
         return QueryResult(data=run("get_conference", conference=conference))
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List conferences")
     def list_conferences(year: int | None = None) -> QueryResult:
         """List conferences with imported papers (`pwc conference list`)."""
         return QueryResult(data=run("list_conferences", year=year))
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get organization")
     def get_organization(organization: Entity) -> QueryResult:
         """Get one exact research organization by name, slug, or ID (`pwc organization --name`)."""
         return QueryResult(data=run("get_organization", organization=organization))
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List organizations")
     def list_organizations(featured_only: bool = False) -> QueryResult:
         """List research organizations (`pwc organization list`)."""
         return QueryResult(data=run("list_organizations", featured_only=featured_only))
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get framework")
     def get_framework(framework: Entity) -> QueryResult:
         """Get one exact research framework by name, slug, or ID (`pwc framework --name`)."""
         return QueryResult(data=run("get_framework", framework=framework))
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List frameworks")
     def list_frameworks(
         domain: str | None = None,
         category: str | None = None,
@@ -1126,7 +1131,7 @@ def build_server(
             )
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("Get benchmark leaderboard")
     def get_benchmark(
         benchmark: Entity,
         page: Page = 1,
@@ -1191,7 +1196,7 @@ def build_server(
             + (f" Note: {metric_note}." if metric_note else ""),
         )
 
-    @server.tool(annotations=READ_ONLY, structured_output=True)
+    @catalog_tool("List benchmarks")
     def list_benchmarks(
         search: str | None = None,
         task: str | None = None,

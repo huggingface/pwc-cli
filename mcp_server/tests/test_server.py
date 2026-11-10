@@ -257,6 +257,12 @@ def test_search_papers_is_a_read_only_structured_tool():
     tools, result = asyncio.run(exercise())
 
     assert tools["search_papers"].annotations.read_only_hint is True
+    # The Claude Connectors Directory requires a title and read-only hint on every tool.
+    for tool in tools.values():
+        assert tool.title
+        assert tool.annotations.title == tool.title
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.destructive_hint is False
     assert tools["search_papers"].input_schema["properties"]["limit"]["maximum"] == 25
     assert tools["search_papers"].input_schema["properties"]["mode"]["enum"] == [
         "hybrid",
