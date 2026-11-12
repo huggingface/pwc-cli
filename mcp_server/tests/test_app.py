@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+import anyio
 from pwc_mcp.app import (
     MAX_RESPONSE_BODY_SIZE,
     ResponseSizeLimitMiddleware,
@@ -45,7 +46,7 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.2.15",
+        "version": "0.2.16",
         "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403
@@ -482,3 +483,47 @@ def test_rate_limits_are_env_configurable_with_hosted_defaults(monkeypatch):
     ) == (7, 3, 2, 64)
     with TestClient(app) as client:
         assert client.get("/health").status_code in {200, 503}
+
+
+def test_event_streams_are_forwarded_before_the_handler_finishes():
+    # A subscriptions/listen stream only ends when the client disconnects, so
+    # its acknowledgement must reach the client while the handler is running.
+    received = []
+    acknowledged = anyio.Event()
+
+    async def listen(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream; charset=utf-8")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": b"event: ack\n\n", "more_body": True}
+        )
+        await acknowledged.wait()
+        await send({"type": "http.response.body", "body": b""})
+
+    async def client_send(message):
+        received.append(message)
+        if message.get("body") == b"event: ack\n\n":
+            acknowledged.set()
+
+    async def empty_receive():
+        return {"type": "http.request", "body": b""}
+
+    async def run():
+        with anyio.fail_after(2):
+            await ResponseSizeLimitMiddleware(listen)(
+                {"type": "http", "path": "/mcp", "method": "POST"},
+                empty_receive,
+                client_send,
+            )
+
+    anyio.run(run)
+    assert [message["type"] for message in received] == [
+        "http.response.start",
+        "http.response.body",
+        "http.response.body",
+    ]
