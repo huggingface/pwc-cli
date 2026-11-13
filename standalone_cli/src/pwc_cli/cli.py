@@ -1122,18 +1122,23 @@ def _task_match(name: str, items: list[dict[str, Any]]) -> dict[str, Any] | None
     return _normalized_entity_match(name, items, fields)
 
 
-def _task_catalog(client: Client) -> list[dict[str, Any]]:
-    """Return every task; the task list API serves at most 100 per page."""
-    tasks: list[dict[str, Any]] = []
+def _full_catalog(client: Client, path: str, page_size: int) -> list[dict[str, Any]]:
+    """Return every row of a paginated list API, page by page."""
+    items: list[dict[str, Any]] = []
     page = 1
     while True:
         rows, total = _rows(
-            client.get("tasks/", {"page": page, "page_size": 100}).json()
+            client.get(path, {"page": page, "page_size": page_size}).json()
         )
-        tasks.extend(rows)
-        if not rows or total is None or len(tasks) >= total:
-            return tasks
+        items.extend(rows)
+        if not rows or total is None or len(items) >= total:
+            return items
         page += 1
+
+
+def _task_catalog(client: Client) -> list[dict[str, Any]]:
+    """Return every task; the task list API serves at most 100 per page."""
+    return _full_catalog(client, "tasks/", 100)
 
 
 def _task_keyword_match(
@@ -1463,7 +1468,7 @@ def _method_keyword_match(
 ) -> dict[str, Any] | None:
     """Resolve a curated alias such as "GDBT" from the methods' keywords.
 
-    The methods search ignores keywords, so callers pass the full list. Only a
+    The methods search ignores keywords, so callers pass every method. Only a
     unique match resolves; an alias shared by several methods stays ambiguous.
     """
     target = _normalize_entity_name(reference)
@@ -1500,9 +1505,8 @@ def method_detail(args: argparse.Namespace, client: Client) -> int:
                 fields=("name", "full_name", "slug", "id"),
             )
         except ResponseError:
-            catalog, _total = _rows(
-                client.get("methods/", {"page": 1, "page_size": 500}).json()
-            )
+            # The method list API serves at most 500 rows per page.
+            catalog = _full_catalog(client, "methods/", 500)
             summary = _method_keyword_match(args.name, catalog)
             if summary is None:
                 raise
