@@ -1423,7 +1423,9 @@ def _keyword_method_client(monkeypatch, catalog):
             if path == "methods/" and params.get("q"):
                 payload = {"count": 0, "results": []}
             elif path == "methods/":
-                payload = {"count": len(catalog), "results": catalog}
+                start = (params["page"] - 1) * params["page_size"]
+                rows = catalog[start : start + params["page_size"]]
+                payload = {"count": len(catalog), "results": rows}
             elif path == "areas/":
                 payload = {"count": 0, "results": []}
             else:
@@ -1459,6 +1461,26 @@ def test_method_detail_resolves_keyword_alias(monkeypatch):
             assert main(["method", "--name", alias, "--json"]) == 0
         assert json.loads(output.getvalue())["data"]["method"]["slug"] == slug
     assert ("methods/", {"page": 1, "page_size": 500}) in calls
+
+
+def test_method_detail_keyword_alias_pages_past_first_page(monkeypatch):
+    catalog = [
+        {"id": str(i), "slug": f"m{i}", "name": f"Method {i}", "keywords": ""}
+        for i in range(500)
+    ] + [
+        {
+            "id": "vae",
+            "slug": "vae",
+            "name": "VAE",
+            "keywords": "VAE, variational autoencoder",
+        }
+    ]
+    calls = _keyword_method_client(monkeypatch, catalog)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["method", "--name", "Variational Autoencoder", "--json"]) == 0
+    assert json.loads(output.getvalue())["data"]["method"]["slug"] == "vae"
+    assert ("methods/", {"page": 2, "page_size": 500}) in calls
 
 
 def test_method_detail_keyword_alias_must_be_unique(monkeypatch, capsys):
