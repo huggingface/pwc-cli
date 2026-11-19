@@ -46,7 +46,7 @@ def test_health_and_browser_origin_policy_are_explicit():
     assert health.json() == {
         "status": "ok",
         "service": "pwc-mcp",
-        "version": "0.2.17",
+        "version": "0.2.18",
         "protocol": "2025-11-25",
     }
     assert rejected.status_code == 403
@@ -527,3 +527,131 @@ def test_event_streams_are_forwarded_before_the_handler_finishes():
         "http.response.body",
         "http.response.body",
     ]
+
+
+def _listen_request(identity_port: int = 1) -> dict:
+    return {
+        "type": "http",
+        "path": "/mcp",
+        "method": "POST",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("203.0.113.9", identity_port),
+    }
+
+
+LISTEN_BODY = b'{"jsonrpc":"2.0","id":1,"method":"subscriptions/listen","params":{}}'
+TOOL_BODY = b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_task"}}'
+
+
+def _receive(body: bytes):
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body}
+        await anyio.sleep_forever()
+
+    return receive
+
+
+def test_open_listen_streams_do_not_take_tool_call_slots():
+    # Idle subscriptions/listen streams once filled the global ceiling and
+    # turned every tool call, including the chat gateway's, into a 503.
+    stream_open = anyio.Event()
+    statuses = []
+
+    async def app(scope, receive, send):
+        message = await receive()
+        start = {"type": "http.response.start", "status": 200}
+        if b"subscriptions/listen" in message["body"]:
+            await send({**start, "headers": [(b"content-type", b"text/event-stream")]})
+            await send({"type": "http.response.body", "body": b": ok\n\n", "more_body": True})
+            stream_open.set()
+            await anyio.sleep_forever()
+        await send({**start, "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    middleware = RateLimitMiddleware(
+        app,
+        request_limit=60,
+        semantic_limit=10,
+        concurrency_limit=1,
+        global_concurrency_limit=1,
+        trust_proxy_headers=False,
+    )
+
+    async def record(message):
+        if message["type"] == "http.response.start":
+            statuses.append(message["status"])
+
+    async def ignore(_message):
+        return None
+
+    async def run():
+        with anyio.fail_after(2):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(middleware, _listen_request(), _receive(LISTEN_BODY), ignore)
+                await stream_open.wait()
+                await middleware(_listen_request(), _receive(TOOL_BODY), record)
+                tg.cancel_scope.cancel()
+
+    anyio.run(run)
+    assert statuses == [200]
+    assert (middleware.global_active, middleware.streams_active) == (0, 0)
+
+
+def test_listen_streams_end_after_their_lifetime():
+    received = []
+
+    async def app(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b": ok\n\n", "more_body": True})
+        await anyio.sleep_forever()
+
+    middleware = RateLimitMiddleware(
+        app,
+        request_limit=60,
+        semantic_limit=10,
+        concurrency_limit=4,
+        global_concurrency_limit=128,
+        trust_proxy_headers=False,
+        stream_lifetime_seconds=0.05,
+    )
+
+    async def client_send(message):
+        received.append(message)
+
+    async def run():
+        with anyio.fail_after(2):
+            await middleware(_listen_request(), _receive(LISTEN_BODY), client_send)
+
+    anyio.run(run)
+    assert received[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+    assert middleware.streams_active == 0
+    assert not middleware.identity_streams
+
+
+def test_listen_stream_pool_saturation_returns_retry_metadata():
+    app = create_app(
+        StubCatalog(),
+        allowed_hosts=["testserver"],
+        global_stream_limit=0,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "subscriptions/listen"},
+        )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json() == {"error": "server_saturated"}

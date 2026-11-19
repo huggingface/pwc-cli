@@ -107,6 +107,12 @@ DEFAULT_REQUEST_LIMIT = 60
 DEFAULT_SEMANTIC_LIMIT = 10
 DEFAULT_CONCURRENCY_LIMIT = 4
 DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 128
+# A subscriptions/listen stream idles until the client disconnects, so it gets
+# its own pool and a bounded lifetime instead of holding a tool-call slot.
+# Clients reconnect when a stream ends.
+DEFAULT_GLOBAL_STREAM_LIMIT = 512
+DEFAULT_STREAM_LIFETIME_SECONDS = 300
+LISTEN_METHOD = "subscriptions/listen"
 # anyio runs synchronous tool functions in a thread pool whose default size (40)
 # would silently cap concurrency below the global ceiling.
 MINIMUM_THREAD_TOKENS = 40
@@ -343,6 +349,16 @@ def _tool_and_semantic(headers: Headers, body: bytes) -> tuple[str | None, bool]
     return tool, tool == "search_papers" and mode in {"semantic", "hybrid"}
 
 
+def _is_listen(headers: Headers, body: bytes) -> bool:
+    if headers.get("mcp-method") == LISTEN_METHOD:
+        return True
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("method") == LISTEN_METHOD
+
+
 def _protocol_label(headers: Headers) -> str:
     value = headers.get("mcp-protocol-version")
     if value is None:
@@ -362,12 +378,18 @@ class RateLimitMiddleware:
         trust_proxy_headers: bool,
         trusted_proxies: tuple[IPNetwork, ...] = (),
         identity_limit: int = 10_000,
+        global_stream_limit: int = DEFAULT_GLOBAL_STREAM_LIMIT,
+        stream_lifetime_seconds: float = DEFAULT_STREAM_LIFETIME_SECONDS,
     ):
         self.app = app
         self.request_limit = request_limit
         self.semantic_limit = semantic_limit
         self.concurrency_limit = concurrency_limit
         self.global_concurrency_limit = global_concurrency_limit
+        self.global_stream_limit = global_stream_limit
+        self.stream_lifetime_seconds = stream_lifetime_seconds
+        self.streams_active = 0
+        self.identity_streams: dict[str, int] = defaultdict(int)
         self.trust_proxy_headers = trust_proxy_headers
         self.trusted_proxies = trusted_proxies
         self.identity_limit = identity_limit
@@ -396,7 +418,12 @@ class RateLimitMiddleware:
             self._trim(requests, now)
             if semantic_requests is not None:
                 self._trim(semantic_requests, now)
-            if not requests and not semantic_requests and not self.active.get(identity):
+            if (
+                not requests
+                and not semantic_requests
+                and not self.active.get(identity)
+                and not self.identity_streams.get(identity)
+            ):
                 self.requests.pop(identity, None)
                 self.semantic_requests.pop(identity, None)
 
@@ -423,19 +450,27 @@ class RateLimitMiddleware:
             await response(scope, receive, send)
             return
         tool, semantic = _tool_and_semantic(headers, body)
+        listen = _is_listen(headers, body)
         scope.setdefault("state", {})["pwc_tool_name"] = tool
         identity = self._identity(
             _client_address(
                 scope, headers, self.trust_proxy_headers, self.trusted_proxies
             )
         )
+        # Listen streams draw from their own pool so idle subscriptions cannot
+        # starve tool calls (including the first-party chat gateway's).
+        active = self.identity_streams if listen else self.active
         now = time.monotonic()
         limited = False
         saturated = False
         requests: deque[float] | None = None
         semantic_requests: deque[float] | None = None
         async with self.lock:
-            saturated = self.global_active >= self.global_concurrency_limit
+            saturated = (
+                self.streams_active >= self.global_stream_limit
+                if listen
+                else self.global_active >= self.global_concurrency_limit
+            )
             if not saturated and (
                 identity not in self.requests
                 and len(self.requests) >= self.identity_limit
@@ -452,7 +487,7 @@ class RateLimitMiddleware:
                 limited = (
                     len(requests) >= self.request_limit
                     or (semantic and len(semantic_requests) >= self.semantic_limit)
-                    or self.active[identity] >= self.concurrency_limit
+                    or active[identity] >= self.concurrency_limit
                 )
             if not limited and not saturated:
                 assert requests is not None
@@ -460,8 +495,11 @@ class RateLimitMiddleware:
                 requests.append(now)
                 if semantic:
                     semantic_requests.append(now)
-                self.active[identity] += 1
-                self.global_active += 1
+                active[identity] += 1
+                if listen:
+                    self.streams_active += 1
+                else:
+                    self.global_active += 1
         if saturated:
             response = JSONResponse(
                 {"error": "server_saturated"},
@@ -479,13 +517,45 @@ class RateLimitMiddleware:
             await response(scope, replay, send)
             return
         try:
-            await self.app(scope, replay, send)
+            if listen:
+                await self._bounded_stream(scope, replay, send)
+            else:
+                await self.app(scope, replay, send)
         finally:
             async with self.lock:
-                self.active[identity] -= 1
-                if self.active[identity] == 0:
-                    self.active.pop(identity, None)
-                self.global_active -= 1
+                active[identity] -= 1
+                if active[identity] == 0:
+                    active.pop(identity, None)
+                if listen:
+                    self.streams_active -= 1
+                else:
+                    self.global_active -= 1
+
+    async def _bounded_stream(self, scope: Scope, receive: Receive, send: Send) -> None:
+        started = False
+        finished = False
+
+        async def track(message: Message) -> None:
+            nonlocal started, finished
+            if message["type"] == "http.response.start":
+                started = True
+            elif message["type"] == "http.response.body" and not message.get(
+                "more_body", False
+            ):
+                finished = True
+            await send(message)
+
+        with anyio.move_on_after(self.stream_lifetime_seconds):
+            await self.app(scope, receive, track)
+        if finished:
+            return
+        if started:
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
+        response = JSONResponse(
+            {"error": "stream_expired"}, status_code=503, headers={"Retry-After": "1"}
+        )
+        await response(scope, receive, send)
 
 
 class OperationalTelemetryMiddleware:
@@ -537,7 +607,19 @@ def create_app(
     global_concurrency_limit: int | None = None,
     trust_proxy_headers: bool = True,
     trusted_proxy_cidrs: str | None = None,
+    global_stream_limit: int | None = None,
+    stream_lifetime_seconds: float | None = None,
 ) -> ASGIApp:
+    if global_stream_limit is None:
+        global_stream_limit = _int_env(
+            "PWC_MCP_GLOBAL_STREAM_LIMIT", DEFAULT_GLOBAL_STREAM_LIMIT
+        )
+    if stream_lifetime_seconds is None:
+        stream_lifetime_seconds = _int_env(
+            "PWC_MCP_STREAM_LIFETIME_SECONDS",
+            DEFAULT_STREAM_LIFETIME_SECONDS,
+            maximum=86_400,
+        )
     if request_limit is None:
         request_limit = _int_env("PWC_MCP_REQUEST_LIMIT", DEFAULT_REQUEST_LIMIT)
     if semantic_limit is None:
@@ -603,6 +685,8 @@ def create_app(
         global_concurrency_limit=global_concurrency_limit,
         trust_proxy_headers=trust_proxy_headers,
         trusted_proxies=trusted_proxies,
+        global_stream_limit=global_stream_limit,
+        stream_lifetime_seconds=stream_lifetime_seconds,
     )
     wrapped = MCPMethodMiddleware(wrapped)
     wrapped = ResponseSizeLimitMiddleware(wrapped)
