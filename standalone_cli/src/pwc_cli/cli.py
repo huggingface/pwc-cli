@@ -1470,6 +1470,8 @@ def _method_keyword_match(
 
     The methods search ignores keywords, so callers pass every method. Only a
     unique match resolves; an alias shared by several methods stays ambiguous.
+    When no keyword matches, curated aliases and trailing acronyms such as the
+    "ICP" in "Iterative Closest Point (ICP)" resolve under the same rule.
     """
     target = _normalize_entity_name(reference)
     if len(target) < 3:
@@ -1483,7 +1485,38 @@ def _method_keyword_match(
             for keyword in str(method.get("keywords") or "").split(",")
         }
     ]
+    if matches:
+        return matches[0] if len(matches) == 1 else None
+    matches = [method for method in methods if target in _method_alias_forms(method)]
     return matches[0] if len(matches) == 1 else None
+
+
+def _trailing_abbreviation(name: str) -> str | None:
+    match = _TRAILING_PARENTHETICAL.search(name)
+    if match is None or _without_abbreviation(name) is None:
+        return None
+    return _normalize_entity_name(match.group(1))
+
+
+def _method_alias_forms(method: dict[str, Any]) -> set[str]:
+    """Name a method by its curated aliases and its names' trailing acronyms.
+
+    "Iterative Closest Point (ICP)" answers to "ICP" without making ICP a
+    paper-tagging keyword, where it would match inside unrelated acronyms.
+    """
+    aliases = [str(alias) for alias in method.get("aliases") or [] if alias]
+    forms = {_normalize_entity_name(alias) for alias in aliases}
+    forms.update(
+        _normalize_entity_name(stem)
+        for alias in aliases
+        if (stem := _without_abbreviation(alias)) is not None
+    )
+    for value in [method.get("name"), method.get("full_name"), *aliases]:
+        abbreviation = _trailing_abbreviation(str(value or ""))
+        if abbreviation:
+            forms.add(abbreviation)
+    forms.discard("")
+    return forms
 
 
 def method_detail(args: argparse.Namespace, client: Client) -> int:
