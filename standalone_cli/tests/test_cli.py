@@ -1533,6 +1533,26 @@ def test_method_detail_resolves_trailing_acronym_and_alias(monkeypatch):
     assert _resolved_method_slug("He Initialization") == "kaiming"
 
 
+def test_method_detail_resolves_acronym_with_digits(monkeypatch, capsys):
+    catalog = [
+        {
+            "id": "1",
+            "slug": "actor-critic",
+            "name": "Actor-Critic",
+            "keywords": "actor-critic",
+            "aliases": ["Advantage Actor-Critic (A2C)"],
+        },
+        {"id": "2", "slug": "w2v", "name": "Word Vectors (W2V)"},
+        {"id": "3", "slug": "v2", "name": "Video Model (V2)"},
+    ]
+    _keyword_method_client(monkeypatch, catalog)
+    assert _resolved_method_slug("A2C") == "actor-critic"
+    assert _resolved_method_slug("Advantage Actor-Critic") == "actor-critic"
+    assert _resolved_method_slug("w2v") == "w2v"
+    assert main(["method", "--name", "V2"]) != 0
+    assert "Method not found: V2" in capsys.readouterr().err
+
+
 def test_method_detail_trailing_acronym_must_be_unique(monkeypatch, capsys):
     catalog = [
         {"id": "1", "slug": "a", "name": "Iterative Closest Point (ICP)"},

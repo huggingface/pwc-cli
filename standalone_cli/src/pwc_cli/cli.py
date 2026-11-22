@@ -1492,10 +1492,21 @@ def _method_keyword_match(
 
 
 def _trailing_abbreviation(name: str) -> str | None:
+    """Read the acronym from a name such as "Advantage Actor-Critic (A2C)".
+
+    Digits in the acronym, like the 2 in A2C, need not appear in the name,
+    but at least two letters must.
+    """
     match = _TRAILING_PARENTHETICAL.search(name)
-    if match is None or _without_abbreviation(name) is None:
+    if match is None:
         return None
-    return _normalize_entity_name(match.group(1))
+    abbreviation = _normalize_entity_name(match.group(1))
+    letters = re.sub(r"[0-9]+", "", abbreviation)
+    if len(letters) < 2:
+        return None
+    if _without_abbreviation(f"{name[: match.start()]} ({letters})") is None:
+        return None
+    return abbreviation
 
 
 def _method_alias_forms(method: dict[str, Any]) -> set[str]:
@@ -1507,9 +1518,9 @@ def _method_alias_forms(method: dict[str, Any]) -> set[str]:
     aliases = [str(alias) for alias in method.get("aliases") or [] if alias]
     forms = {_normalize_entity_name(alias) for alias in aliases}
     forms.update(
-        _normalize_entity_name(stem)
+        _normalize_entity_name(_TRAILING_PARENTHETICAL.sub("", alias))
         for alias in aliases
-        if (stem := _without_abbreviation(alias)) is not None
+        if _trailing_abbreviation(alias)
     )
     for value in [method.get("name"), method.get("full_name"), *aliases]:
         abbreviation = _trailing_abbreviation(str(value or ""))
