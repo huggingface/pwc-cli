@@ -1493,6 +1493,79 @@ def test_method_detail_keyword_alias_must_be_unique(monkeypatch, capsys):
     assert "Method not found: shared" in capsys.readouterr().err
 
 
+def _resolved_method_slug(name):
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["method", "--name", name, "--json"]) == 0
+    return json.loads(output.getvalue())["data"]["method"]["slug"]
+
+
+def test_method_detail_resolves_trailing_acronym_and_alias(monkeypatch):
+    catalog = [
+        {
+            "id": "1326",
+            "slug": "iterative-closest-point",
+            "name": "Iterative Closest Point",
+            "full_name": "Iterative Closest Point (ICP)",
+            "keywords": "iterative closest point",
+        },
+        {
+            "id": "7",
+            "slug": "zero",
+            "name": "ZeRO",
+            "full_name": "Zero Redundancy Optimizer",
+            "keywords": "zero redundancy optimizer",
+            "aliases": ["Fully Sharded Data Parallel (FSDP)"],
+        },
+        {
+            "id": "8",
+            "slug": "kaiming",
+            "name": "Kaiming Initialization",
+            "keywords": "kaiming initialization",
+            "aliases": ["He Initialization"],
+        },
+    ]
+    _keyword_method_client(monkeypatch, catalog)
+    assert _resolved_method_slug("ICP") == "iterative-closest-point"
+    assert _resolved_method_slug("icp") == "iterative-closest-point"
+    assert _resolved_method_slug("FSDP") == "zero"
+    assert _resolved_method_slug("Fully Sharded Data Parallel") == "zero"
+    assert _resolved_method_slug("He Initialization") == "kaiming"
+
+
+def test_method_detail_trailing_acronym_must_be_unique(monkeypatch, capsys):
+    catalog = [
+        {"id": "1", "slug": "a", "name": "Iterative Closest Point (ICP)"},
+        {"id": "2", "slug": "b", "name": "In-Context Policy", "full_name": "In-Context Policy (ICP)"},
+    ]
+    _keyword_method_client(monkeypatch, catalog)
+    assert main(["method", "--name", "ICP"]) != 0
+    assert "Method not found: ICP" in capsys.readouterr().err
+
+
+def test_method_detail_keyword_outranks_trailing_acronym(monkeypatch, capsys):
+    catalog = [
+        {"id": "1", "slug": "a", "name": "Alpha", "keywords": "ABC"},
+        {"id": "2", "slug": "b", "name": "Another Big Car (ABC)"},
+        {"id": "3", "slug": "c", "name": "Gamma", "keywords": "dup"},
+        {"id": "4", "slug": "d", "name": "Delta", "keywords": "dup"},
+        {"id": "5", "slug": "e", "name": "Durable Upper Pass (DUP)"},
+    ]
+    _keyword_method_client(monkeypatch, catalog)
+    assert _resolved_method_slug("ABC") == "a"
+    assert main(["method", "--name", "dup"]) != 0
+    assert "Method not found: dup" in capsys.readouterr().err
+
+
+def test_method_detail_ignores_parenthetical_that_is_not_an_acronym(
+    monkeypatch, capsys
+):
+    catalog = [{"id": "1", "slug": "a", "name": "Swin Transformer (Video)"}]
+    _keyword_method_client(monkeypatch, catalog)
+    assert main(["method", "--name", "Video"]) != 0
+    assert "Method not found: Video" in capsys.readouterr().err
+
+
 def _keyword_task_client(monkeypatch, catalog):
     calls = []
 
