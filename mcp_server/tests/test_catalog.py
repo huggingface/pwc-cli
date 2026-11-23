@@ -310,6 +310,20 @@ def test_catalog_canonicalises_numeric_ids_of_arxiv_papers():
     assert transport.calls[0] == ("papers/86122", {})
 
 
+def test_catalog_resolves_site_reader_and_legacy_paper_urls_without_searching():
+    transport = StubTransport({"papers/4242": {"id": "4242", "arxiv_id": None}})
+    catalog = CatalogClient(transport=transport)
+
+    for url in (
+        "https://paperswithcode.co/pdf/2510.17611",
+        "https://paperswithcode.co/pdf/2510.17611v2",
+        "https://www.paperswithcode.co/papers/2510.17611",
+    ):
+        assert catalog.resolve_paper(url) == "2510.17611"
+    assert catalog.resolve_paper("https://paperswithcode.co/pdf/4242") == "4242"
+    assert transport.calls == [("papers/4242", {})]
+
+
 def test_catalog_rejects_unsupported_urls_without_searching():
     transport = StubTransport({})
     catalog = CatalogClient(transport=transport)

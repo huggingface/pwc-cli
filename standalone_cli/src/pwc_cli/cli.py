@@ -2638,6 +2638,18 @@ def _paper_terminal(item: dict[str, Any]) -> str:
     return f"{title} [{reference}]" if reference else title
 
 
+def _benchmark_by_id(benchmark_id: str, client: Client) -> dict[str, Any] | None:
+    try:
+        item = client.get(f"datasets/{benchmark_id}").json()
+    except HTTPStatusError as error:
+        if error.status == 404:
+            return None
+        raise
+    if not isinstance(item, dict) or str(item.get("id")) != benchmark_id:
+        return None
+    return item
+
+
 def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("benchmark inspection requires --name")
@@ -2647,6 +2659,8 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     ).json()
     candidates, _total = _rows(search_payload)
     benchmark = _benchmark_match(args.name, candidates)
+    if benchmark is None and args.name.strip().isdigit():
+        benchmark = _benchmark_by_id(args.name.strip(), client)
     if benchmark is None:
         suggestions = _closest_names(args.name, candidates)
         suffix = f"; closest results: {suggestions}" if suggestions else ""
