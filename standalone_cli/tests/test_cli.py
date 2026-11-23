@@ -2037,6 +2037,49 @@ def test_benchmark_detail_renders_merged_markdown_leaderboard(monkeypatch):
     ]
 
 
+def test_benchmark_detail_resolves_a_numeric_id_the_name_search_misses(monkeypatch):
+    from pwc_cli.transport import HTTPStatusError
+
+    calls = []
+    details = {
+        "datasets/2737": {
+            "id": "2737",
+            "name": "ETH3D (relative, log-aligned)",
+            "slug": "eth3d-relative-log-aligned",
+        }
+    }
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            calls.append(path)
+            if path == "datasets/" or path.endswith("/evaluations/"):
+                payload = {"count": 0, "results": []}
+            elif path in details:
+                payload = details[path]
+            else:
+                raise HTTPStatusError(404, "Not Found")
+            return Response(json.dumps(payload).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["benchmark", "--name", "2737"]) == 0
+    assert "# ETH3D (relative, log-aligned)" in output.getvalue()
+    assert calls[:3] == [
+        "datasets/",
+        "datasets/2737",
+        "datasets/2737/evaluations/",
+    ]
+
+    assert main(["benchmark", "--name", "404404"]) != 0
+    calls.clear()
+    assert main(["benchmark", "--name", "Missing Bench"]) != 0
+    assert calls == ["datasets/"]
+
+
 def test_benchmark_detail_renders_aligned_table_in_terminal(monkeypatch):
     benchmark_payload = {
         "count": 1,

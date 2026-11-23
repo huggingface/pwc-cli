@@ -285,7 +285,7 @@ class CatalogClient:
                 "www.paperswithcode.co",
             }
             and len(parts) >= 2
-            and parts[0] == "paper"
+            and parts[0] in {"paper", "papers", "pdf"}
         ):
             candidate = parts[1]
         if candidate is None:
