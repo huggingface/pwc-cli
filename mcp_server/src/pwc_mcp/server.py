@@ -9,6 +9,7 @@ checks against the CLI parser.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -19,12 +20,12 @@ from typing import Annotated, Any, Literal, Protocol, TypeVar
 
 from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pwc_cli import queries
 from pwc_cli.cli import UsageError
 from pwc_cli.transport import HTTPStatusError, ResponseError, TransportError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from pwc_mcp import __version__
 from pwc_mcp.catalog import (
@@ -340,10 +341,21 @@ ResourceLimit = Annotated[int, Field(ge=1, le=10)]
 Output = TypeVar("Output", bound=BaseModel)
 
 
-def _tool_result(value: Output, markdown: str) -> CallToolResult:
+def _tool_result(value: BaseModel) -> CallToolResult:
+    """Return the same JSON document as structured content and as text.
+
+    The MCP spec asks for serialized structured content in a text block too;
+    many clients only pass ``content`` to the model.
+    """
+    structured = value.model_dump(mode="json")
     return CallToolResult(
-        content=[TextContent(type="text", text=markdown)],
-        structured_content=value.model_dump(mode="json"),
+        content=[
+            TextContent(
+                type="text",
+                text=json.dumps(structured, ensure_ascii=False, separators=(",", ":")),
+            )
+        ],
+        structured_content=structured,
     )
 
 
@@ -448,6 +460,118 @@ class Catalog(Protocol):
     def public_paper(self, reference: str) -> dict[str, Any] | PublicPaperMiss: ...
 
 
+ARGUMENT_BOUNDS = {
+    "less_than_equal": ("le", "<="),
+    "less_than": ("lt", "<"),
+    "greater_than_equal": ("ge", ">="),
+    "greater_than": ("gt", ">"),
+}
+ARGUMENT_LENGTHS = {
+    "string_too_long": ("max_length", "at most {} characters"),
+    "string_too_short": ("min_length", "at least {} characters"),
+    "too_long": ("max_length", "at most {} items"),
+    "too_short": ("min_length", "at least {} items"),
+}
+
+
+def _argument_error(error: Mapping[str, Any]) -> str:
+    name = ".".join(str(part) for part in error["loc"]) or "arguments"
+    kind = error["type"]
+    context = error.get("ctx") or {}
+    if kind == "missing":
+        return f'missing required argument "{name}"'
+    if kind in ARGUMENT_BOUNDS:
+        key, operator = ARGUMENT_BOUNDS[kind]
+        return f"{name} must be {operator} {context[key]}"
+    if kind in ARGUMENT_LENGTHS:
+        key, template = ARGUMENT_LENGTHS[kind]
+        return f"{name} must have {template.format(context[key])}"
+    if kind == "literal_error":
+        return f"{name} must be one of {context['expected']}"
+    return f"{name}: {error['msg']}"
+
+
+def argument_errors(
+    error: ValidationError, arguments: Mapping[str, Any], known: frozenset[str]
+) -> str:
+    """Summarize invalid tool arguments without pydantic's internals or values."""
+    messages = list(dict.fromkeys(_argument_error(item) for item in error.errors()))
+    unknown = sorted(set(arguments) - known)
+    if unknown:
+        messages.append(
+            "unknown arguments: "
+            + ", ".join(unknown)
+            + "; valid arguments: "
+            + ", ".join(sorted(known))
+        )
+    return "; ".join(messages)
+
+
+# Keywords whose constraint would reject null if folded next to it in ``type``.
+NULL_EXCLUDING = frozenset({"enum", "const", "$ref", "anyOf", "oneOf", "allOf"})
+
+
+def _compact_schema(schema: Any, *, property_map: bool = False) -> Any:
+    """Drop pydantic's generated titles and fold ``anyOf [T, null]`` into ``type``."""
+    if isinstance(schema, list):
+        return [_compact_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    if property_map:
+        return {key: _compact_schema(value) for key, value in schema.items()}
+    compact = {
+        key: _compact_schema(value, property_map=key in {"properties", "$defs"})
+        for key, value in schema.items()
+        if key != "title"
+    }
+    options = compact.get("anyOf")
+    if isinstance(options, list) and len(options) == 2 and {"type": "null"} in options:
+        other = next(option for option in options if option != {"type": "null"})
+        if isinstance(other.get("type"), str) and not other.keys() & NULL_EXCLUDING:
+            del compact["anyOf"]
+            compact = {**other, **compact, "type": [other["type"], "null"]}
+    return compact
+
+
+class CatalogServer(MCPServer):
+    """MCPServer with CLI-style entity names and short argument errors."""
+
+    async def list_tools(self) -> list[Tool]:
+        return [
+            tool.model_copy(
+                update={
+                    "input_schema": _compact_schema(tool.input_schema),
+                    "output_schema": _compact_schema(tool.output_schema),
+                }
+            )
+            for tool in await super().list_tools()
+        ]
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Any = None
+    ) -> Any:
+        entity = ENTITY_PARAMETERS.get(name)
+        if entity and "name" in arguments and entity not in arguments:
+            arguments = {
+                (entity if key == "name" else key): value
+                for key, value in arguments.items()
+            }
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as error:
+            cause = error.__cause__
+            if isinstance(error, UnexpectedToolError) or not isinstance(
+                cause, ValidationError
+            ):
+                raise
+            tool = self._tool_manager.get_tool(name)
+            known = frozenset(tool.parameters.get("properties", {})) if tool else frozenset()
+            raise ToolError(
+                f"Error executing tool {name}: "
+                f"{argument_errors(cause, arguments, known)}"
+            ) from cause
+
+
 def build_server(
     catalog: Catalog,
     *,
@@ -458,7 +582,7 @@ def build_server(
         os.environ.get("PWC_MCP_CURSOR_KEY_CURRENT", ""),
         previous_secret=os.environ.get("PWC_MCP_CURSOR_KEY_PREVIOUS") or None,
     )
-    server = MCPServer(
+    server = CatalogServer(
         "pwc",
         title="Papers With Code",
         description=(
@@ -468,8 +592,8 @@ def build_server(
         instructions=(
             "Use search_papers for relevance and list tools for deterministic filters. "
             "Pass slugs or numeric IDs returned by list tools to exact lookup tools. "
-            "Dates use YYYY-MM-DD. Structured data is in structuredContent; text is a "
-            "short Markdown summary. Official implementation means catalog-designated "
+            "Dates use YYYY-MM-DD. Each result's text is the same JSON document as its "
+            "structuredContent. Official implementation means catalog-designated "
             "official code, not an independent audit. Evaluation is_open describes the "
             "cataloged implementation and may be null when unknown."
         ),
@@ -609,11 +733,7 @@ def build_server(
                 has_official_implementation=has_official_implementation,
             )
         )
-        return _tool_result(
-            result,
-            f"Found {len(result.items)} papers."
-            + (f" Next page: {result.next_page}." if result.next_page else ""),
-        )
+        return _tool_result(result)
 
     @catalog_tool("Get paper details")
     def get_paper_info(
@@ -642,9 +762,8 @@ def build_server(
                     in_catalog=False,
                     note=note,
                     available_at=available_at(record),
-                    data=None,
                 )
-                return _tool_result(result, f"## {detail.title}\n\n{note}")
+                return _tool_result(result)
         if not isinstance(data, dict):
             raise TypeError("paper response did not contain a paper")
         evaluations = data.get("evaluations")
@@ -662,12 +781,8 @@ def build_server(
                 if isinstance(evaluations, dict)
                 else None
             ),
-            data=None,
         )
-        return _tool_result(
-            result,
-            f"## {result.paper.title}\n\n{result.paper.code_repository_count} code repositories; returned {len(result.paper.repositories)}.",
-        )
+        return _tool_result(result)
 
     @catalog_tool("Get paper evaluations")
     def get_paper_evaluations(
@@ -683,13 +798,8 @@ def build_server(
             page=page,
             next_page=_next_page(data),
             evaluations=values,
-            data=None,
         )
-        return _tool_result(
-            result,
-            f"Found {result.evaluation_count} evaluation rows; returned {len(values)} on page {page}."
-            + (f" Next page: {result.next_page}." if result.next_page else ""),
-        )
+        return _tool_result(result)
 
     @catalog_tool("Read paper full text")
     def read_paper(
@@ -710,7 +820,9 @@ def build_server(
             cursor = None
         if offset is not None and cursor is not None:
             raise ToolError("pass either cursor or offset, not both")
-        return read(paper.strip(), cursor, follow_public=True, start_offset=offset)
+        return _tool_result(
+            read(paper.strip(), cursor, follow_public=True, start_offset=offset)
+        )
 
     def read(
         reference: str,
@@ -858,7 +970,7 @@ def build_server(
     ) -> PaperPage:
         """List and filter papers by exact catalog associations in a deterministic order (`pwc paper list`)."""
         _validate_date_range(published_after, published_before)
-        return _paper_page(
+        return _tool_result(_paper_page(
             run(
                 "list_papers",
                 search=search,
@@ -878,12 +990,12 @@ def build_server(
                 page=page,
                 limit=limit,
             )
-        )
+        ))
 
     @catalog_tool("List recent papers")
     def list_recent_papers(limit: Limit = 10) -> PaperPage:
         """List the most recently added papers (`pwc paper recent`)."""
-        return _paper_page(run("list_recent_papers", limit=limit))
+        return _tool_result(_paper_page(run("list_recent_papers", limit=limit)))
 
     @catalog_tool("List trending papers")
     def list_trending_papers(
@@ -892,14 +1004,14 @@ def build_server(
         min_velocity: float | None = None,
     ) -> PaperPage:
         """List trending papers by repository velocity (`pwc paper trending`)."""
-        return _paper_page(
+        return _tool_result(_paper_page(
             run(
                 "list_trending_papers",
                 limit=limit,
                 max_age_days=max_age_days,
                 min_velocity=min_velocity,
             )
-        )
+        ))
 
     @catalog_tool("Get related papers")
     def get_related_papers(
@@ -907,14 +1019,16 @@ def build_server(
     ) -> PaperPage:
         """Find catalog papers related to one paper (`pwc paper related`). A paper not indexed on Papers With Code falls back to a catalog search for its public title, with a note and available_at links for the paper itself."""
         try:
-            return _paper_page(run("get_related_papers", paper=paper, limit=limit))
+            return _tool_result(
+                _paper_page(run("get_related_papers", paper=paper, limit=limit))
+            )
         except PaperNotInCatalog as missing:
             record = public_paper(paper, missing)
             data = catalog_retry(
                 "get_related_papers", paper, record, missing, limit=limit
             )
         if data is not None:
-            return _paper_page(data)
+            return _tool_result(_paper_page(data))
         result = _paper_page(
             run(
                 "search_papers",
@@ -930,7 +1044,7 @@ def build_server(
             "paper itself through available_at, not a Papers With Code page."
         )
         result.available_at = available_at(record)
-        return _tool_result(result, result.note)
+        return _tool_result(result)
 
     @catalog_tool("Get paper lineage")
     def get_paper_lineage(paper: Reference) -> PaperLineageResult:
@@ -939,7 +1053,7 @@ def build_server(
         current = data.get("paper") if isinstance(data, dict) else None
         if not isinstance(current, dict):
             raise TypeError("lineage response did not contain a paper")
-        return PaperLineageResult(
+        return _tool_result(PaperLineageResult(
             paper=paper_reference(current),
             predecessors=[
                 paper_reference(item) for item in _dicts(data.get("predecessors"))
@@ -947,8 +1061,7 @@ def build_server(
             successors=[
                 paper_reference(item) for item in _dicts(data.get("successors"))
             ],
-            data=data,
-        )
+        ))
 
     @catalog_tool("Get task")
     def get_task(task: Entity, benchmark_limit: ResourceLimit = 10) -> TaskResult:
@@ -983,12 +1096,8 @@ def build_server(
                     benchmark_summary(v) for v in _dicts(data.get("benchmarks"))
                 ][:benchmark_limit],
             ),
-            data=None,
         )
-        return _tool_result(
-            result,
-            f"## {result.task.name}\n\n{result.task.paper_count} papers; returned {len(result.task.benchmarks)} benchmarks.",
-        )
+        return _tool_result(result)
 
     @catalog_tool("List tasks")
     def list_tasks(
@@ -1003,7 +1112,7 @@ def build_server(
         limit: Limit | None = None,
     ) -> QueryResult:
         """List and filter research tasks, or group the visible top-level taxonomy by area (`pwc task list`)."""
-        return QueryResult(
+        return _tool_result(QueryResult(
             data=run(
                 "list_tasks",
                 search=search,
@@ -1016,7 +1125,7 @@ def build_server(
                 page=page,
                 limit=limit if limit is not None or group_by_area else MAX_ROWS,
             )
-        )
+        ))
 
     @catalog_tool("Get method")
     def get_method(method: Entity) -> MethodResult:
@@ -1061,11 +1170,8 @@ def build_server(
                 ),
                 paper_count=int(item.get("paper_count") or 0),
             ),
-            data=None,
         )
-        return _tool_result(
-            result, f"## {result.method.name}\n\n{result.method.paper_count} papers."
-        )
+        return _tool_result(result)
 
     @catalog_tool("List methods")
     def list_methods(
@@ -1080,7 +1186,7 @@ def build_server(
         limit: Limit = MAX_ROWS,
     ) -> QueryResult:
         """List and filter research methods (`pwc method list`)."""
-        return QueryResult(
+        return _tool_result(QueryResult(
             data=run(
                 "list_methods",
                 search=search,
@@ -1091,32 +1197,32 @@ def build_server(
                 page=page,
                 limit=limit,
             )
-        )
+        ))
 
     @catalog_tool("Get conference")
     def get_conference(conference: Entity) -> QueryResult:
         """Get one exact conference by name, slug, or ID (`pwc conference --name`)."""
-        return QueryResult(data=run("get_conference", conference=conference))
+        return _tool_result(QueryResult(data=run("get_conference", conference=conference)))
 
     @catalog_tool("List conferences")
     def list_conferences(year: int | None = None) -> QueryResult:
         """List conferences with imported papers (`pwc conference list`)."""
-        return QueryResult(data=run("list_conferences", year=year))
+        return _tool_result(QueryResult(data=run("list_conferences", year=year)))
 
     @catalog_tool("Get organization")
     def get_organization(organization: Entity) -> QueryResult:
         """Get one exact research organization by name, slug, or ID (`pwc organization --name`)."""
-        return QueryResult(data=run("get_organization", organization=organization))
+        return _tool_result(QueryResult(data=run("get_organization", organization=organization)))
 
     @catalog_tool("List organizations")
     def list_organizations(featured_only: bool = False) -> QueryResult:
         """List research organizations (`pwc organization list`)."""
-        return QueryResult(data=run("list_organizations", featured_only=featured_only))
+        return _tool_result(QueryResult(data=run("list_organizations", featured_only=featured_only)))
 
     @catalog_tool("Get framework")
     def get_framework(framework: Entity) -> QueryResult:
         """Get one exact research framework by name, slug, or ID (`pwc framework --name`)."""
-        return QueryResult(data=run("get_framework", framework=framework))
+        return _tool_result(QueryResult(data=run("get_framework", framework=framework)))
 
     @catalog_tool("List frameworks")
     def list_frameworks(
@@ -1125,11 +1231,11 @@ def build_server(
         platform: str | None = None,
     ) -> QueryResult:
         """List research frameworks by domain, category, or platform (`pwc framework list`)."""
-        return QueryResult(
+        return _tool_result(QueryResult(
             data=run(
                 "list_frameworks", domain=domain, category=category, platform=platform
             )
-        )
+        ))
 
     @catalog_tool("Get benchmark leaderboard")
     def get_benchmark(
@@ -1187,14 +1293,8 @@ def build_server(
             page=page,
             next_page=_next_page(data),
             metric_note=metric_note,
-            data=None,
         )
-        return _tool_result(
-            result,
-            f"## {result.benchmark.name}\n\n{result.evaluation_count} evaluation rows; returned {len(result.evaluations)} models on page {page}. Ranks are task-scoped."
-            + (f" Next page: {result.next_page}." if result.next_page else "")
-            + (f" Note: {metric_note}." if metric_note else ""),
-        )
+        return _tool_result(result)
 
     @catalog_tool("List benchmarks")
     def list_benchmarks(
@@ -1257,14 +1357,10 @@ def build_server(
         result = BenchmarkPage(
             items=[benchmark_summary(item) for item in rows],
             next_page=_next_page(data),
+            note="; ".join(notes) or None,
             data=data,
         )
-        summary = f"Found {len(result.items)} benchmarks."
-        if result.next_page:
-            summary += f" Next page: {result.next_page}."
-        for note in notes:
-            summary += f" Note: {note}."
-        return _tool_result(result, summary)
+        return _tool_result(result)
 
     @server.prompt(name="find_papers", title="Find papers")
     def find_papers_prompt(topic: str) -> str:
@@ -1307,7 +1403,7 @@ def build_server(
         mime_type="text/markdown",
     )
     def paper_markdown_resource(paper: str) -> str:
-        result = read_paper(paper)
+        result = read(paper.strip(), None, follow_public=True)
         if result.truncated:
             raise ValueError(
                 "paper is too large for one resource response; use read_paper with its continuation cursor"

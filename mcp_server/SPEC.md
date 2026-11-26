@@ -47,7 +47,14 @@ enforces this against the CLI parser):
 
 Tools run the CLI handlers in-process through the shared cached transport, so
 validation, fail-closed filter confirmation, and the JSON payload are the
-CLI's. Every result includes that payload as `data` beside typed projections.
+CLI's. Every result is one JSON document, sent both as `structuredContent` and
+serialized in the text block. Listing tools and the taxonomy tools without a
+typed projection include the CLI payload as `data` beside typed projections.
+Detail tools (`get_paper_info`, `get_paper_evaluations`, `read_paper`,
+`get_paper_lineage`, `get_task`, `get_method`, `get_benchmark`) return typed
+fields only, with IDs as strings.
+Entity lookups also accept `name`, the CLI flag, for their entity argument, and
+invalid arguments return one short message per problem.
 Terminal-only flags have no parameter. The hosted service caps `limit` at 25,
 returns compact official-first paper resources, and serves `read_paper` in
 chunks. `search_papers` defaults to hybrid mode, the same as `pwc search`.

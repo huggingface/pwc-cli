@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -435,7 +436,8 @@ def test_paper_info_and_reading_use_stable_schemas_and_opaque_continuation():
     assert paper["hf_models"] == []
     assert paper["code_repository_count"] == 595
     assert info.structured_content["evaluations"] is None
-    assert info.structured_content["data"] is None
+    assert "data" not in info.structured_content
+    assert json.loads(info.content[0].text) == info.structured_content
 
     assert catalog.queries[1][1]["include_evals"] is True
     assert evaluated.structured_content["evaluation_count"] == 1
@@ -484,7 +486,7 @@ def test_paper_evaluations_are_paginated_and_compact():
         "page_size": 5,
     }
     assert result.structured_content["next_page"] == 2
-    assert result.structured_content["data"] is None
+    assert "data" not in result.structured_content
     assert (
         result.structured_content["evaluations"][0]["rank_scopes"][0]["task_name"]
         == "Image Classification"
@@ -630,6 +632,9 @@ def test_paper_listing_related_work_and_lineage_are_composable():
     assert lineage.structured_content["successors"] == [
         {"id": "900", "reference": "2001.00001", "title": "A Follow-up"}
     ]
+    assert "data" not in lineage.structured_content
+    for result in (listed, recent, trending, related, lineage):
+        assert json.loads(result.content[0].text) == result.structured_content
 
 
 def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
@@ -690,7 +695,7 @@ def test_taxonomy_and_benchmark_tools_return_stable_catalog_entities():
     }
     assert task.structured_content["task"]["area"] == {"id": "1", "name": "Vision"}
     assert task.structured_content["task"]["benchmarks"][0]["slug"] == "imagenet-1k"
-    assert task.structured_content["data"] is None
+    assert "data" not in task.structured_content
     assert method.structured_content["method"]["introduced_year"] == 2017
     assert benchmarks.structured_content["items"][0]["slug"] == "imagenet-1k"
     assert benchmark.structured_content["matched_count"] == 1
@@ -887,8 +892,8 @@ def test_list_benchmarks_falls_back_instead_of_rejecting_argument_combinations()
     assert catalog.queries[0][1]["order_by"] is None
     assert catalog.queries[0][1]["search"] == "COCO"
     assert trending_search.is_error is False
-    assert "Note: order_by=trending needs task; ordered by name instead." in (
-        trending_search.content[0].text
+    assert trending_search.structured_content["note"] == (
+        "order_by=trending needs task; ordered by name instead"
     )
     assert trending_search.structured_content["items"][0]["slug"] == "imagenet-1k"
 
@@ -896,13 +901,14 @@ def test_list_benchmarks_falls_back_instead_of_rejecting_argument_combinations()
     assert catalog.queries[1][1]["area"] is None
     assert catalog.queries[1][1]["search"] == "HDR"
     assert catalog.queries[1][1]["page_size"] == 10
-    assert "area cannot be combined with filters" in area_with_search.content[0].text
+    assert "area cannot be combined with filters" in (
+        area_with_search.structured_content["note"]
+    )
 
     # A bare limit does not conflict with grouping: the grouped listing ignores it.
     assert catalog.queries[2][1]["area"] == "Vision"
     assert catalog.queries[2][1]["page_size"] is None
-    assert "Note:" not in area_only.content[0].text
-    assert area_only.content[0].text == "Found 1 benchmarks."
+    assert area_only.structured_content["note"] is None
 
 
 def test_read_paper_names_an_identity_mismatch_instead_of_a_generic_failure():
@@ -1326,3 +1332,58 @@ def test_method_miss_without_paper_hits_keeps_the_plain_error():
     (result,) = _call(MethodMissCatalog([]), [("get_method", {"method": "ViLT"})])
 
     assert result.content[0].text.endswith("closest results: ViT, CLIP")
+
+
+def test_entity_tools_accept_the_cli_name_argument():
+    catalog = StubCatalog()
+    (result,) = _call(catalog, [("get_task", {"name": "image-classification"})])
+
+    assert result.is_error is False
+    assert catalog.options(("task",))["name"] == "image-classification"
+
+
+def test_invalid_arguments_return_short_messages_without_pydantic_internals():
+    (missing, too_many, unknown_mode) = _call(
+        StubCatalog(),
+        [
+            ("get_benchmark", {"title": "SWE-Bench Pro", "limit": 3}),
+            ("search_papers", {"query": "agents", "limit": 50}),
+            ("search_papers", {"query": "agents", "mode": "fuzzy"}),
+        ],
+    )
+
+    assert missing.is_error is True
+    message = missing.content[0].text
+    assert message.startswith(
+        'Error executing tool get_benchmark: missing required argument "benchmark"; '
+        "unknown arguments: title; valid arguments: "
+    )
+    assert "pydantic" not in message and "input_value" not in message
+    assert too_many.content[0].text == (
+        "Error executing tool search_papers: limit must be <= 25"
+    )
+    assert unknown_mode.content[0].text == (
+        "Error executing tool search_papers: mode must be one of "
+        "'hybrid', 'keyword' or 'semantic'"
+    )
+
+
+def test_tool_schemas_omit_generated_titles_and_nullable_unions():
+    async def exercise():
+        async with Client(build_server(StubCatalog())) as client:
+            return (await client.list_tools()).tools
+
+    tools = {tool.name: tool for tool in asyncio.run(exercise())}
+    search = tools["search_papers"].input_schema
+
+    assert "title" not in search
+    assert search["properties"]["query"] == {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string",
+    }
+    assert search["properties"]["published_after"]["type"] == ["string", "null"]
+    assert "anyOf" not in search["properties"]["published_after"]
+    assert "title" in tools["get_paper_info"].output_schema["$defs"]["PaperDetail"][
+        "properties"
+    ]

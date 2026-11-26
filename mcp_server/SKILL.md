@@ -12,9 +12,10 @@ command, and every research flag of that command is a tool parameter, so
 results match `pwc ... --json`. If live tool discovery and this skill disagree,
 the discovered tool schemas are authoritative.
 
-Every result carries `schema_version` and `data`, the complete CLI JSON payload
-for the call. Typed fields such as `items`, `paper`, `task`, `evaluations` are
-projections of `data`; read `data` when a projection lacks a detail. Use
+Every result carries `schema_version`. Listing tools and the taxonomy tools
+without a typed projection also carry `data`, the complete CLI JSON payload;
+typed fields such as `items` are projections of it, so read `data` when a
+projection lacks a detail. Detail tools (`get_paper_info`, `get_paper_evaluations`, `read_paper`, `get_paper_lineage`, `get_task`, `get_method`, `get_benchmark`) return typed fields only, with IDs as strings. Use
 structured output directly for filtering, joining, or other schema-dependent
 processing.
 

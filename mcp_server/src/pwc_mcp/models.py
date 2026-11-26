@@ -17,10 +17,13 @@ def _absolute_url(value: object) -> str | None:
     return f"https://paperswithcode.co{url}" if url.startswith("/") else url
 
 
-class QueryResult(OutputModel):
+class ToolResult(OutputModel):
+    schema_version: Literal["v1"] = "v1"
+
+
+class QueryResult(ToolResult):
     """The exact ``data`` document that ``pwc <command> --json`` prints."""
 
-    schema_version: Literal["v1"] = "v1"
     data: Any = Field(
         default=None,
         description="Complete CLI JSON payload for this call; typed fields are projections of it.",
@@ -118,7 +121,7 @@ class PaperEvaluation(OutputModel):
     source_url: str | None = None
 
 
-class PaperInfoResult(QueryResult):
+class PaperInfoResult(ToolResult):
     paper: PaperDetail
     evaluation_count: int | None = None
     evaluations: list[PaperEvaluation] | None = None
@@ -130,8 +133,7 @@ class PaperInfoResult(QueryResult):
     available_at: list[PaperLink] | None = Field(default=None, description=AVAILABLE_AT)
 
 
-class PaperReadResult(OutputModel):
-    schema_version: Literal["v1"] = "v1"
+class PaperReadResult(ToolResult):
     paper: str
     markdown: str
     truncated: bool
@@ -149,7 +151,7 @@ class PaperReference(OutputModel):
     title: str
 
 
-class PaperLineageResult(QueryResult):
+class PaperLineageResult(ToolResult):
     paper: PaperReference
     predecessors: list[PaperReference]
     successors: list[PaperReference]
@@ -188,7 +190,7 @@ class TaskDetail(OutputModel):
     benchmarks: list[BenchmarkSummary]
 
 
-class TaskResult(QueryResult):
+class TaskResult(ToolResult):
     task: TaskDetail
 
 
@@ -205,13 +207,17 @@ class MethodDetail(OutputModel):
     paper_count: int
 
 
-class MethodResult(QueryResult):
+class MethodResult(ToolResult):
     method: MethodDetail
 
 
 class BenchmarkPage(QueryResult):
     items: list[BenchmarkSummary]
     next_page: int | None = None
+    note: str | None = Field(
+        default=None,
+        description="Set when an argument was dropped or changed; explains what was returned instead.",
+    )
 
 
 class EvaluationRankScope(OutputModel):
@@ -251,7 +257,7 @@ class Evaluation(OutputModel):
     uses_additional_data: bool | None = None
 
 
-class BenchmarkResult(QueryResult):
+class BenchmarkResult(ToolResult):
     benchmark: BenchmarkSummary
     evaluation_count: int
     matched_count: int | None = None
@@ -269,7 +275,7 @@ class BenchmarkResult(QueryResult):
     )
 
 
-class EvaluationPage(QueryResult):
+class EvaluationPage(ToolResult):
     paper: str
     evaluation_count: int
     page: int
@@ -301,7 +307,7 @@ def _urls(values: Any) -> list[str]:
 
 def paper_summary(item: dict[str, Any]) -> PaperSummary:
     return PaperSummary(
-        id=str(item.get("id") or ""),
+        id=str(item.get("id") or item.get("paper_id") or ""),
         arxiv_id=_text(item.get("arxiv_id")),
         title=str(item.get("title") or "Untitled paper"),
         authors=[str(author) for author in item.get("authors") or []],

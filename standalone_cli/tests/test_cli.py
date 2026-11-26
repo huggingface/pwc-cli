@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.6`" in skill
+    assert "Generated with `pwc v0.4.7`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -304,7 +304,8 @@ def test_paper_list_forwards_composable_catalog_filters(monkeypatch):
         def get(self, path, params=None):
             calls.append((path, params))
             return Response(
-                b'{"count":0,"results":[],"applied_filters":'
+                b'{"count":1,"results":[{"arxiv_id":"2501.00001","title":"T"}],'
+                b'"applied_filters":'
                 b'{"task":"Image Classification","method":"Vision Transformer",'
                 b'"conference":"CVPR 2026","framework":"vLLM",'
                 b'"organization":"Qwen","authors":['
@@ -661,7 +662,7 @@ def test_benchmark_list_rejects_parent_parameter_filter(monkeypatch, capsys):
     )
 
 
-def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatch):
+def test_task_benchmark_list_uses_frontend_ranking_and_captured_tsv(monkeypatch):
     calls = []
     payload = {
         "task_id": "18",
@@ -714,12 +715,11 @@ def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatc
 
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
     assert calls[0][1]["min_recent_papers"] == 0
-    rows = output.getvalue().splitlines()
-    assert rows[0].split() == [
+    rows = [row.split("\t") for row in output.getvalue().splitlines()]
+    assert rows[0] == [
         "id",
         "slug",
         "name",
-        "description",
         "hf_url",
         "recent_papers",
         "ranking_score",
@@ -727,9 +727,14 @@ def test_task_benchmark_list_uses_frontend_ranking_and_aligned_output(monkeypatc
         "paper_title",
         "code",
     ]
-    assert "Recent OCR benchmark." in rows[1]
-    assert "https://huggingface.co/datasets/example/recent-ocr" in rows[1]
-    assert "Classic OCR" in rows[2]
+    assert "Recent OCR benchmark." not in output.getvalue()
+    assert rows[1][:4] == [
+        "2",
+        "recent-ocr",
+        "Recent OCR",
+        "https://huggingface.co/datasets/example/recent-ocr",
+    ]
+    assert rows[2][2] == "Classic OCR"
 
 
 def test_task_filter_takes_precedence_over_grouped_benchmark_display(
@@ -764,20 +769,22 @@ def test_task_filter_takes_precedence_over_grouped_benchmark_display(
 
     captured = capsys.readouterr()
     assert calls[0][0] == "tasks/OCR/trending-benchmarks"
-    assert captured.out.startswith("id  slug        name")
+    assert captured.out.startswith("id\tslug\tname\thf_url\t")
     assert captured.err == (
         "# filters select task-scoped flat output; --group-by-area ignored\n"
     )
 
 
-def test_flat_benchmark_list_aligns_captured_column_widths(monkeypatch, capsys):
+def test_flat_benchmark_list_omits_descriptions_and_uses_captured_tsv(
+    monkeypatch, capsys
+):
     payload = {
         "count": 2,
         "results": [
             {
                 "id": "2",
                 "name": "Short",
-                "description": "Short description",
+                "description": "Short description.\n\nSecond paragraph.",
                 "hf_url": None,
                 "full_name": "S",
                 "paper_count": 3,
@@ -803,18 +810,14 @@ def test_flat_benchmark_list_aligns_captured_column_widths(monkeypatch, capsys):
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     assert main(["benchmark", "list", "--flat"]) == 0
 
-    rows = capsys.readouterr().out.splitlines()
-    assert rows[0].split() == [
-        "id",
-        "name",
-        "description",
-        "hf_url",
-        "full_name",
-        "evals",
+    output = capsys.readouterr().out
+    assert "description" not in output
+    assert output.splitlines() == [
+        "id\tname\thf_url\tfull_name\tevals",
+        "2\tShort\t\tS\t3",
+        "10\tLonger Name\thttps://huggingface.co/datasets/example/longer"
+        "\tFull benchmark name\t12",
     ]
-    assert "Short description" in rows[1]
-    assert "Longer benchmark description" in rows[2]
-    assert "https://huggingface.co/datasets/example/longer" in rows[2]
 
 
 def test_benchmark_list_groups_top_benchmarks_as_markdown(monkeypatch):
@@ -1912,7 +1915,7 @@ def test_unknown_area_lists_valid_choices(monkeypatch):
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     errors = io.StringIO()
     with redirect_stderr(errors):
-        assert main(["task", "list", "--area", "Robotics"]) == 4
+        assert main(["task", "list", "--area", "Robotics"]) == 5
     assert errors.getvalue() == (
         "pwc: Area not found: Robotics; available areas: Audio, Vision\n"
     )
@@ -2627,7 +2630,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.6\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.7\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -2820,7 +2823,7 @@ def test_ambiguous_paper_title_is_rejected_with_matches(monkeypatch):
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     errors = io.StringIO()
     with redirect_stderr(errors):
-        assert main(["paper", "info", title]) == 4
+        assert main(["paper", "info", title]) == 5
     assert errors.getvalue() == (
         "pwc: Paper title is ambiguous: A Shared Title; "
         "A Shared Title (2501.00001); A Shared Title (2501.00002)\n"
@@ -2873,11 +2876,11 @@ def test_paper_info_renders_metadata_and_abstract_sections(monkeypatch):
         "\n"
         "### Predecessors\n"
         "\n"
-        "- None\n"
+        "- No explicit catalog links (this does not mean none exist)\n"
         "\n"
         "### Successors\n"
         "\n"
-        "- None\n"
+        "- No explicit catalog links (this does not mean none exist)\n"
     )
 
 
@@ -2976,11 +2979,11 @@ def test_paper_info_renders_linked_resources_when_requested(monkeypatch):
         "\n"
         "### Predecessors\n"
         "\n"
-        "- None\n"
+        "- No explicit catalog links (this does not mean none exist)\n"
         "\n"
         "### Successors\n"
         "\n"
-        "- None\n"
+        "- No explicit catalog links (this does not mean none exist)\n"
         "\n"
         "## Repositories\n"
         "\n"
@@ -3160,7 +3163,7 @@ def test_paper_lineage_renders_linked_markdown_sections(monkeypatch):
         "\n"
         "## Successors\n"
         "\n"
-        "- None\n"
+        "- No explicit catalog links (this does not mean none exist)\n"
     )
 
 
@@ -3522,8 +3525,7 @@ def test_paper_outside_the_catalog_shows_where_it_is_available(
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     output, errors = io.StringIO(), io.StringIO()
     with redirect_stdout(output), redirect_stderr(errors):
-        # The exit status and stdout of a miss are unchanged for scripts.
-        assert main(["paper", command, "2610.18869", *json_flag]) == 3
+        assert main(["paper", command, "2610.18869", *json_flag]) == 5
 
     assert output.getvalue() == ""
     assert errors.getvalue() == (
@@ -3540,18 +3542,18 @@ def test_paper_outside_the_catalog_shows_where_it_is_available(
         "\n"
         "An abstract.\n"
         "\n"
-        'pwc: API request failed (404): {"detail":"Paper not found"}\n'
+        "pwc: Paper not indexed on Papers With Code: 2610.18869\n"
     )
     assert paths[-1] == "papers/2610.18869/public-metadata"
 
 
-def test_paper_title_outside_the_catalog_keeps_its_exit_status(monkeypatch):
+def test_paper_title_outside_the_catalog_exits_not_found(monkeypatch):
     path = "papers/Some%20Unindexed%20Title/public-metadata"
     Client, _paths = _outside_catalog_client({path: PUBLIC_METADATA})
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     errors = io.StringIO()
     with redirect_stdout(io.StringIO()), redirect_stderr(errors):
-        assert main(["paper", "info", "Some Unindexed Title"]) == 4
+        assert main(["paper", "info", "Some Unindexed Title"]) == 5
 
     assert errors.getvalue().startswith("Not indexed on Papers With Code — available at:\n")
     assert errors.getvalue().endswith(
@@ -3559,16 +3561,14 @@ def test_paper_title_outside_the_catalog_keeps_its_exit_status(monkeypatch):
     )
 
 
-def test_paper_unknown_everywhere_keeps_the_plain_error(monkeypatch):
+def test_paper_unknown_everywhere_prints_the_api_detail(monkeypatch):
     Client, paths = _outside_catalog_client({})
     monkeypatch.setattr("pwc_cli.cli.Client", Client)
     errors = io.StringIO()
     with redirect_stdout(io.StringIO()), redirect_stderr(errors):
-        assert main(["paper", "info", "2610.99999"]) == 3
+        assert main(["paper", "info", "2610.99999"]) == 5
 
-    assert errors.getvalue() == (
-        'pwc: API request failed (404): {"detail":"Paper not found"}\n'
-    )
+    assert errors.getvalue() == "pwc: Paper not found\n"
     assert paths == ["papers/2610.99999", "papers/2610.99999/public-metadata"]
 
 
@@ -3604,3 +3604,216 @@ def test_embedded_paper_queries_do_not_call_the_public_metadata_api():
     with pytest.raises(HTTPStatusError):
         query(("paper", "info"), {"paper": "2610.18869"}, Client())
     assert not any(path.endswith("/public-metadata") for path in paths)
+
+
+def _routed_client(routes, calls=None):
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            if calls is not None:
+                calls.append((path, params))
+            route = routes[path]
+            if isinstance(route, Exception):
+                raise route
+            return Response(json.dumps(route).encode(), {})
+
+    return Client
+
+
+def test_api_not_found_exits_five_with_the_readable_detail(monkeypatch, capsys):
+    detail = {
+        "detail": "No paper found for identifier '9999.99999'",
+        "code": "paper_not_in_catalog",
+    }
+    Client = _routed_client(
+        {
+            "papers/9999.99999": HTTPStatusError(404, json.dumps(detail)),
+            "papers/9999.99999/public-metadata": HTTPStatusError(404, "{}"),
+        }
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "info", "9999.99999"]) == 5
+    assert capsys.readouterr().err == (
+        "pwc: No paper found for identifier '9999.99999'\n"
+    )
+
+
+def test_server_failures_keep_exit_three(monkeypatch, capsys):
+    Client = _routed_client(
+        {"papers/recent": HTTPStatusError(503, '{"detail":"unavailable"}')}
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "recent"]) == 3
+    assert capsys.readouterr().err == (
+        'pwc: API request failed (503): {"detail":"unavailable"}\n'
+    )
+
+
+def test_unknown_entity_name_exits_not_found(monkeypatch, capsys):
+    Client = _routed_client(
+        {"conferences/": {"results": [{"name": "NeurIPS 2025", "slug": "neurips-2025"}]}}
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["conference", "--name", "NeurIPS 2099"]) == 5
+    assert capsys.readouterr().err == (
+        "pwc: Conference not found: NeurIPS 2099; closest results: NeurIPS 2025\n"
+    )
+
+
+def _paper_list_payload(results, **applied):
+    return {"count": len(results), "results": results, "applied_filters": applied}
+
+
+def test_paper_list_rejects_an_unknown_conference_with_no_results(
+    monkeypatch, capsys
+):
+    calls = []
+    Client = _routed_client(
+        {
+            "papers/": _paper_list_payload([], conference="NeurIPS 2099"),
+            "conferences/": {
+                "results": [
+                    {"name": "NeurIPS 2025", "slug": "neurips-2025"},
+                    {"name": "CVPR 2025", "slug": "cvpr-2025"},
+                ]
+            },
+        },
+        calls,
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--conference", "NeurIPS 2099"]) == 5
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "pwc: Conference not found: NeurIPS 2099; closest results: NeurIPS 2025\n"
+    )
+    assert [path for path, _params in calls] == ["papers/", "conferences/"]
+
+
+def test_paper_list_keeps_empty_results_for_a_known_conference(monkeypatch, capsys):
+    Client = _routed_client(
+        {
+            "papers/": _paper_list_payload([], conference="NeurIPS"),
+            "conferences/": {
+                "results": [
+                    {"name": "NeurIPS 2025", "slug": "neurips-2025", "short_name": "NeurIPS"}
+                ]
+            },
+        }
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--conference", "NeurIPS"]) == 0
+    assert capsys.readouterr().out == "id\ttitle\tyear\tcitations\n"
+
+
+def test_paper_list_skips_filter_lookups_when_results_exist(monkeypatch, capsys):
+    calls = []
+    Client = _routed_client(
+        {
+            "papers/": _paper_list_payload(
+                [{"arxiv_id": "2501.00001", "title": "A Paper"}],
+                conference="Unlisted Venue",
+            )
+        },
+        calls,
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--conference", "Unlisted Venue"]) == 0
+    assert [path for path, _params in calls] == ["papers/"]
+
+
+def test_paper_list_unknown_task_suggests_close_names(monkeypatch, capsys):
+    tasks = {
+        "count": 1,
+        "results": [{"id": "1", "name": "Image Classification", "slug": "image-classification"}],
+    }
+    Client = _routed_client(
+        {
+            "papers/": HTTPStatusError(
+                404, '{"detail":"Task \'Imag Classifcation\' not found"}'
+            ),
+            "tasks/": tasks,
+        }
+    )
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+
+    assert main(["paper", "list", "--task", "Imag Classifcation"]) == 5
+    assert capsys.readouterr().err == (
+        "pwc: Task not found: Imag Classifcation; "
+        "closest results: Image Classification\n"
+    )
+
+
+def test_paper_info_shows_taxonomy_tldr_and_proceeding(monkeypatch, capsys):
+    payload = {
+        "arxiv_id": "1706.03762",
+        "title": "Attention Is All You Need",
+        "conference": "attention-is-all-you-need-1",
+        "conference_name": None,
+        "proceeding": "NeurIPS 2017 12",
+        "tasks": [{"name": "Machine Translation"}, {"name": "Language Modeling"}],
+        "methods": [{"name": "Transformer"}, {"slug": "adam"}],
+        "tldr": "Attention alone suffices.",
+    }
+    monkeypatch.setattr(
+        "pwc_cli.cli.Client", _routed_client({"papers/1706.03762": payload})
+    )
+
+    assert main(["paper", "info", "1706.03762"]) == 0
+    output = capsys.readouterr().out
+    assert "attention-is-all-you-need-1" not in output
+    assert output.startswith(
+        "id: 1706.03762\n"
+        "title: Attention Is All You Need\n"
+        "conference: NeurIPS 2017\n"
+        "tasks: Machine Translation, Language Modeling\n"
+        "methods: Transformer, adam\n"
+        "official_implementation: false\n"
+        "tldr: Attention alone suffices.\n"
+    )
+
+
+def test_paper_info_prefers_the_linked_conference_name(monkeypatch, capsys):
+    payload = {
+        "arxiv_id": "2501.00001",
+        "conference": "cvpr-2025",
+        "conference_name": "CVPR 2025",
+        "proceeding": "CVPR 2025 Oral",
+    }
+    monkeypatch.setattr(
+        "pwc_cli.cli.Client", _routed_client({"papers/2501.00001": payload})
+    )
+
+    assert main(["paper", "info", "2501.00001"]) == 0
+    output = capsys.readouterr().out
+    assert "conference: CVPR 2025\nproceeding: CVPR 2025 Oral\n" in output
+
+
+def test_paper_info_caps_listed_repositories(monkeypatch, capsys):
+    repositories = [
+        {"url": f"https://github.com/example/repo-{index}", "is_official": False}
+        for index in range(14)
+    ]
+    repositories.append({"url": "https://github.com/example/official", "is_official": True})
+    payload = {"arxiv_id": "2501.00001", "repositories": repositories}
+    monkeypatch.setattr(
+        "pwc_cli.cli.Client", _routed_client({"papers/2501.00001": payload})
+    )
+
+    assert main(["paper", "info", "2501.00001", "--include-resources"]) == 0
+    section = capsys.readouterr().out.split("## Repositories\n\n")[1]
+    lines = section.splitlines()
+    assert lines[0] == "- **Official:** https://github.com/example/official"
+    assert len(lines) == 11
+    assert lines[-1] == "- … and 5 more (use --json for all)"
+
+    assert main(["paper", "info", "2501.00001", "--include-resources", "--json"]) == 0
+    assert len(json.loads(capsys.readouterr().out)["data"]["repositories"]) == 15

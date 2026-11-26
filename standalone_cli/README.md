@@ -31,14 +31,19 @@ exact title. Title matching is case-insensitive and rejects ambiguity.
 When `pwc paper info` or `pwc paper read` names a paper Papers With Code has not
 indexed, stderr shows "Not indexed on Papers With Code — available at:" with its
 public links (arXiv, Hugging Face Papers, DOI, code) and metadata from the
-`papers/{reference}/public-metadata` API. Stdout and the not-found exit status
-are unchanged; an arXiv or Hugging Face URL the API maps to a catalog paper is
-read from the catalog.
+`papers/{reference}/public-metadata` API. Stdout stays empty and the command
+exits 5 (not found); an arXiv or Hugging Face URL the API maps to a catalog
+paper is read from the catalog.
 
 `pwc paper info PAPER --include-evals` fetches every evaluation associated with
 the resolved paper. Human-readable output adds an Evaluations Markdown table;
 `--json` adds an `evaluations` object containing `count` and `results`.
-Normal paper-info output includes the names of tagged organizations when present.
+Normal paper-info output includes the names of tagged organizations, tasks, and
+methods, the TL;DR, and the conference (the linked catalog conference, else the
+proceeding string) when present. `--include-resources` lists at most 10
+repositories and 10 project pages, official ones first, and notes how many more
+`--json` holds. Paper lineage covers explicit catalog links only, so an empty
+predecessor or successor list does not mean none exist.
 
 Task lists and benchmark lists render grouped Markdown in a terminal. Use
 `--flat` for paginated tables or `--group-by-area` to force Markdown when
@@ -46,12 +51,12 @@ piping. Task, search, pagination, ordering, and open-model filters take
 precedence over `--group-by-area` and select task-scoped flat output. Grouped
 benchmarks include their name, full name when distinct, slug, and ID.
 Task-scoped benchmark lists also include the slug and ID alongside the best
-model, paper, and code repository, using aligned columns even when output is
-captured by an agent or another process. Inspect one with
+model, paper, and code repository. Flat benchmark tables omit descriptions;
+`--json` and `pwc benchmark --name IDENTIFIER` keep them. Inspect one with
 `pwc benchmark --name IDENTIFIER`; either identifier is accepted. Benchmark
 details use an aligned table in a terminal and Markdown when piped or captured.
-Other list and search output uses aligned columns in a terminal and lossless
-TSV when captured.
+Other list and search output, including flat benchmark lists, uses aligned
+columns in a terminal and lossless TSV when captured.
 
 Paper discovery commands accept `--implementation-coverage` to add
 `official_implementation` and `code_repositories` columns. JSON and
@@ -116,7 +121,12 @@ includes a Parameters column; JSON retains the exact `num_parameters` integer.
 compatible versioned API origin; it defaults to
 `https://paperswithcode.co/api/v1`. Run `pwc --help` for the complete read-only
 command tree. The stable exit codes are 0 (success), 2 (usage), 3 (network or
-server failure), and 4 (invalid response).
+server failure), 4 (invalid response), and 5 (not found or no unique match: an
+unknown paper, an ambiguous or unknown title, or an unknown task, method,
+benchmark, conference, organization, framework, or area). `pwc paper list`
+checks its `--task`, `--method`, `--conference`, `--framework`, and
+`--organization` values when a filtered list comes back empty or the API
+rejects one, and exits 5 with close matches if a name does not resolve.
 
 Install the version-matched Skill for coding agents with `pwc skills add`.
 Add `--global` to use `~/.agents/skills`, `--claude` to also link it for Claude

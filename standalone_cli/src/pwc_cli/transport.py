@@ -31,6 +31,10 @@ class ResponseError(RuntimeError):
     pass
 
 
+class NotFoundError(ResponseError):
+    pass
+
+
 @dataclass(frozen=True)
 class Response:
     body: bytes
