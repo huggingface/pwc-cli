@@ -31,6 +31,10 @@ MODERN_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}(?:v\d+)?$", re.IGNORECASE)
 LEGACY_ARXIV_ID = re.compile(r"^[a-z][a-z0-9.-]+/\d{7}(?:v\d+)?$", re.IGNORECASE)
 PARAMETER_SIZE = re.compile(r"^(\d(?:_?\d)*(?:\.\d(?:_?\d)*)?)([mb])?$", re.IGNORECASE)
 MAX_PARAMETER_LIMIT = 2**63 - 2
+READ_MAX_BYTES = 262_144
+SITE_URL = "https://paperswithcode.co"
+RELATIVE_MARKDOWN_LINK = re.compile(r"\]\((/[^)\s]*)\)")
+MISSING_AUTHOR = re.compile(r"^Author '(.+)' not found$")
 
 
 class UsageError(ValueError):
@@ -59,6 +63,14 @@ def _page(value: str) -> int:
 
 def _page_size(value: str) -> int:
     return _bounded(int(value), 1, 100, "--page-size")
+
+
+def _read_bytes(value: str) -> int:
+    return _bounded(int(value), 1, READ_MAX_BYTES, "--max-bytes")
+
+
+def _offset(value: str) -> int:
+    return _bounded(int(value), 0, 2**63 - 1, "--offset")
 
 
 def _benchmarks_per_task(value: str) -> int:
@@ -171,6 +183,11 @@ def _print_table(
             else:
                 cells.append(value.ljust(widths[index]))
         print("  ".join(cells))
+
+
+def _absolute_links(text: str) -> str:
+    """Make site-relative Markdown links absolute so terminals can open them."""
+    return RELATIVE_MARKDOWN_LINK.sub(rf"]({SITE_URL}\1)", text)
 
 
 def _rows(payload: Any) -> tuple[list[dict[str, Any]], int | None]:
@@ -452,6 +469,18 @@ def _emit_page(
     return 0
 
 
+def _paginate(items: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
+    """Page a catalog the API returns whole, in the shape of the paged endpoints."""
+    start = (args.page - 1) * args.page_size
+    more = start + args.page_size < len(items)
+    return {
+        "count": len(items),
+        "page": args.page,
+        "next_page": args.page + 1 if more else None,
+        "results": items[start : start + args.page_size],
+    }
+
+
 def _emit_paper_page(payload: Any, args: argparse.Namespace) -> int:
     return _emit_page(
         payload,
@@ -488,9 +517,12 @@ def _validate_date_range(args: argparse.Namespace) -> None:
 
 
 def search(args: argparse.Namespace, client: Client) -> int:
+    query = args.query.strip()
+    if not query:
+        raise UsageError("search query must not be empty")
     _validate_date_range(args)
     params = {
-        "q": args.query,
+        "q": query,
         "page": args.page,
         "page_size": args.limit,
         "mode": args.mode,
@@ -694,13 +726,30 @@ def _paper_info_lineage_markdown(item: dict[str, Any]) -> str:
 
 def paper_read(args: argparse.Namespace, client: Client) -> int:
     paper = _resolve_paper(args.paper, client)
-    response = client.get(f"research/papers/{quote(paper, safe='.')}/read")
+    path = f"research/papers/{quote(paper, safe='.')}/read"
+    chunked = args.offset is not None or args.max_bytes is not None
+    offset = args.offset or 0
+    params: dict[str, object | None] = {}
+    if chunked:
+        params = {"offset": offset, "limit": args.max_bytes or READ_MAX_BYTES}
+    if offset:
+        # A nonzero offset must name the content version it continues.
+        probe = client.get(path, {"offset": 0, "limit": 1})
+        params["content_version"] = probe.headers.get("x-pwc-content-version")
+    response = client.get(path, params or None)
     markdown = response.body.decode("utf-8", errors="replace")
+    next_text = response.headers.get("x-pwc-next-offset") if chunked else None
+    next_offset = int(next_text) if next_text else None
     if args.json:
-        return _emit_json(args, {"paper": paper, "markdown": markdown})
+        data: dict[str, Any] = {"paper": paper, "markdown": markdown}
+        if chunked:
+            data.update(offset=offset, next_offset=next_offset)
+        return _emit_json(args, data)
     sys.stdout.write(markdown)
     if markdown and not markdown.endswith("\n"):
         sys.stdout.write("\n")
+    if next_offset is not None:
+        print(f"# more: rerun with --offset {next_offset}", file=sys.stderr)
     return 0
 
 
@@ -831,6 +880,9 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
     try:
         payload = client.get("papers/", params).json()
     except HTTPStatusError as error:
+        missing = MISSING_AUTHOR.match(_http_error_detail(error))
+        if args.author and error.status == 404 and missing:
+            raise _author_not_found(missing.group(1), client) from error
         if args.author and error.status in {404, 409, 422}:
             raise UsageError(_author_filter_error_message(error)) from error
         if error.status == 404:
@@ -903,6 +955,21 @@ def _authors_confirmed(requested: list[str], applied: object) -> bool:
         any(matches(reference, author) for author in applied)
         for reference in requested
     )
+
+
+def _author_not_found(reference: str, client: Client) -> NotFoundError:
+    try:
+        payload = client.get("authors/", {"search": reference, "page_size": 5}).json()
+        candidates, _total = _rows(payload)
+    except (TransportError, ResponseError):
+        candidates = []
+    choices = [
+        f"{item['full_name']} (--author {item['id']})"
+        for item in candidates
+        if item.get("full_name") and str(item.get("id", "")).isdigit()
+    ][:3]
+    suffix = f"; closest results: {', '.join(choices)}" if choices else ""
+    return NotFoundError(f"Author not found: {reference}{suffix}")
 
 
 def _author_filter_error_message(error: HTTPStatusError) -> str:
@@ -1388,7 +1455,9 @@ def task_detail(args: argparse.Namespace, client: Client) -> int:
     if metadata:
         print(f"\n{' · '.join(metadata)}")
     if task.get("description"):
-        description = str(task["description"]).replace("\r", " ").replace("\n", " ")
+        description = _absolute_links(
+            str(task["description"]).replace("\r", " ").replace("\n", " ")
+        )
         print(f"\n{_markdown_text(description) if markdown else description}")
     task_slug = task.get("slug") or task.get("id")
     task_url = f"https://paperswithcode.co/tasks/{quote(str(task_slug), safe='-')}"
@@ -1643,7 +1712,7 @@ def method_detail(args: argparse.Namespace, client: Client) -> int:
     if metadata:
         print(f"\n{' · '.join(metadata)}")
     if method.get("description"):
-        print(f"\n{str(method['description']).strip()}")
+        print(f"\n{_absolute_links(str(method['description']).strip())}")
     source_url = method.get("source_url")
     if source_url:
         if str(source_url).startswith("/"):
@@ -1691,19 +1760,51 @@ def method_list(args: argparse.Namespace, client: Client) -> int:
     return _emit_page(payload, args, render)
 
 
+def _series(item: dict[str, Any]) -> str:
+    return str(item.get("short_name") or "").strip().casefold()
+
+
+def _match_conference(
+    name: str,
+    conferences: list[dict[str, Any]],
+    fields: tuple[str, ...] = ("name", "slug", "id"),
+) -> dict[str, Any]:
+    """Match an edition, or resolve a series name ("NeurIPS") to its latest edition."""
+    target = name.strip().casefold()
+    exact = any(
+        str(item.get(field) or "").strip().casefold() == target
+        for item in conferences
+        for field in fields
+    )
+    editions = [item for item in conferences if _series(item) == target]
+    if editions and not exact:
+        return max(editions, key=lambda item: int(item.get("year") or 0))
+    return _exact_entity_match(name, conferences, label="Conference", fields=fields)
+
+
 def _find_conference(
     name: str, client: Client, fields: tuple[str, ...] = ("name", "slug", "id")
 ) -> dict[str, Any]:
     conferences, _total = _rows(client.get("conferences/").json())
-    return _exact_entity_match(name, conferences, label="Conference", fields=fields)
+    return _match_conference(name, conferences, fields)
 
 
 def conference_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("conference inspection requires --name")
-    summary = _find_conference(args.name, client)
+    conferences, _total = _rows(client.get("conferences/").json())
+    summary = _match_conference(args.name, conferences)
     slug = str(summary.get("slug") or summary.get("id"))
     conference = client.get(f"conferences/{quote(slug, safe='')}").json()
+    other_editions = sorted(
+        str(item.get("name") or item.get("slug"))
+        for item in conferences
+        if _series(item)
+        and _series(item) == _series(summary)
+        and item.get("id") != summary.get("id")
+    )
+    if other_editions:
+        conference = {**conference, "other_editions": other_editions}
     if args.json:
         return _emit_json(args, conference)
 
@@ -1717,6 +1818,8 @@ def conference_detail(args: argparse.Namespace, client: Client) -> int:
         metadata.append(f"Tier: {str(conference['tier']).upper()}")
     if metadata:
         print(f"\n{' · '.join(metadata)}")
+    if other_editions:
+        print(f"Other editions: {', '.join(other_editions)}")
     dates = " – ".join(
         str(value)
         for value in (conference.get("start_date"), conference.get("end_date"))
@@ -1732,7 +1835,7 @@ def conference_detail(args: argparse.Namespace, client: Client) -> int:
     if venue:
         print(f"Venue: {venue}")
     if conference.get("description"):
-        print(f"\n{str(conference['description']).strip()}")
+        print(f"\n{_absolute_links(str(conference['description']).strip())}")
     for label, field in (("Conference website", "url"), ("Hugging Face", "hf_url")):
         if conference.get(field):
             print(f"\n{_entity_link(label, str(conference[field]))}")
@@ -1746,7 +1849,7 @@ def conference_list(args: argparse.Namespace, client: Client) -> int:
     items, _total = _rows(payload)
     if args.year is not None:
         items = [item for item in items if item.get("year") == args.year]
-    filtered = {"count": len(items), "results": items}
+    filtered = _paginate(items, args)
 
     def render(rows: list[dict[str, Any]]) -> None:
         _print_table(
@@ -1803,7 +1906,7 @@ def organization_detail(args: argparse.Namespace, client: Client) -> int:
     if years:
         print(f"\nPaper years: {'–'.join(str(value) for value in years)}")
     if organization.get("description"):
-        print(f"\n{str(organization['description']).strip()}")
+        print(f"\n{_absolute_links(str(organization['description']).strip())}")
     for label, field in (
         ("Website", "website_url"),
         ("GitHub", "github_url"),
@@ -1817,7 +1920,10 @@ def organization_detail(args: argparse.Namespace, client: Client) -> int:
 
 
 def organization_list(args: argparse.Namespace, client: Client) -> int:
-    payload = client.get("organizations/", {"featured_only": args.featured_only}).json()
+    items, _total = _rows(
+        client.get("organizations/", {"featured_only": args.featured_only}).json()
+    )
+    payload = _paginate(items, args)
 
     def render(items: list[dict[str, Any]]) -> None:
         _print_table(
@@ -1890,9 +1996,9 @@ def framework_detail(args: argparse.Namespace, client: Client) -> int:
     if metadata:
         print(f"\n{' · '.join(str(value) for value in metadata)}")
     if framework.get("description"):
-        print(f"\n{str(framework['description']).strip()}")
+        print(f"\n{_absolute_links(str(framework['description']).strip())}")
     if framework.get("when_to_use"):
-        print(f"\nWhen to use: {str(framework['when_to_use']).strip()}")
+        print(f"\nWhen to use: {_absolute_links(str(framework['when_to_use']).strip())}")
     platforms = framework.get("platforms") or []
     if platforms:
         print(f"\nPlatforms: {', '.join(str(value) for value in platforms)}")
@@ -1935,7 +2041,7 @@ def framework_list(args: argparse.Namespace, client: Client) -> int:
             if target
             in {str(value).casefold() for value in item.get("platforms") or []}
         ]
-    payload = {"count": len(items), "results": items}
+    payload = _paginate(items, args)
 
     def render(rows: list[dict[str, Any]]) -> None:
         _print_table(
@@ -2161,7 +2267,9 @@ def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
                 slug = _clean(benchmark.get("slug"))
                 benchmark_id = _clean(benchmark.get("id"))
                 identifiers = []
-                description = _clean(benchmark.get("description"))
+                description = _clean(
+                    _absolute_links(str(benchmark.get("description") or ""))
+                )
                 hf_url = _clean(benchmark.get("hf_url"))
                 if description:
                     identifiers.append(f"description: {description}")
@@ -2321,11 +2429,10 @@ def _parameter_summary(item: dict[str, Any]) -> str:
     for suffix, divisor in (("B", 1_000_000_000), ("M", 1_000_000)):
         if count >= divisor:
             value = Decimal(count) / divisor
-            rendered = (
-                format(value, ".0f")
-                if value == value.to_integral_value()
-                else format(value, "f").rstrip("0").rstrip(".")
-            )
+            rounded = round(value, max(0, 2 - value.adjusted()))
+            rendered = format(rounded, "f")
+            if "." in rendered:
+                rendered = rendered.rstrip("0").rstrip(".")
             return f"{rendered}{suffix}"
     return f"{count:,}"
 
@@ -2787,11 +2894,8 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     if full_name and str(full_name).casefold() != str(benchmark.get("name")).casefold():
         print(f"\n{_clean(full_name) if interactive else _markdown_text(full_name)}")
     if benchmark.get("description"):
-        description = (
-            _clean(benchmark["description"])
-            if interactive
-            else _markdown_text(benchmark["description"])
-        )
+        absolute = _absolute_links(str(benchmark["description"]))
+        description = _clean(absolute) if interactive else _markdown_text(absolute)
         print(f"\n{description}")
     slug = benchmark.get("slug") or benchmark.get("id")
     benchmark_url = f"https://paperswithcode.co/benchmark/{quote(str(slug), safe='-')}"
@@ -2802,12 +2906,18 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     )
     print(f"\n{link}")
     if scan_all:
+        matching = "matching " if len(selected) < len(merged) else ""
+        duplicates = len(evaluations) - len(merged)
+        merged_note = (
+            f" ({duplicates} duplicate rows for the same model were merged)"
+            if duplicates > 0
+            else ""
+        )
         print(
-            f"\nShowing {len(rows)} of {len(selected)} matching merged rows "
-            f"from {data['count']} stored evaluation rows.\n"
+            f"\nShowing {len(rows)} of {len(selected)} {matching}results{merged_note}.\n"
         )
     else:
-        print(f"\nTop {len(rows)} of {data['count']} evaluation rows.\n")
+        print(f"\nTop {len(rows)} of {data['count']} results.\n")
 
     if interactive:
         table_rows = []
@@ -2887,6 +2997,32 @@ def _implementation_coverage(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _pagination(
+    parser: argparse.ArgumentParser,
+    default: int,
+    page_size: Callable[[str], int] = _page_size,
+    maximum: int = 100,
+) -> None:
+    parser.add_argument("--page", type=_page, default=1, help="page, 1-100 (default: 1)")
+    parser.add_argument(
+        "--page-size",
+        "--limit",
+        dest="page_size",
+        type=page_size,
+        default=default,
+        help=f"results per page, 1-{maximum} (default: {default})",
+    )
+
+
+def _remember_command_parsers(parser: argparse.ArgumentParser) -> None:
+    """Let each command report unknown options with its own usage."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for command in action.choices.values():
+                command.set_defaults(usage_parser=command)
+                _remember_command_parsers(command)
+
+
 def build_parser(
     *, parser_class: type[argparse.ArgumentParser] = Parser
 ) -> argparse.ArgumentParser:
@@ -2918,6 +3054,7 @@ def build_parser(
     search_parser.add_argument("query", help="title, topic, author, or ArXiv ID")
     search_parser.add_argument(
         "--limit",
+        "--page-size",
         type=_limit(),
         default=10,
         help="results per page, 1-100 (default: 10)",
@@ -2961,24 +3098,38 @@ def build_parser(
     evaluations.add_argument(
         "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
     )
-    evaluations.add_argument("--page", type=_page, default=1)
-    evaluations.add_argument("--page-size", type=_page_size, default=20)
+    _pagination(evaluations, 20)
     _json(evaluations)
     evaluations.set_defaults(handler=paper_evaluations)
     read = paper_commands.add_parser("read", help="print stored paper Markdown")
     read.add_argument("paper", help="modern ArXiv ID or exact paper title")
+    read.add_argument(
+        "--max-bytes",
+        type=_read_bytes,
+        help=f"print at most this many UTF-8 bytes, 1-{READ_MAX_BYTES}",
+    )
+    read.add_argument(
+        "--offset",
+        type=_offset,
+        help="start at this UTF-8 byte offset (from a previous '# more' hint)",
+    )
     _json(read)
     read.set_defaults(handler=paper_read)
     listing = paper_commands.add_parser("list", help="list and filter papers")
-    listing.add_argument("--page", type=_page, default=1)
-    listing.add_argument("--page-size", type=_page_size, default=20)
+    _pagination(listing, 20)
     listing.add_argument("--search")
     listing.add_argument("--start-date", type=date.fromisoformat)
     listing.add_argument("--end-date", type=date.fromisoformat)
     listing.add_argument("--task", help="exact task name, slug, or ID")
     listing.add_argument("--method", help="exact method name, full name, slug, or ID")
     listing.add_argument("--conference")
-    listing.add_argument("--framework", help="exact framework name, slug, or ID")
+    listing.add_argument(
+        "--framework",
+        help=(
+            "exact framework name, slug, or ID; lists papers about the framework "
+            "itself (linked to its repository), not papers that use it"
+        ),
+    )
     listing.add_argument("--organization", help="exact organization name, slug, or ID")
     listing.add_argument(
         "--author",
@@ -3007,7 +3158,9 @@ def build_parser(
         ("trending", paper_trending, 20, 100),
     ):
         leaf = paper_commands.add_parser(name, help=f"list {name} papers")
-        leaf.add_argument("--limit", type=_limit(maximum), default=default_limit)
+        leaf.add_argument(
+            "--limit", "--page-size", type=_limit(maximum), default=default_limit
+        )
         if name == "trending":
             leaf.add_argument(
                 "--max-age-days",
@@ -3022,7 +3175,7 @@ def build_parser(
     related.add_argument(
         "paper", help="ArXiv ID, external-paper numeric ID, or exact paper title"
     )
-    related.add_argument("--limit", type=_limit(20), default=4)
+    related.add_argument("--limit", "--page-size", type=_limit(20), default=4)
     _implementation_coverage(related)
     _json(related)
     related.set_defaults(handler=paper_related)
@@ -3043,8 +3196,7 @@ def build_parser(
     task.set_defaults(handler=task_detail)
     task_commands = task.add_subparsers(dest="task_command")
     tasks = task_commands.add_parser("list", help="list and filter research tasks")
-    tasks.add_argument("--page", type=_page, default=1)
-    tasks.add_argument("--page-size", type=_page_size, default=50)
+    _pagination(tasks, 50)
     tasks.add_argument("--search", help="search task names and slugs")
     task_display = tasks.add_mutually_exclusive_group()
     task_display.add_argument(
@@ -3080,8 +3232,7 @@ def build_parser(
     methods = method_commands.add_parser(
         "list", help="list and filter research methods"
     )
-    methods.add_argument("--page", type=_page, default=1)
-    methods.add_argument("--page-size", type=_method_page_size, default=50)
+    _pagination(methods, 50, _method_page_size, 500)
     methods.add_argument("--search", help="search method names, full names, and slugs")
     methods.add_argument(
         "--area",
@@ -3098,7 +3249,10 @@ def build_parser(
     methods.set_defaults(handler=method_list)
 
     conference = commands.add_parser("conference", help="inspect or list conferences")
-    conference.add_argument("--name", help="exact conference name, slug, or ID")
+    conference.add_argument(
+        "--name",
+        help="exact conference name, slug, or ID, or a series (NeurIPS) for its latest edition",
+    )
     _json(conference)
     conference.set_defaults(handler=conference_detail)
     conference_commands = conference.add_subparsers(dest="conference_command")
@@ -3106,6 +3260,7 @@ def build_parser(
         "list", help="list conferences with imported papers"
     )
     conferences.add_argument("--year", type=int)
+    _pagination(conferences, 50)
     _json(conferences)
     conferences.set_defaults(handler=conference_list)
 
@@ -3124,6 +3279,7 @@ def build_parser(
         action="store_true",
         help="return only curated featured organizations",
     )
+    _pagination(organizations, 50)
     _json(organizations)
     organizations.set_defaults(handler=organization_list)
 
@@ -3138,6 +3294,7 @@ def build_parser(
     frameworks.add_argument("--domain", help="exact framework domain name or slug")
     frameworks.add_argument("--category", help="exact framework category name or slug")
     frameworks.add_argument("--platform", help="exact platform name")
+    _pagination(frameworks, 50)
     _json(frameworks)
     frameworks.set_defaults(handler=framework_list)
 
@@ -3147,6 +3304,7 @@ def build_parser(
     )
     benchmark.add_argument(
         "--limit",
+        "--page-size",
         type=_limit(),
         default=20,
         help="maximum leaderboard rows, 1-100 (default: 20)",
@@ -3203,15 +3361,7 @@ def build_parser(
     benchmarks = benchmark_commands.add_parser(
         "list", help="list and filter benchmarks"
     )
-    benchmarks.add_argument("--page", type=_page, default=1)
-    benchmarks.add_argument(
-        "--page-size",
-        "--limit",
-        dest="page_size",
-        type=_page_size,
-        default=50,
-        help="results per page, 1-100 (default: 50)",
-    )
+    _pagination(benchmarks, 50)
     benchmarks.add_argument("--search")
     benchmarks.add_argument("--task")
     benchmark_display = benchmarks.add_mutually_exclusive_group()
@@ -3241,7 +3391,10 @@ def build_parser(
     benchmarks.add_argument(
         "--order-by",
         choices=("trending", "name", "full_name", "created_at", "paper_count"),
-        help="defaults to trending for task lists and name otherwise",
+        help=(
+            "defaults to trending (most recent paper activity) with --task and to "
+            "name otherwise; use paper_count --order-dir desc for the most-used"
+        ),
     )
     benchmarks.add_argument("--order-dir", choices=("asc", "desc"), default="asc")
     _json(benchmarks)
@@ -3284,6 +3437,7 @@ def build_parser(
     )
     version_parser.set_defaults(handler=version)
     add_commands(commands, paper_commands)
+    _remember_command_parsers(parser)
     return parser
 
 
@@ -3300,7 +3454,11 @@ def _http_error_detail(error: HTTPStatusError) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        getattr(args, "usage_parser", parser).error(
+            f"unrecognized arguments: {' '.join(unknown)}"
+        )
     try:
         if args.handler in (paper_info, paper_read):
             return _with_public_metadata(args, Client())

@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+RELATIVE_MARKDOWN_LINK = re.compile(r"\]\((/[^)\s]*)\)")
+
+
+def _absolute_links(value: str | None) -> str | None:
+    if not value:
+        return value
+    return RELATIVE_MARKDOWN_LINK.sub(r"](https://paperswithcode.co\1)", value)
+
+
+# Catalog descriptions link site pages relatively; agents need absolute URLs.
+SiteMarkdown = Annotated[str | None, AfterValidator(_absolute_links)]
 
 
 class OutputModel(BaseModel):
@@ -172,7 +184,7 @@ class BenchmarkSummary(OutputModel):
     name: str
     slug: str | None = None
     full_name: str | None = None
-    description: str | None = None
+    description: SiteMarkdown = None
     split: str | None = None
     hf_url: str | None = None
     paper_count: int
@@ -182,7 +194,7 @@ class TaskDetail(OutputModel):
     id: str
     name: str
     slug: str
-    description: str | None = None
+    description: SiteMarkdown = None
     paper_count: int
     area: AreaReference | None = None
     parents: list[CatalogReference]
@@ -199,7 +211,7 @@ class MethodDetail(OutputModel):
     name: str
     slug: str
     full_name: str | None = None
-    description: str | None = None
+    description: SiteMarkdown = None
     introduced_year: int | None = None
     source_paper_id: str | None = None
     source_url: str | None = None

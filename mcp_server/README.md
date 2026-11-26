@@ -38,7 +38,7 @@ clients that only read text still see the data. Entity lookups such as
 | `search_papers` | `pwc search` |
 | `get_paper_info` | `pwc paper info` |
 | `get_paper_evaluations` | `pwc paper evaluations` |
-| `read_paper` | `pwc paper read` (64 KiB chunks with a continuation cursor; MCP-only `offset` starts at a byte already held) |
+| `read_paper` | `pwc paper read` (chunks of at most 64 KiB, or `max_bytes`, with a continuation cursor; `offset` starts at a byte already held) |
 | `list_papers` | `pwc paper list` |
 | `list_recent_papers` | `pwc paper recent` |
 | `list_trending_papers` | `pwc paper trending` |
@@ -51,7 +51,7 @@ clients that only read text still see the data. Entity lookups such as
 | `get_conference` | `pwc conference --name` |
 | `list_conferences` | `pwc conference list` |
 | `get_organization` | `pwc organization --name` |
-| `list_organizations` | `pwc organization list` |
+| `list_organizations` | `pwc organization list` (summary rows, 25 per page) |
 | `get_framework` | `pwc framework --name` |
 | `list_frameworks` | `pwc framework list` |
 | `get_benchmark` | `pwc benchmark --name` |

@@ -22,6 +22,9 @@ from test_server import StubCatalog
 # leave the row count to the server instead of the CLI's 50).
 DEFAULT_EXCEPTIONS = {
     ("list_benchmarks", "limit"): None,
+    ("list_conferences", "limit"): 25,
+    ("list_frameworks", "limit"): 25,
+    ("list_organizations", "limit"): 25,
     ("list_methods", "limit"): 25,
     ("list_tasks", "limit"): None,
 }

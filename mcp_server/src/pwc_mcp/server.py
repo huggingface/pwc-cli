@@ -89,6 +89,7 @@ CLIENT_FACING_ERRORS = (
     "Organization not found",
     "Framework not found",
     "Area not found",
+    "Author not found",
     "Paper title not found",
     "Paper title is ambiguous",
     "Paper not found",
@@ -98,6 +99,18 @@ CLIENT_FACING_ERRORS = (
     "Papers API did not confirm",
 )
 GENERIC_ERROR = "the Papers With Code catalog request failed"
+# Organization rows carry logos, timestamps, and trending internals; a listing
+# keeps what an agent needs to choose one and fetch it with get_organization.
+ORGANIZATION_SUMMARY_FIELDS = (
+    "id",
+    "slug",
+    "name",
+    "paper_count",
+    "is_featured",
+    "trending_rank",
+    "first_paper_year",
+    "latest_paper_year",
+)
 # A method miss is usually a specific model or system, which the catalog holds
 # as a paper: append a few keyword-search hits so the agent can go straight to
 # get_paper_info. Chat clients keep about 400 characters of a tool error.
@@ -276,10 +289,9 @@ ENTITY_PARAMETERS: dict[str, str] = {
     "get_framework": "framework",
     "get_benchmark": "benchmark",
 }
-# Parameters with no CLI flag; ``read_paper`` continues with a signed cursor or
-# starts at a byte offset the caller already holds.
+# Parameters with no CLI flag; ``read_paper`` continues with a signed cursor.
 MCP_ONLY_PARAMETERS: dict[str, frozenset[str]] = {
-    "read_paper": frozenset({"cursor", "offset"}),
+    "read_paper": frozenset({"cursor"}),
     "get_paper_info": frozenset({"repo_limit"}),
     "get_task": frozenset({"benchmark_limit"}),
 }
@@ -813,6 +825,14 @@ def build_server(
                 description="UTF-8 byte offset to start reading from, for text the caller already holds.",
             ),
         ] = None,
+        max_bytes: Annotated[
+            int | None,
+            Field(
+                ge=1,
+                le=MAX_CHUNK_BYTES,
+                description="Return at most this many UTF-8 bytes per chunk (default and maximum 65536).",
+            ),
+        ] = None,
     ) -> PaperReadResult:
         """Read stored paper Markdown, continuing oversized documents with a cursor (`pwc paper read`). Pass the next_cursor value from the previous result together with the same paper (any reference to that paper works); omit cursor to start from the beginning. To continue after text already supplied in context, pass offset (the byte count of that text) with the same paper and no cursor; offset cannot be combined with cursor. A paper not indexed on Papers With Code returns its public metadata and abstract as Markdown with in_catalog=false and available_at links to cite instead of a Papers With Code page."""
         if cursor is not None and cursor.strip().casefold() in PLACEHOLDER_CURSORS:
@@ -821,7 +841,13 @@ def build_server(
         if offset is not None and cursor is not None:
             raise ToolError("pass either cursor or offset, not both")
         return _tool_result(
-            read(paper.strip(), cursor, follow_public=True, start_offset=offset)
+            read(
+                paper.strip(),
+                cursor,
+                follow_public=True,
+                start_offset=offset,
+                chunk_bytes=max_bytes,
+            )
         )
 
     def read(
@@ -830,6 +856,7 @@ def build_server(
         *,
         follow_public: bool,
         start_offset: int | None = None,
+        chunk_bytes: int | None = None,
     ) -> PaperReadResult:
         try:
             state = codec.decode(cursor, reference=reference) if cursor else None
@@ -870,14 +897,14 @@ def build_server(
                 except (ResponseError, TransportError) as error:
                     raise ToolError(catalog_error_message(error)) from error
                 content_version = probe.content_version
-            limit = read_chunk_bytes
+            limit = min(chunk_bytes or read_chunk_bytes, read_chunk_bytes)
             expires_at = int(time.time()) + CURSOR_LIFETIME_SECONDS
             source = "external" if canonical.isdigit() else "arxiv"
         else:
             canonical = state.paper
             offset = state.offset
             content_version = state.content_version
-            limit = state.limit
+            limit = min(chunk_bytes, state.limit) if chunk_bytes else state.limit
             expires_at = state.expires_at
             source = state.source
         try:
@@ -1205,9 +1232,13 @@ def build_server(
         return _tool_result(QueryResult(data=run("get_conference", conference=conference)))
 
     @catalog_tool("List conferences")
-    def list_conferences(year: int | None = None) -> QueryResult:
+    def list_conferences(
+        year: int | None = None, page: Page = 1, limit: Limit = MAX_ROWS
+    ) -> QueryResult:
         """List conferences with imported papers (`pwc conference list`)."""
-        return _tool_result(QueryResult(data=run("list_conferences", year=year)))
+        return _tool_result(QueryResult(
+            data=run("list_conferences", year=year, page=page, limit=limit)
+        ))
 
     @catalog_tool("Get organization")
     def get_organization(organization: Entity) -> QueryResult:
@@ -1215,9 +1246,19 @@ def build_server(
         return _tool_result(QueryResult(data=run("get_organization", organization=organization)))
 
     @catalog_tool("List organizations")
-    def list_organizations(featured_only: bool = False) -> QueryResult:
-        """List research organizations (`pwc organization list`)."""
-        return _tool_result(QueryResult(data=run("list_organizations", featured_only=featured_only)))
+    def list_organizations(
+        featured_only: bool = False, page: Page = 1, limit: Limit = MAX_ROWS
+    ) -> QueryResult:
+        """List research organizations by paper count (`pwc organization list`). Rows are summaries; get_organization returns the full record."""
+        data = run(
+            "list_organizations", featured_only=featured_only, page=page, limit=limit
+        )
+        rows = [
+            {key: row.get(key) for key in ORGANIZATION_SUMMARY_FIELDS}
+            | {"url": f"https://paperswithcode.co/orgs/{row.get('slug') or row.get('id')}"}
+            for row in _dicts(data.get("results"))
+        ]
+        return _tool_result(QueryResult(data={**data, "results": rows}))
 
     @catalog_tool("Get framework")
     def get_framework(framework: Entity) -> QueryResult:
@@ -1229,11 +1270,18 @@ def build_server(
         domain: str | None = None,
         category: str | None = None,
         platform: str | None = None,
+        page: Page = 1,
+        limit: Limit = MAX_ROWS,
     ) -> QueryResult:
         """List research frameworks by domain, category, or platform (`pwc framework list`)."""
         return _tool_result(QueryResult(
             data=run(
-                "list_frameworks", domain=domain, category=category, platform=platform
+                "list_frameworks",
+                domain=domain,
+                category=category,
+                platform=platform,
+                page=page,
+                limit=limit,
             )
         ))
 
@@ -1362,21 +1410,33 @@ def build_server(
         )
         return _tool_result(result)
 
-    @server.prompt(name="find_papers", title="Find papers")
+    @server.prompt(
+        name="find_papers",
+        title="Find papers",
+        description="Search for papers on a topic and cite their Papers With Code pages.",
+    )
     def find_papers_prompt(topic: str) -> str:
         return (
             f"Find papers about {topic!r}. Use semantic search for concepts, then "
             "inspect the most relevant papers and cite their canonical URLs."
         )
 
-    @server.prompt(name="compare_leaderboard", title="Compare a leaderboard")
+    @server.prompt(
+        name="compare_leaderboard",
+        title="Compare a leaderboard",
+        description="Inspect a benchmark leaderboard, its metrics, and its evaluation settings.",
+    )
     def compare_leaderboard_prompt(benchmark: str) -> str:
         return (
             f"Inspect the {benchmark!r} benchmark. Explain metric direction and "
             "evaluation settings, and do not compare ranks from different task scopes."
         )
 
-    @server.prompt(name="survey_task", title="Survey a research task")
+    @server.prompt(
+        name="survey_task",
+        title="Survey a research task",
+        description="Summarize a research task: its benchmarks, representative papers, and methods.",
+    )
     def survey_task_prompt(task: str) -> str:
         return (
             f"Survey the {task!r} task. Resolve its slug, inspect high-coverage "
