@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.8`" in skill
+    assert "Generated with `pwc v0.4.9`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2555,7 +2555,7 @@ def test_benchmark_detail_filters_sorts_and_computes_pareto_frontier(
     captured = capsys.readouterr()
     assert captured.err == ""
     assert (
-        "Showing 2 of 2 matching merged rows from 3 stored evaluation rows."
+        "Showing 2 of 2 matching results."
         in captured.out
     )
     assert captured.out.index("Fast") < captured.out.index("Accurate")
@@ -2630,7 +2630,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.8\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.9\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -3817,3 +3817,183 @@ def test_paper_info_caps_listed_repositories(monkeypatch, capsys):
 
     assert main(["paper", "info", "2501.00001", "--include-resources", "--json"]) == 0
     assert len(json.loads(capsys.readouterr().out)["data"]["repositories"]) == 15
+
+
+class RoutedClient:
+    """Answer each path from a table; record every request."""
+
+    routes: dict = {}
+    requests: list = []
+
+    def __init__(self):
+        pass
+
+    def get(self, path, params=None):
+        type(self).requests.append((path, params))
+        route = type(self).routes[path]
+        if isinstance(route, Exception):
+            raise route
+        body, headers = route if isinstance(route, tuple) else (route, {})
+        if not isinstance(body, bytes):
+            body = json.dumps(body).encode()
+        return Response(body, headers)
+
+
+def _routed(monkeypatch, routes):
+    RoutedClient.routes = routes
+    RoutedClient.requests = []
+    monkeypatch.setattr("pwc_cli.cli.Client", RoutedClient)
+    return RoutedClient.requests
+
+
+def test_unknown_option_reports_the_subcommand_usage(monkeypatch, capsys):
+    with pytest.raises(SystemExit) as raised:
+        main(["framework", "list", "--platform", "gpu", "--bogus", "3"])
+    assert raised.value.code == 2
+    error = capsys.readouterr().err
+    assert "usage: pwc framework list" in error
+    assert "pwc framework list: error: unrecognized arguments: --bogus 3" in error
+
+
+def test_every_list_command_accepts_page_and_page_size_or_limit():
+    parser = build_parser()
+    for command in (
+        ["paper", "list"],
+        ["paper", "evaluations", "1706.03762"],
+        ["task", "list"],
+        ["method", "list"],
+        ["conference", "list"],
+        ["organization", "list"],
+        ["framework", "list"],
+        ["benchmark", "list"],
+    ):
+        for flag in ("--page-size", "--limit"):
+            args = parser.parse_args([*command, "--page", "2", flag, "3"])
+            assert (args.page, args.page_size) == (2, 3), command
+    for command in (["search", "q"], ["paper", "recent"], ["paper", "trending"]):
+        assert parser.parse_args([*command, "--page-size", "3"]).limit == 3
+
+
+def test_organization_list_is_paginated(monkeypatch, capsys):
+    organizations = [
+        {"id": str(index), "slug": f"org-{index}", "name": f"Org {index}"}
+        for index in range(5)
+    ]
+    _routed(monkeypatch, {"organizations/": {"count": 5, "results": organizations}})
+    assert main(["organization", "list", "--page", "2", "--limit", "2", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data == {
+        "count": 5,
+        "page": 2,
+        "next_page": 3,
+        "results": organizations[2:4],
+    }
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_empty_search_query_is_a_usage_error(monkeypatch, capsys, query):
+    requests = _routed(monkeypatch, {})
+    assert main(["search", query]) == 2
+    assert "search query must not be empty" in capsys.readouterr().err
+    assert requests == []
+
+
+def test_unknown_author_exits_not_found_with_suggestions(monkeypatch, capsys):
+    _routed(
+        monkeypatch,
+        {
+            "papers/": HTTPStatusError(404, '{"detail":"Author \'Kaiming\' not found"}'),
+            "authors/": {
+                "count": 2,
+                "results": [
+                    {"id": "264", "full_name": "Kaiming He"},
+                    {"id": "85982", "full_name": "Kaiming Liu"},
+                ],
+            },
+        },
+    )
+    assert main(["paper", "list", "--author", "Kaiming"]) == 5
+    assert capsys.readouterr().err == (
+        "pwc: Author not found: Kaiming; closest results: "
+        "Kaiming He (--author 264), Kaiming Liu (--author 85982)\n"
+    )
+
+
+def test_paper_read_limits_bytes_and_continues_from_an_offset(monkeypatch, capsys):
+    path = "research/papers/2405.04517/read"
+    requests = _routed(
+        monkeypatch,
+        {path: (b"# xLSTM", {"x-pwc-next-offset": "7", "x-pwc-content-version": "v1"})},
+    )
+    assert main(["paper", "read", "2405.04517", "--max-bytes", "7"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "# xLSTM\n"
+    assert captured.err == "# more: rerun with --offset 7\n"
+    assert requests == [(path, {"offset": 0, "limit": 7})]
+
+    requests.clear()
+    assert main(["paper", "read", "2405.04517", "--offset", "7", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["offset"] == 7 and data["next_offset"] == 7
+    assert requests == [
+        (path, {"offset": 0, "limit": 1}),
+        (path, {"offset": 7, "limit": 262_144, "content_version": "v1"}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("count", "rendered"),
+    [
+        (1_420_100_000, "1.42B"),
+        (2_718_416_384, "2.72B"),
+        (7_000_000_000, "7B"),
+        (13_000_000_000, "13B"),
+        (175_000_000_000, "175B"),
+        (124_439_808, "124M"),
+        (999_999, "999,999"),
+    ],
+)
+def test_parameter_counts_round_to_three_significant_figures(count, rendered):
+    from pwc_cli.cli import _parameter_summary
+
+    assert _parameter_summary({"num_parameters": count}) == rendered
+
+
+def test_conference_series_name_resolves_to_the_latest_edition(monkeypatch, capsys):
+    editions = [
+        {"id": "1", "name": "NeurIPS 2025", "slug": "neurips-2025", "short_name": "NeurIPS", "year": 2025},
+        {"id": "2", "name": "NeurIPS 2026", "slug": "neurips-2026", "short_name": "NeurIPS", "year": 2026},
+    ]
+    _routed(
+        monkeypatch,
+        {
+            "conferences/": {"count": 2, "results": editions},
+            "conferences/neurips-2026": editions[1],
+        },
+    )
+    assert main(["conference", "--name", "neurips", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["name"] == "NeurIPS 2026"
+    assert data["other_editions"] == ["NeurIPS 2025"]
+
+
+def test_descriptions_print_absolute_site_links(monkeypatch, capsys):
+    method = {
+        "id": "1",
+        "name": "LoRA",
+        "slug": "lora",
+        "description": "Pairs with [Stable Diffusion](/methods/stable-diffusion).",
+    }
+    _routed(
+        monkeypatch,
+        {
+            "methods/": {"count": 1, "results": [method]},
+            "methods/1": method,
+            "areas/": {"count": 0, "results": []},
+        },
+    )
+    assert main(["method", "--name", "LoRA"]) == 0
+    assert (
+        "[Stable Diffusion](https://paperswithcode.co/methods/stable-diffusion)"
+        in capsys.readouterr().out
+    )

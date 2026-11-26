@@ -778,10 +778,28 @@ def test_new_catalog_tools_return_the_cli_json_document():
 
     for (name, _arguments), result in zip(requests, results):
         assert result.is_error is False, name
+        if name == "list_organizations":
+            continue
         assert result.structured_content == {
             "schema_version": "v1",
             "data": PAYLOADS[TOOL_COMMANDS[name]],
         }
+    assert results[4].structured_content["data"] == {
+        "count": 1,
+        "results": [
+            {
+                "id": "4",
+                "slug": "nvidia",
+                "name": "NVIDIA",
+                "paper_count": 900,
+                "is_featured": None,
+                "trending_rank": None,
+                "first_paper_year": None,
+                "latest_paper_year": None,
+                "url": "https://paperswithcode.co/orgs/nvidia",
+            }
+        ],
+    }
     assert catalog.options(("method", "list")) == {
         "search": None,
         "area": None,
@@ -792,14 +810,24 @@ def test_new_catalog_tools_return_the_cli_json_document():
         "page_size": 25,
     }
     assert catalog.options(("conference",)) == {"name": "CVPR 2025"}
-    assert catalog.options(("conference", "list")) == {"year": 2025}
+    assert catalog.options(("conference", "list")) == {
+        "year": 2025,
+        "page": 1,
+        "page_size": 25,
+    }
     assert catalog.options(("organization",)) == {"name": "NVIDIA"}
-    assert catalog.options(("organization", "list")) == {"featured_only": True}
+    assert catalog.options(("organization", "list")) == {
+        "featured_only": True,
+        "page": 1,
+        "page_size": 25,
+    }
     assert catalog.options(("framework",)) == {"name": "vLLM"}
     assert catalog.options(("framework", "list")) == {
         "domain": None,
         "category": None,
         "platform": "gpu",
+        "page": 1,
+        "page_size": 25,
     }
 
 
@@ -1387,3 +1415,45 @@ def test_tool_schemas_omit_generated_titles_and_nullable_unions():
     assert "title" in tools["get_paper_info"].output_schema["$defs"]["PaperDetail"][
         "properties"
     ]
+
+
+def test_read_paper_honours_max_bytes_across_continuations():
+    catalog = StubCatalog()
+    (first,) = _call(catalog, [("read_paper", {"paper": "1706.03762", "max_bytes": 3})])
+    cursor = first.structured_content["next_cursor"]
+    (second,) = _call(
+        catalog, [("read_paper", {"paper": "1706.03762", "cursor": cursor})]
+    )
+
+    assert first.structured_content["markdown"] == "abc"
+    assert second.structured_content["markdown"] == "def"
+    assert [limit for _offset, _version, limit in catalog.read_calls] == [3, 3]
+
+
+def test_prompts_have_descriptions():
+    async def exercise():
+        async with Client(build_server(StubCatalog())) as client:
+            return (await client.list_prompts()).prompts
+
+    prompts = asyncio.run(exercise())
+    assert {prompt.name for prompt in prompts} == {
+        "find_papers",
+        "compare_leaderboard",
+        "survey_task",
+    }
+    assert all(prompt.description for prompt in prompts)
+
+
+def test_detail_descriptions_use_absolute_site_links():
+    from pwc_mcp.models import MethodDetail
+
+    method = MethodDetail(
+        id="1",
+        name="LoRA",
+        slug="lora",
+        description="See [Stable Diffusion](/methods/stable-diffusion).",
+        paper_count=1,
+    )
+    assert method.description == (
+        "See [Stable Diffusion](https://paperswithcode.co/methods/stable-diffusion)."
+    )

@@ -83,7 +83,8 @@ _WORKFLOW = """
    associations. Combine them to require every association; do not substitute
    a keyword search. Add `--search` for title or abstract topic terms.
 4. Use `pwc search` for broader discovery, then `pwc paper read` for primary
-   evidence.
+   evidence. Long papers exceed 100 KB: pass `--max-bytes 40000` and continue
+   with the `--offset` that the `# more` line on stderr names.
 5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
 6. Preserve paper titles, identifiers, and URLs so claims remain traceable.

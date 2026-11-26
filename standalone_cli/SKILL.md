@@ -3,7 +3,7 @@ name: pwc-cli
 description: "Papers With Code CLI (`pwc`) for searching and reading AI/ML papers, discovering recent and trending research, finding related work and paper lineage, browsing tasks, methods, conferences, organizations, frameworks, and benchmark leaderboards, and submitting authenticated paper edits through the public Papers With Code catalog. Use whenever the user asks to find papers, survey literature, compare research, inspect an arXiv paper, explore AI/ML taxonomy or conferences, discover benchmarks or state-of-the-art models, or mentions Papers With Code, `pwc`, or `pwc-cli`."
 ---
 
-Generated with `pwc v0.4.8`. Run `pwc skills add --force` to regenerate.
+Generated with `pwc v0.4.9`. Run `pwc skills add --force` to regenerate.
 
 Research commands query the public [Papers With Code](https://paperswithcode.co) catalog anonymously.
 Paper editing requires explicit browser authorization through `pwc auth login --paper PAPER`.
@@ -50,7 +50,7 @@ the paper has no predecessors or successors.
 - `pwc search QUERY [--limit LIMIT] [--page PAGE] [--mode hybrid|keyword|semantic] [--start-date START_DATE] [--end-date END_DATE] [--has-official-implementation] [--implementation-coverage] [--json]` — search papers.
 - `pwc paper info PAPER [--include-resources] [--include-evals] [--json]` — show paper metadata including abstract.
 - `pwc paper evaluations PAPER [--page PAGE] [--page-size PAGE_SIZE] [--json]` — list one paper's benchmark evaluations.
-- `pwc paper read PAPER [--json]` — print stored paper Markdown.
+- `pwc paper read PAPER [--max-bytes MAX_BYTES] [--offset OFFSET] [--json]` — print stored paper Markdown.
 - `pwc paper list [--page PAGE] [--page-size PAGE_SIZE] [--search SEARCH] [--start-date START_DATE] [--end-date END_DATE] [--task TASK] [--method METHOD] [--conference CONFERENCE] [--framework FRAMEWORK] [--organization ORGANIZATION] [--author AUTHOR] [--all-versions] [--order-by trending|date_published|citation_count] [--order-dir asc|desc] [--include-resources] [--has-official-implementation] [--implementation-coverage] [--json]` — list and filter papers.
 - `pwc paper recent [--limit LIMIT] [--implementation-coverage] [--json]` — list recent papers.
 - `pwc paper trending [--limit LIMIT] [--max-age-days MAX_AGE_DAYS] [--min-velocity MIN_VELOCITY] [--implementation-coverage] [--json]` — list trending papers.
@@ -64,11 +64,11 @@ the paper has no predecessors or successors.
 - `pwc method [--name NAME] [--json]` — inspect or list research methods.
 - `pwc method list [--page PAGE] [--page-size PAGE_SIZE] [--search SEARCH] [--area AREA] [--introduced-year INTRODUCED_YEAR] [--order-by name|full_name|introduced_year|created_at|paper_count] [--order-dir asc|desc] [--json]` — list and filter research methods.
 - `pwc conference [--name NAME] [--json]` — inspect or list conferences.
-- `pwc conference list [--year YEAR] [--json]` — list conferences with imported papers.
+- `pwc conference list [--year YEAR] [--page PAGE] [--page-size PAGE_SIZE] [--json]` — list conferences with imported papers.
 - `pwc organization [--name NAME] [--json]` — inspect or list research organizations.
-- `pwc organization list [--featured-only] [--json]` — list research organizations.
+- `pwc organization list [--featured-only] [--page PAGE] [--page-size PAGE_SIZE] [--json]` — list research organizations.
 - `pwc framework [--name NAME] [--json]` — inspect or list research frameworks.
-- `pwc framework list [--domain DOMAIN] [--category CATEGORY] [--platform PLATFORM] [--json]` — list research frameworks.
+- `pwc framework list [--domain DOMAIN] [--category CATEGORY] [--platform PLATFORM] [--page PAGE] [--page-size PAGE_SIZE] [--json]` — list research frameworks.
 - `pwc benchmark [--name NAME] [--limit LIMIT] [--page PAGE] [--is-open true|false] [--max-parameters SIZE] [--require-metrics METRIC[,METRIC]] [--min METRIC=VALUE] [--max METRIC=VALUE] [--sort METRIC[:ASC|DESC]] [--pareto METRIC:HIGHER,METRIC:LOWER] [--json]` — inspect benchmarks.
 - `pwc benchmark list [--page PAGE] [--page-size PAGE_SIZE] [--search SEARCH] [--task TASK] [--group-by-area] [--flat] [--area AREA] [--benchmarks-per-task BENCHMARKS_PER_TASK] [--include-descendants] [--min-eval-count MIN_EVAL_COUNT] [--is-open true|false] [--order-by trending|name|full_name|created_at|paper_count] [--order-dir asc|desc] [--json]` — list and filter benchmarks.
 - `pwc skills add [--global] [--claude] [--dest DEST] [--force]` — install the version-matched pwc CLI Skill.
@@ -90,7 +90,8 @@ the paper has no predecessors or successors.
    associations. Combine them to require every association; do not substitute
    a keyword search. Add `--search` for title or abstract topic terms.
 4. Use `pwc search` for broader discovery, then `pwc paper read` for primary
-   evidence.
+   evidence. Long papers exceed 100 KB: pass `--max-bytes 40000` and continue
+   with the `--offset` that the `# more` line on stderr names.
 5. Expand the literature with `pwc paper related` and use
    `pwc paper lineage list` when model or method ancestry matters.
 6. Preserve paper titles, identifiers, and URLs so claims remain traceable.
