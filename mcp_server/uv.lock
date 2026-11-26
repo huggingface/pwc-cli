@@ -439,7 +439,7 @@ wheels = [
 
 [[package]]
 name = "pwc-cli"
-version = "0.4.7"
+version = "0.4.8"
 source = { editable = "../standalone_cli" }
 
 [[package]]
