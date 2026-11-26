@@ -17,7 +17,13 @@ from urllib.parse import quote
 from pwc_cli import API_CONTRACT_VERSION, __version__
 from pwc_cli.edits import EditUsageError, add_commands
 from pwc_cli.skills import SkillInstallError, skills_add
-from pwc_cli.transport import Client, HTTPStatusError, ResponseError, TransportError
+from pwc_cli.transport import (
+    Client,
+    HTTPStatusError,
+    NotFoundError,
+    ResponseError,
+    TransportError,
+)
 
 Handler = Callable[[argparse.Namespace, Client], int]
 MAX_METRIC_SCAN_ROWS = 1_000
@@ -146,10 +152,9 @@ def _print_table(
     rows: list[tuple[object, ...]],
     *,
     right_align: tuple[int, ...] = (),
-    align_when_captured: bool = False,
 ) -> None:
     rendered = [list(headers)] + [[_clean(value) for value in row] for row in rows]
-    if not sys.stdout.isatty() and not align_when_captured:
+    if not sys.stdout.isatty():
         for row in rendered:
             print("\t".join(row))
         return
@@ -306,7 +311,7 @@ def _exact_entity_match(
         return normalized
     suggestions = _closest_names(reference, items)
     suffix = f"; closest results: {suggestions}" if suggestions else ""
-    raise ResponseError(f"{label} not found: {reference}{suffix}")
+    raise NotFoundError(f"{label} not found: {reference}{suffix}")
 
 
 def _entity_heading(name: object) -> None:
@@ -373,11 +378,11 @@ def _resolve_paper(reference: str, client: Client) -> str:
 
     if exact:
         matches = "; ".join(describe(item) for item in exact.values())
-        raise ResponseError(f"Paper title is ambiguous: {_clean(candidate)}; {matches}")
+        raise NotFoundError(f"Paper title is ambiguous: {_clean(candidate)}; {matches}")
 
     suggestions = "; ".join(describe(item) for item in items[:3])
     suffix = f"; closest results: {suggestions}" if suggestions else ""
-    raise ResponseError(f"Paper title not found: {_clean(candidate)}{suffix}")
+    raise NotFoundError(f"Paper title not found: {_clean(candidate)}{suffix}")
 
 
 def _paper_rows(
@@ -502,6 +507,18 @@ def search(args: argparse.Namespace, client: Client) -> int:
     return _emit_paper_page(payload, args)
 
 
+LINEAGE_EMPTY = "- No explicit catalog links (this does not mean none exist)"
+RESOURCE_LIMIT = 10
+
+
+def _entity_names(items: object) -> str:
+    return ", ".join(
+        str(item.get("name") or item.get("slug"))
+        for item in items or []
+        if isinstance(item, dict) and (item.get("name") or item.get("slug"))
+    )
+
+
 def paper_info(args: argparse.Namespace, client: Client) -> int:
     paper = _resolve_paper(args.paper, client)
     payload = client.get(
@@ -517,18 +534,25 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
         payload = {**payload, "evaluations": evaluations}
     if args.json:
         return _emit_json(args, payload)
-    organizations = ", ".join(
-        str(item.get("name") or item.get("slug"))
-        for item in payload.get("organizations") or []
-        if isinstance(item, dict) and (item.get("name") or item.get("slug"))
-    )
+    organizations = _entity_names(payload.get("organizations"))
     fields = (
         ("id", payload.get("arxiv_id") or payload.get("id")),
         ("title", payload.get("title")),
         ("published", payload.get("published")),
         ("authors", ", ".join(payload.get("authors") or [])),
         ("organizations", organizations),
-        ("conference", payload.get("conference_name") or payload.get("conference")),
+        (
+            "conference",
+            payload.get("conference_name")
+            or re.sub(r"\s+\d{1,2}$", "", str(payload.get("proceeding") or ""))
+            or payload.get("conference"),
+        ),
+        (
+            "proceeding",
+            payload.get("proceeding") if payload.get("conference_name") else None,
+        ),
+        ("tasks", _entity_names(payload.get("tasks"))),
+        ("methods", _entity_names(payload.get("methods"))),
         ("citations", payload.get("citation_count")),
         (
             "official_implementation",
@@ -536,6 +560,7 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
         ),
         ("code_repositories", payload.get("code_repository_count")),
         ("url", payload.get("url_abs") or payload.get("source_url")),
+        ("tldr", payload.get("tldr")),
     )
     for label, value in fields:
         if value not in (None, "", []):
@@ -559,7 +584,7 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
             for related_paper in papers:
                 print(_paper_info_lineage_markdown(related_paper))
         else:
-            print("- None")
+            print(LINEAGE_EMPTY)
 
     if args.include_resources:
         for title, field in (
@@ -581,7 +606,7 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
             )
             if resources:
                 print(f"\n## {title}\n")
-                for resource in resources:
+                for resource in resources[:RESOURCE_LIMIT]:
                     if isinstance(resource, dict):
                         official = (
                             "**Official:** " if resource.get("is_official") else ""
@@ -591,6 +616,9 @@ def paper_info(args: argparse.Namespace, client: Client) -> int:
                         official = ""
                         url = resource
                     print(f"- {official}{_clean(url)}")
+                if len(resources) > RESOURCE_LIMIT:
+                    hidden = len(resources) - RESOURCE_LIMIT
+                    print(f"- … and {hidden:,} more (use --json for all)")
 
         artifacts = [
             (label, url)
@@ -728,7 +756,7 @@ def _print_public_paper(record: dict[str, Any]) -> None:
 def _with_public_metadata(args: argparse.Namespace, client: Client) -> int:
     """Run ``paper info`` or ``paper read``, explaining papers outside the catalog.
 
-    The error and exit status of a miss stay unchanged for scripts; stderr adds
+    A miss raises a not-found error (exit status 5); stderr adds
     the public-metadata API's record and where the paper is available. A
     reference the API resolves to a catalog paper (an arXiv or Hugging Face
     URL, say) is retried with its arXiv or catalog ID. Embedders calling the handlers directly (the MCP server)
@@ -746,6 +774,10 @@ def _with_public_metadata(args: argparse.Namespace, client: Client) -> int:
         catalog_id = str(record.get("arxiv_id") or record.get("catalog_id") or "")
         if record.get("in_catalog") is not True:
             _print_public_paper(record)
+            if isinstance(error, HTTPStatusError):
+                raise NotFoundError(
+                    f"Paper not indexed on Papers With Code: {args.paper.strip()}"
+                ) from error
             raise
         if not catalog_id.strip() or catalog_id.strip() == args.paper.strip():
             raise
@@ -801,6 +833,8 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
     except HTTPStatusError as error:
         if args.author and error.status in {404, 409, 422}:
             raise UsageError(_author_filter_error_message(error)) from error
+        if error.status == 404:
+            _validate_paper_list_filters(args, client)
         raise
     if requested_filters:
         applied = payload.get("applied_filters")
@@ -819,7 +853,27 @@ def paper_list(args: argparse.Namespace, client: Client) -> int:
                 "Papers API did not confirm the requested author filters; "
                 "the server must be upgraded before using --author"
             )
+    items, _total = _rows(payload)
+    if not items:
+        _validate_paper_list_filters(args, client)
     return _emit_paper_page(payload, args)
+
+
+def _validate_paper_list_filters(args: argparse.Namespace, client: Client) -> None:
+    lookups = (
+        (args.task, _find_task),
+        (args.method, _find_method),
+        (args.conference, _find_conference_filter),
+        (args.organization, _find_organization),
+        (args.framework, _find_framework),
+    )
+    for reference, find in lookups:
+        if reference is not None and not reference.strip().isdigit():
+            find(reference, client)
+
+
+def _find_conference_filter(name: str, client: Client) -> dict[str, Any]:
+    return _find_conference(name, client, ("name", "slug", "short_name", "id"))
 
 
 def _authors_confirmed(requested: list[str], applied: object) -> bool:
@@ -938,7 +992,7 @@ def paper_lineage(args: argparse.Namespace, client: Client) -> int:
             for item in items:
                 print(_lineage_markdown(item))
         else:
-            print("- None")
+            print("- None" if title == "Paper" else LINEAGE_EMPTY)
     return 0
 
 
@@ -969,7 +1023,7 @@ def _resolve_area(
             return area_id, names
 
     available = ", ".join(sorted(names.values(), key=str.casefold))
-    raise ResponseError(f"Area not found: {reference}; available areas: {available}")
+    raise NotFoundError(f"Area not found: {reference}; available areas: {available}")
 
 
 def _ordering(field: str, direction: str) -> str:
@@ -1008,7 +1062,7 @@ def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
                     key=str.casefold,
                 )
             )
-            raise ResponseError(
+            raise NotFoundError(
                 f"Area not found: {args.area}; available areas: {names}"
             )
 
@@ -1244,24 +1298,29 @@ def _api_ranked_benchmarks(
     return ranked
 
 
+def _find_task(name: str, client: Client) -> dict[str, Any]:
+    search_payload = client.get(
+        "tasks/",
+        {"q": name, "page": 1, "page_size": 100},
+    ).json()
+    candidates, _total = _rows(search_payload)
+    summary = _task_match(name, candidates) or _task_keyword_match(
+        name, _task_catalog(client)
+    )
+    if summary is None:
+        suggestions = _closest_names(name, candidates)
+        suffix = f"; closest results: {suggestions}" if suggestions else ""
+        raise NotFoundError(f"Task not found: {name}{suffix}")
+    return summary
+
+
 def task_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("task inspection requires --name")
     if args.name.strip().isdigit():
         summary = client.get(f"tasks/{quote(args.name.strip(), safe='')}").json()
     else:
-        search_payload = client.get(
-            "tasks/",
-            {"q": args.name, "page": 1, "page_size": 100},
-        ).json()
-        candidates, _total = _rows(search_payload)
-        summary = _task_match(args.name, candidates) or _task_keyword_match(
-            args.name, _task_catalog(client)
-        )
-        if summary is None:
-            suggestions = _closest_names(args.name, candidates)
-            suffix = f"; closest results: {suggestions}" if suggestions else ""
-            raise ResponseError(f"Task not found: {args.name}{suffix}")
+        summary = _find_task(args.name, client)
 
     task_id = str(summary["id"])
     page = client.get(f"tasks/{quote(task_id, safe='')}/page").json()
@@ -1530,30 +1589,35 @@ def _method_alias_forms(method: dict[str, Any]) -> set[str]:
     return forms
 
 
+def _find_method(name: str, client: Client) -> dict[str, Any]:
+    payload = client.get(
+        "methods/",
+        {"q": name, "page": 1, "page_size": 100},
+    ).json()
+    candidates, _total = _rows(payload)
+    try:
+        return _exact_entity_match(
+            name,
+            candidates,
+            label="Method",
+            fields=("name", "full_name", "slug", "id"),
+        )
+    except NotFoundError:
+        # The method list API serves at most 500 rows per page.
+        catalog = _full_catalog(client, "methods/", 500)
+        summary = _method_keyword_match(name, catalog)
+        if summary is None:
+            raise
+        return summary
+
+
 def method_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("method inspection requires --name")
     if args.name.strip().isdigit():
         method = client.get(f"methods/{quote(args.name.strip(), safe='')}").json()
     else:
-        payload = client.get(
-            "methods/",
-            {"q": args.name, "page": 1, "page_size": 100},
-        ).json()
-        candidates, _total = _rows(payload)
-        try:
-            summary = _exact_entity_match(
-                args.name,
-                candidates,
-                label="Method",
-                fields=("name", "full_name", "slug", "id"),
-            )
-        except ResponseError:
-            # The method list API serves at most 500 rows per page.
-            catalog = _full_catalog(client, "methods/", 500)
-            summary = _method_keyword_match(args.name, catalog)
-            if summary is None:
-                raise
+        summary = _find_method(args.name, client)
         method_id = quote(str(summary.get("id") or summary.get("slug")), safe="")
         method = client.get(f"methods/{method_id}").json()
     area = next(
@@ -1627,12 +1691,17 @@ def method_list(args: argparse.Namespace, client: Client) -> int:
     return _emit_page(payload, args, render)
 
 
+def _find_conference(
+    name: str, client: Client, fields: tuple[str, ...] = ("name", "slug", "id")
+) -> dict[str, Any]:
+    conferences, _total = _rows(client.get("conferences/").json())
+    return _exact_entity_match(name, conferences, label="Conference", fields=fields)
+
+
 def conference_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("conference inspection requires --name")
-    payload = client.get("conferences/").json()
-    conferences, _total = _rows(payload)
-    summary = _exact_entity_match(args.name, conferences, label="Conference")
+    summary = _find_conference(args.name, client)
     slug = str(summary.get("slug") or summary.get("id"))
     conference = client.get(f"conferences/{quote(slug, safe='')}").json()
     if args.json:
@@ -1698,12 +1767,16 @@ def conference_list(args: argparse.Namespace, client: Client) -> int:
     return _emit_page(filtered, args, render)
 
 
+def _find_organization(name: str, client: Client) -> dict[str, Any]:
+    payload = client.get("organizations/", {"featured_only": False}).json()
+    organizations, _total = _rows(payload)
+    return _exact_entity_match(name, organizations, label="Organization")
+
+
 def organization_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("organization inspection requires --name")
-    payload = client.get("organizations/", {"featured_only": False}).json()
-    organizations, _total = _rows(payload)
-    summary = _exact_entity_match(args.name, organizations, label="Organization")
+    summary = _find_organization(args.name, client)
     slug = str(summary.get("slug") or summary.get("id"))
     organization = client.get(f"organizations/{quote(slug, safe='')}").json()
     if args.json:
@@ -1790,11 +1863,15 @@ def _framework_catalog_items(payload: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _find_framework(name: str, client: Client) -> dict[str, Any]:
+    items = _framework_catalog_items(client.get("frameworks/").json())
+    return _exact_entity_match(name, items, label="Framework")
+
+
 def framework_detail(args: argparse.Namespace, client: Client) -> int:
     if not args.name:
         raise ResponseError("framework inspection requires --name")
-    items = _framework_catalog_items(client.get("frameworks/").json())
-    framework = _exact_entity_match(args.name, items, label="Framework")
+    framework = _find_framework(args.name, client)
     if args.json:
         return _emit_json(args, framework)
 
@@ -1966,7 +2043,6 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     "id",
                     "slug",
                     "name",
-                    "description",
                     "hf_url",
                     "recent_papers",
                     "ranking_score",
@@ -1979,7 +2055,6 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                         item.get("id"),
                         item.get("slug"),
                         item.get("name"),
-                        item.get("description"),
                         item.get("hf_url"),
                         item.get("recent_paper_count"),
                         item.get("support_weighted_score", item.get("trend_score")),
@@ -1989,8 +2064,7 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
                     )
                     for item in rows
                 ],
-                right_align=(0, 5, 6),
-                align_when_captured=True,
+                right_align=(0, 4, 5),
             )
 
         return _emit_page(payload, args, render_trends)
@@ -2014,20 +2088,18 @@ def benchmark_list(args: argparse.Namespace, client: Client) -> int:
 
     def render(items: list[dict[str, Any]]) -> None:
         _print_table(
-            ("id", "name", "description", "hf_url", "full_name", "evals"),
+            ("id", "name", "hf_url", "full_name", "evals"),
             [
                 (
                     item.get("id"),
                     item.get("name"),
-                    item.get("description"),
                     item.get("hf_url"),
                     item.get("full_name"),
                     item.get("paper_count"),
                 )
                 for item in items
             ],
-            right_align=(0, 5),
-            align_when_captured=True,
+            right_align=(0, 4),
         )
 
     return _emit_page(payload, args, render)
@@ -2063,7 +2135,7 @@ def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
                     key=str.casefold,
                 )
             )
-            raise ResponseError(
+            raise NotFoundError(
                 f"Area not found: {args.area}; available areas: {names}"
             )
 
@@ -2664,7 +2736,7 @@ def benchmark_detail(args: argparse.Namespace, client: Client) -> int:
     if benchmark is None:
         suggestions = _closest_names(args.name, candidates)
         suffix = f"; closest results: {suggestions}" if suggestions else ""
-        raise ResponseError(f"Benchmark not found: {args.name}{suffix}")
+        raise NotFoundError(f"Benchmark not found: {args.name}{suffix}")
 
     scan_all = bool(_metric_requests(args))
     evaluations, total, next_page = _benchmark_evaluations(
@@ -3215,6 +3287,17 @@ def build_parser(
     return parser
 
 
+def _http_error_detail(error: HTTPStatusError) -> str:
+    try:
+        payload = json.loads(error.detail)
+    except json.JSONDecodeError:
+        return f"not found ({error.status}): {error.detail}"
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, str) and detail:
+        return detail
+    return f"not found ({error.status}): {error.detail}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -3222,6 +3305,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.handler in (paper_info, paper_read):
             return _with_public_metadata(args, Client())
         return args.handler(args, Client())
+    except HTTPStatusError as error:
+        if error.status != 404:
+            print(f"pwc: {error}", file=sys.stderr)
+            return 3
+        print(f"pwc: {_http_error_detail(error)}", file=sys.stderr)
+        return 5
     except TransportError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 3
@@ -3234,6 +3323,9 @@ def main(argv: list[str] | None = None) -> int:
     except SkillInstallError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 2
+    except NotFoundError as error:
+        print(f"pwc: {error}", file=sys.stderr)
+        return 5
     except ResponseError as error:
         print(f"pwc: {error}", file=sys.stderr)
         return 4

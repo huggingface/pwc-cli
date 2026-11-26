@@ -63,8 +63,10 @@ exact paper title. Quote titles containing spaces. Title matching is
 case-insensitive but exact; ambiguous titles fail with their matching IDs.
 When `pwc paper info` or `pwc paper read` names a paper Papers With Code has
 not indexed, stderr shows "Not indexed on Papers With Code — available at:"
-with public links and metadata before the usual not-found error; cite those
-links, not a Papers With Code page.
+with public links and metadata before the not-found error (exit `5`); cite
+those links, not a Papers With Code page.
+Paper lineage covers explicit catalog links only; an empty list does not mean
+the paper has no predecessors or successors.
 """
 
 _WORKFLOW = """
@@ -88,11 +90,14 @@ _WORKFLOW = """
 
 ## Output and limits
 
-- Interactive output is optimized for people. Benchmark lists remain aligned
-  when captured; other captured list output uses lossless TSV. Add `--json` for
-  structured agent or script consumption.
+- Interactive output is optimized for people. Captured list output uses
+  lossless TSV; benchmark tables omit descriptions, which `--json` and
+  `pwc benchmark --name` keep. Add `--json` for structured agent or script
+  consumption.
 - Stable exit codes are `0` success, `2` invalid usage, `3` network/server
-  failure, and `4` invalid API response.
+  failure, `4` invalid API response, and `5` not found or no unique match
+  (unknown paper, ambiguous title, unknown task/method/benchmark/conference/
+  organization/framework/area name or filter value). Do not retry exit `5`.
 - `PWC_API_URL` may select another compatible v1 endpoint. The default is
   `https://paperswithcode.co/api/v1`.
 - Catalog-filtered paper lists fail closed unless the server confirms every
