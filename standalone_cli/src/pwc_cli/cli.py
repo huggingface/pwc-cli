@@ -7,7 +7,7 @@ import difflib
 import json
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -1072,6 +1072,31 @@ def _area_catalog(client: Client) -> list[dict[str, Any]]:
     return areas
 
 
+# Common names for the catalog's areas, which agents and users reach for first.
+AREA_ALIASES = {
+    "computer vision": "vision",
+    "cv": "vision",
+    "image": "vision",
+    "images": "vision",
+    "nlp": "language",
+    "natural language": "language",
+    "natural language processing": "language",
+    "text": "language",
+    "speech": "audio",
+    "speech processing": "audio",
+    "audio and speech": "audio",
+    "videos": "video",
+}
+
+
+def _area_target(reference: str, areas: Iterable[tuple[str, str]]) -> str:
+    """The casefolded area ID or name to match; a common name maps to its area
+    unless an area is literally called that."""
+    target = reference.strip().casefold()
+    known = {value.casefold() for pair in areas for value in pair}
+    return target if target in known else AREA_ALIASES.get(target, target)
+
+
 def _resolve_area(
     reference: str | None, client: Client
 ) -> tuple[str | None, dict[str, str]]:
@@ -1084,7 +1109,7 @@ def _resolve_area(
     if reference is None:
         return None, names
 
-    target = reference.strip().casefold()
+    target = _area_target(reference, names.items())
     for area_id, name in names.items():
         if target in (area_id.casefold(), name.casefold()):
             return area_id, names
@@ -1108,7 +1133,10 @@ def _task_list_grouped(args: argparse.Namespace, client: Client) -> int:
     areas, _total = _rows(payload)
     if args.area:
         available_areas = areas
-        target = args.area.strip().casefold()
+        target = _area_target(
+            args.area,
+            ((str(area.get("id") or ""), str(area.get("name") or "")) for area in areas),
+        )
         areas = [
             area
             for area in areas
@@ -2223,7 +2251,10 @@ def _benchmark_list_grouped(args: argparse.Namespace, client: Client) -> int:
     ).json()
     areas, _total = _rows(payload)
     if args.area:
-        target = args.area.strip().casefold()
+        target = _area_target(
+            args.area,
+            ((str(area.get("id") or ""), str(area.get("name") or "")) for area in areas),
+        )
         available = areas
         areas = [
             area

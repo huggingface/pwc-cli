@@ -439,12 +439,12 @@ wheels = [
 
 [[package]]
 name = "pwc-cli"
-version = "0.4.9"
+version = "0.4.10"
 source = { editable = "../standalone_cli" }
 
 [[package]]
 name = "pwc-mcp"
-version = "0.2.24"
+version = "0.2.25"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

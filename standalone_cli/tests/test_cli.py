@@ -94,7 +94,7 @@ def test_generated_skill_matches_installed_cli_version_and_commands():
     skill = build_skill_md()
 
     assert "name: pwc-cli" in skill
-    assert "Generated with `pwc v0.4.9`" in skill
+    assert "Generated with `pwc v0.4.10`" in skill
     assert "`pwc search QUERY" in skill
     assert "--include-evals" in skill
     assert "[--organization ORGANIZATION]" in skill
@@ -2630,7 +2630,7 @@ def test_top_level_version_is_offline_and_stable():
             build_parser().parse_args(["--version"])
         except SystemExit as error:
             assert error.code == 0
-    assert output.getvalue() == "pwc 0.4.9\tapi v1\n"
+    assert output.getvalue() == "pwc 0.4.10\tapi v1\n"
 
 
 def test_search_default_output_is_compact_deterministic_tsv(monkeypatch):
@@ -3997,3 +3997,39 @@ def test_descriptions_print_absolute_site_links(monkeypatch, capsys):
         "[Stable Diffusion](https://paperswithcode.co/methods/stable-diffusion)"
         in capsys.readouterr().out
     )
+
+
+def test_common_area_names_resolve_to_catalog_areas(monkeypatch):
+    areas = {
+        "count": 3,
+        "results": [
+            {"id": "1", "name": "Vision"},
+            {"id": "2", "name": "Language"},
+            {"id": "6", "name": "Audio"},
+        ],
+    }
+    seen = []
+
+    class Client:
+        def __init__(self):
+            pass
+
+        def get(self, path, params=None):
+            if path == "areas/":
+                return Response(json.dumps(areas).encode(), {})
+            seen.append(params["area_id"])
+            return Response(json.dumps({"count": 0, "results": []}).encode(), {})
+
+    monkeypatch.setattr("pwc_cli.cli.Client", Client)
+    with redirect_stdout(io.StringIO()):
+        for name in ("Computer Vision", "NLP", "speech", "Vision", "2"):
+            assert main(["task", "list", "--area", name, "--json"]) == 0
+    assert seen == ["1", "2", "6", "1", "2"]
+
+
+def test_an_area_named_like_an_alias_wins_over_the_alias():
+    from pwc_cli.cli import _area_target
+
+    assert _area_target("Text", [("1", "Vision"), ("9", "Text")]) == "text"
+    assert _area_target("Computer Vision", [("1", "Vision")]) == "vision"
+    assert _area_target(" CV ", [("1", "Vision")]) == "vision"

@@ -394,7 +394,15 @@ def _structured_model(result: Any, model: type[Output]) -> Output:
     return result
 
 
-Area = Annotated[str, Field(description="Case-insensitive exact area name or area ID.")]
+Area = Annotated[
+    str,
+    Field(
+        description=(
+            "Case-insensitive area name or ID: Vision, Language, Audio, Video, General, "
+            "or Other. Common names such as Computer Vision, NLP, and Speech also work."
+        )
+    ),
+]
 Direction = Literal["asc", "desc"]
 ParameterSize = Annotated[
     str,
@@ -1167,7 +1175,12 @@ def build_server(
         page: Page = 1,
         limit: Limit | None = None,
     ) -> TaskPage:
-        """List and filter research tasks, or group the visible top-level taxonomy by area (`pwc task list`)."""
+        """List and filter research tasks, or group the visible top-level taxonomy by area (`pwc task list`). group_by_area returns every visible task of each area at once, so page, limit, and level are ignored with it."""
+        note = None
+        if group_by_area and (page != 1 or limit is not None or level is not None):
+            # The grouped endpoint is not paginated; the CLI rejects page, limit, and level there.
+            page, limit, level = 1, None, None
+            note = "group_by_area returns every visible task per area; page, limit, and level were ignored"
         data = run(
             "list_tasks",
             search=search,
@@ -1185,6 +1198,7 @@ def build_server(
             items=[] if group_by_area else [task_summary(row) for row in rows],
             groups=[task_area_group(row) for row in rows] if group_by_area else None,
             next_page=_next_page(data),
+            note=note,
             data=data,
         ))
 
