@@ -442,6 +442,17 @@ def _dicts(values: Any) -> list[dict[str, Any]]:
     return [value for value in values or [] if isinstance(value, dict)]
 
 
+def _rows(data: Any) -> list[dict[str, Any]]:
+    """Rows of a CLI listing, which is a result document or a bare list."""
+    return _dicts(data.get("results") if isinstance(data, dict) else data)
+
+
+def _document(data: Any, kind: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise TypeError(f"{kind} response did not contain a {kind}")
+    return data
+
+
 def _next_page(data: Any) -> int | None:
     value = data.get("next_page") if isinstance(data, dict) else None
     return int(value) if value is not None else None
@@ -1169,7 +1180,7 @@ def build_server(
             page=page,
             limit=limit if limit is not None or group_by_area else MAX_ROWS,
         )
-        rows = _dicts(data.get("results"))
+        rows = _rows(data)
         return _tool_result(TaskPage(
             items=[] if group_by_area else [task_summary(row) for row in rows],
             groups=[task_area_group(row) for row in rows] if group_by_area else None,
@@ -1247,7 +1258,7 @@ def build_server(
             limit=limit,
         )
         return _tool_result(MethodPage(
-            items=[method_summary(row) for row in _dicts(data.get("results"))],
+            items=[method_summary(row) for row in _rows(data)],
             next_page=_next_page(data),
             data=data,
         ))
@@ -1255,7 +1266,7 @@ def build_server(
     @catalog_tool("Get conference")
     def get_conference(conference: Entity) -> ConferenceResult:
         """Get one exact conference by name, slug, or ID (`pwc conference --name`)."""
-        data = run("get_conference", conference=conference)
+        data = _document(run("get_conference", conference=conference), "conference")
         return _tool_result(ConferenceResult(conference=conference_detail(data), data=data))
 
     @catalog_tool("List conferences")
@@ -1265,7 +1276,7 @@ def build_server(
         """List conferences with imported papers (`pwc conference list`)."""
         data = run("list_conferences", year=year, page=page, limit=limit)
         return _tool_result(ConferencePage(
-            items=[conference_summary(row) for row in _dicts(data.get("results"))],
+            items=[conference_summary(row) for row in _rows(data)],
             next_page=_next_page(data),
             data=data,
         ))
@@ -1273,7 +1284,7 @@ def build_server(
     @catalog_tool("Get organization")
     def get_organization(organization: Entity) -> OrganizationResult:
         """Get one exact research organization by name, slug, or ID (`pwc organization --name`)."""
-        data = run("get_organization", organization=organization)
+        data = _document(run("get_organization", organization=organization), "organization")
         return _tool_result(OrganizationResult(organization=organization_detail(data), data=data))
 
     @catalog_tool("List organizations")
@@ -1298,7 +1309,7 @@ def build_server(
     @catalog_tool("Get framework")
     def get_framework(framework: Entity) -> FrameworkResult:
         """Get one exact research framework by name, slug, or ID (`pwc framework --name`)."""
-        data = run("get_framework", framework=framework)
+        data = _document(run("get_framework", framework=framework), "framework")
         return _tool_result(FrameworkResult(framework=framework_summary(data), data=data))
 
     @catalog_tool("List frameworks")
@@ -1319,7 +1330,7 @@ def build_server(
             limit=limit,
         )
         return _tool_result(FrameworkPage(
-            items=[framework_summary(row) for row in _dicts(data.get("results"))],
+            items=[framework_summary(row) for row in _rows(data)],
             next_page=_next_page(data),
             data=data,
         ))

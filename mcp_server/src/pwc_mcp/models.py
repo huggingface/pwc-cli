@@ -667,7 +667,7 @@ def _organization_fields(item: dict[str, Any]) -> dict[str, Any]:
         "trending_rank": _int(item.get("trending_rank")),
         "first_paper_year": _int(item.get("first_paper_year")),
         "latest_paper_year": _int(item.get("latest_paper_year")),
-        "url": f"https://paperswithcode.co/orgs/{slug or item.get('id')}",
+        "url": f"https://paperswithcode.co/orgs/{key}" if (key := slug or _text(item.get("id"))) else None,
     }
 
 

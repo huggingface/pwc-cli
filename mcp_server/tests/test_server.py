@@ -1474,3 +1474,16 @@ def test_every_tool_declares_typed_output_beyond_the_cli_document():
     for tool in asyncio.run(exercise()):
         properties = set((tool.output_schema or {}).get("properties", {}))
         assert properties - {"schema_version", "data"}, tool.name
+
+
+def test_listing_projections_accept_bare_lists_and_missing_identifiers():
+    from pwc_mcp.models import organization_summary
+    from pwc_mcp.server import _rows
+
+    row = {"id": "1", "name": "Image Classification"}
+
+    assert _rows([row, "noise"]) == [row]
+    assert _rows({"results": [row]}) == [row]
+    assert _rows(None) == []
+    assert organization_summary({"name": "Lab"}).url is None
+    assert organization_summary({"id": "7", "name": "Lab"}).url == "https://paperswithcode.co/orgs/7"
