@@ -223,6 +223,132 @@ class MethodResult(ToolResult):
     method: MethodDetail
 
 
+class TaskSummary(OutputModel):
+    id: str
+    name: str
+    slug: str | None = None
+    description: SiteMarkdown = None
+    level: int | None = None
+    area_id: str | None = None
+    parent_id: str | None = None
+    paper_count: int
+    benchmark_count: int | None = None
+
+
+class TaskAreaGroup(OutputModel):
+    id: str
+    name: str
+    tasks: list[TaskSummary]
+
+
+class TaskPage(QueryResult):
+    items: list[TaskSummary]
+    groups: list[TaskAreaGroup] | None = Field(
+        default=None, description="Visible tasks by area when group_by_area is set; items is then empty."
+    )
+    next_page: int | None = None
+
+
+class MethodSummary(OutputModel):
+    id: str
+    name: str
+    slug: str | None = None
+    full_name: str | None = None
+    description: SiteMarkdown = None
+    introduced_year: int | None = None
+    source_paper_id: str | None = None
+    paper_count: int
+
+
+class MethodPage(QueryResult):
+    items: list[MethodSummary]
+    next_page: int | None = None
+
+
+class ConferenceSummary(OutputModel):
+    id: str
+    name: str
+    slug: str | None = None
+    short_name: str | None = None
+    year: int | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    location: str | None = None
+    url: str | None = Field(default=None, description="The conference's own website.")
+    tier: str | None = None
+    paper_count: int
+
+
+class ConferenceDetail(ConferenceSummary):
+    description: SiteMarkdown = None
+    other_editions: list[str] = []
+
+
+class ConferenceResult(QueryResult):
+    conference: ConferenceDetail
+
+
+class ConferencePage(QueryResult):
+    items: list[ConferenceSummary]
+    next_page: int | None = None
+
+
+class OrganizationSummary(OutputModel):
+    id: str
+    name: str
+    slug: str | None = None
+    paper_count: int
+    is_featured: bool = False
+    trending_rank: int | None = None
+    first_paper_year: int | None = None
+    latest_paper_year: int | None = None
+    url: str | None = Field(default=None, description="Papers With Code organization page.")
+
+
+class OrganizationDetail(OrganizationSummary):
+    description: SiteMarkdown = None
+    website_url: str | None = None
+    github_url: str | None = None
+    hf_url: str | None = None
+    top_trending_paper: PaperReference | None = None
+
+
+class OrganizationResult(QueryResult):
+    organization: OrganizationDetail
+
+
+class OrganizationPage(QueryResult):
+    items: list[OrganizationSummary]
+    next_page: int | None = None
+
+
+class FrameworkSummary(OutputModel):
+    id: str
+    name: str
+    slug: str | None = None
+    organization_name: str | None = None
+    description: SiteMarkdown = None
+    when_to_use: str | None = None
+    platforms: list[str] = []
+    domain_slug: str | None = None
+    domain_name: str | None = None
+    category_slug: str | None = None
+    category_name: str | None = None
+    github_url: str | None = None
+    docs_url: str | None = None
+    introducing_paper_arxiv_id: str | None = None
+    paper_count: int
+
+
+class FrameworkResult(QueryResult):
+    framework: FrameworkSummary
+
+
+class FrameworkPage(QueryResult):
+    items: list[FrameworkSummary]
+    next_page: int | None = None
+
+
 class BenchmarkPage(QueryResult):
     items: list[BenchmarkSummary]
     next_page: int | None = None
@@ -448,6 +574,120 @@ def benchmark_summary(item: dict[str, Any]) -> BenchmarkSummary:
         split=_text(item.get("split_name") or item.get("split")),
         hf_url=_text(item.get("hf_url")),
         paper_count=_int(count) or 0,
+    )
+
+
+def task_summary(item: dict[str, Any]) -> TaskSummary:
+    return TaskSummary(
+        id=str(item.get("id") or ""),
+        name=str(item.get("name") or item.get("slug") or "Unknown task"),
+        slug=_text(item.get("slug")),
+        description=_text(item.get("description")),
+        level=_int(item.get("level")),
+        area_id=_text(item.get("area_id")),
+        parent_id=_text(item.get("parent_id")),
+        paper_count=_int(item.get("paper_count")) or 0,
+        benchmark_count=_int(item.get("benchmark_count")),
+    )
+
+
+def task_area_group(item: dict[str, Any]) -> TaskAreaGroup:
+    return TaskAreaGroup(
+        id=str(item.get("id") or ""),
+        name=str(item.get("name") or "Unknown area"),
+        tasks=[task_summary(task) for task in item.get("tasks") or [] if isinstance(task, dict)],
+    )
+
+
+def method_summary(item: dict[str, Any]) -> MethodSummary:
+    return MethodSummary(
+        id=str(item.get("id") or ""),
+        name=str(item.get("name") or item.get("slug") or "Unknown method"),
+        slug=_text(item.get("slug")),
+        full_name=_text(item.get("full_name")),
+        description=_text(item.get("description")),
+        introduced_year=_int(item.get("introduced_year")),
+        source_paper_id=_text(item.get("source_paper_id")),
+        paper_count=_int(item.get("paper_count")) or 0,
+    )
+
+
+def conference_summary(item: dict[str, Any]) -> ConferenceSummary:
+    return ConferenceSummary(**_conference_fields(item))
+
+
+def conference_detail(item: dict[str, Any]) -> ConferenceDetail:
+    return ConferenceDetail(
+        **_conference_fields(item),
+        description=_text(item.get("description")),
+        other_editions=[str(edition) for edition in item.get("other_editions") or []],
+    )
+
+
+def _conference_fields(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(item.get("id") or ""),
+        "name": str(item.get("name") or item.get("slug") or "Unknown conference"),
+        "slug": _text(item.get("slug")),
+        "short_name": _text(item.get("short_name")),
+        "year": _int(item.get("year")),
+        "start_date": _text(item.get("start_date")),
+        "end_date": _text(item.get("end_date")),
+        "location": _text(item.get("location") or item.get("venue")),
+        "url": _text(item.get("url")),
+        "tier": _text(item.get("tier")),
+        "paper_count": _int(item.get("paper_count")) or 0,
+    }
+
+
+def organization_summary(item: dict[str, Any]) -> OrganizationSummary:
+    return OrganizationSummary(**_organization_fields(item))
+
+
+def organization_detail(item: dict[str, Any]) -> OrganizationDetail:
+    top = item.get("top_trending_paper")
+    return OrganizationDetail(
+        **_organization_fields(item),
+        description=_text(item.get("description")),
+        website_url=_text(item.get("website_url")),
+        github_url=_text(item.get("github_url")),
+        hf_url=_text(item.get("hf_url")),
+        top_trending_paper=paper_reference(top) if isinstance(top, dict) else None,
+    )
+
+
+def _organization_fields(item: dict[str, Any]) -> dict[str, Any]:
+    slug = _text(item.get("slug"))
+    return {
+        "id": str(item.get("id") or ""),
+        "name": str(item.get("name") or slug or "Unknown organization"),
+        "slug": slug,
+        "paper_count": _int(item.get("paper_count")) or 0,
+        "is_featured": item.get("is_featured") is True,
+        "trending_rank": _int(item.get("trending_rank")),
+        "first_paper_year": _int(item.get("first_paper_year")),
+        "latest_paper_year": _int(item.get("latest_paper_year")),
+        "url": f"https://paperswithcode.co/orgs/{key}" if (key := slug or _text(item.get("id"))) else None,
+    }
+
+
+def framework_summary(item: dict[str, Any]) -> FrameworkSummary:
+    return FrameworkSummary(
+        id=str(item.get("id") or ""),
+        name=str(item.get("name") or item.get("slug") or "Unknown framework"),
+        slug=_text(item.get("slug")),
+        organization_name=_text(item.get("organization_name")),
+        description=_text(item.get("description")),
+        when_to_use=_text(item.get("when_to_use")),
+        platforms=[str(platform) for platform in item.get("platforms") or []],
+        domain_slug=_text(item.get("domain_slug")),
+        domain_name=_text(item.get("domain_name")),
+        category_slug=_text(item.get("category_slug")),
+        category_name=_text(item.get("category_name")),
+        github_url=_text(item.get("github_url")),
+        docs_url=_text(item.get("docs_url")),
+        introducing_paper_arxiv_id=_text(item.get("introducing_paper_arxiv_id")),
+        paper_count=_int(item.get("paper_count")) or 0,
     )
 
 

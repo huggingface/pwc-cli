@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pwc_mcp.server import TOOL_COMMANDS
 
-SKILL = Path(__file__).parents[1] / "SKILL.md"
+SKILL = Path(__file__).parents[1] / "src/pwc_mcp/SKILL.md"
 EXPECTED_TOOLS = set(TOOL_COMMANDS)
 
 

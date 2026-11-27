@@ -743,11 +743,11 @@ def test_grouped_listings_omit_pagination_and_flatten_benchmarks():
     assert catalog.queries[1][1]["page_size"] is None
     assert catalog.queries[2][1]["page_size"] is None
     assert catalog.queries[2][1]["benchmarks_per_task"] == 2
-    assert tasks.structured_content == {
-        "schema_version": "v1",
-        "data": {"count": 1, "results": [TASK]},
-    }
+    assert tasks.structured_content["data"] == {"count": 1, "results": [TASK]}
+    assert [item["slug"] for item in tasks.structured_content["items"]] == [TASK["slug"]]
+    assert tasks.structured_content["groups"] is None
     assert grouped_tasks.structured_content["data"] == {"count": 1, "results": [TASK]}
+    assert grouped_tasks.structured_content["items"] == []
     assert benchmarks.structured_content["items"] == [
         {
             "id": "72",
@@ -776,14 +776,21 @@ def test_new_catalog_tools_return_the_cli_json_document():
     ]
     results = _call(catalog, requests)
 
+    typed = {
+        "list_methods": "items",
+        "get_conference": "conference",
+        "list_conferences": "items",
+        "get_organization": "organization",
+        "list_organizations": "items",
+        "get_framework": "framework",
+        "list_frameworks": "items",
+    }
     for (name, _arguments), result in zip(requests, results):
         assert result.is_error is False, name
+        assert result.structured_content[typed[name]], name
         if name == "list_organizations":
             continue
-        assert result.structured_content == {
-            "schema_version": "v1",
-            "data": PAYLOADS[TOOL_COMMANDS[name]],
-        }
+        assert result.structured_content["data"] == PAYLOADS[TOOL_COMMANDS[name]], name
     assert results[4].structured_content["data"] == {
         "count": 1,
         "results": [
@@ -1457,3 +1464,26 @@ def test_detail_descriptions_use_absolute_site_links():
     assert method.description == (
         "See [Stable Diffusion](https://paperswithcode.co/methods/stable-diffusion)."
     )
+
+
+def test_every_tool_declares_typed_output_beyond_the_cli_document():
+    async def exercise():
+        async with Client(build_server(StubCatalog())) as client:
+            return (await client.list_tools()).tools
+
+    for tool in asyncio.run(exercise()):
+        properties = set((tool.output_schema or {}).get("properties", {}))
+        assert properties - {"schema_version", "data"}, tool.name
+
+
+def test_listing_projections_accept_bare_lists_and_missing_identifiers():
+    from pwc_mcp.models import organization_summary
+    from pwc_mcp.server import _rows
+
+    row = {"id": "1", "name": "Image Classification"}
+
+    assert _rows([row, "noise"]) == [row]
+    assert _rows({"results": [row]}) == [row]
+    assert _rows(None) == []
+    assert organization_summary({"name": "Lab"}).url is None
+    assert organization_summary({"id": "7", "name": "Lab"}).url == "https://paperswithcode.co/orgs/7"
