@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "paperswithcode": {
+      "type": "http",
+      "url": "https://paperswithcode.co/mcp"
+    }
+  }
+}
