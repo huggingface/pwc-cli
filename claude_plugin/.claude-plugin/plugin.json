@@ -1,0 +1,11 @@
+{
+  "name": "paperswithcode",
+  "displayName": "Papers with Code",
+  "version": "0.2.25",
+  "description": "Search and read AI/ML papers, find related work and paper lineage, browse tasks, methods, conferences, and organizations, and inspect benchmark leaderboards through the public Papers with Code catalog.",
+  "author": { "name": "Hugging Face", "url": "https://paperswithcode.co" },
+  "homepage": "https://paperswithcode.co",
+  "repository": "https://github.com/huggingface/pwc-cli",
+  "license": "Apache-2.0",
+  "keywords": ["research", "papers", "arxiv", "benchmarks", "leaderboards", "machine-learning"]
+}

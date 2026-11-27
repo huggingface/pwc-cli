@@ -36,6 +36,20 @@ config:
 }
 ```
 
+### Claude plugin
+
+[`claude_plugin`](claude_plugin) bundles the hosted server with the `pwc-mcp`
+skill as a Claude plugin. In Claude Code:
+
+```bash
+/plugin marketplace add huggingface/pwc-cli
+/plugin install paperswithcode@paperswithcode
+```
+
+The plugin's version tracks `pwc-mcp`, and its skill must match
+`mcp_server/src/pwc_mcp/SKILL.md`; copy the file and bump both versions
+together.
+
 In VS Code (`.vscode/mcp.json`), use `"servers"` with `"type": "http"` and the
 same URL. In Claude.ai or Claude Desktop, add it under Settings → Connectors →
 Add custom connector.

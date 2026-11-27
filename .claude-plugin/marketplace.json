@@ -1,0 +1,17 @@
+{
+  "name": "paperswithcode",
+  "owner": {
+    "name": "Hugging Face",
+    "url": "https://paperswithcode.co"
+  },
+  "metadata": {
+    "description": "Papers with Code plugins for Claude: the hosted Papers with Code MCP server and its research skill."
+  },
+  "plugins": [
+    {
+      "name": "paperswithcode",
+      "source": "./claude_plugin",
+      "description": "Search AI/ML papers, benchmarks, and leaderboards through the public Papers with Code catalog."
+    }
+  ]
+}
