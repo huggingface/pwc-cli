@@ -1487,3 +1487,17 @@ def test_listing_projections_accept_bare_lists_and_missing_identifiers():
     assert _rows(None) == []
     assert organization_summary({"name": "Lab"}).url is None
     assert organization_summary({"id": "7", "name": "Lab"}).url == "https://paperswithcode.co/orgs/7"
+
+
+def test_grouped_task_listing_ignores_pagination_and_level_with_a_note():
+    catalog = StubCatalog()
+    (grouped,) = _call(
+        catalog,
+        [("list_tasks", {"group_by_area": True, "limit": 25, "page": 2, "level": 1})],
+    )
+
+    options = catalog.queries[0][1]
+    assert grouped.is_error is False
+    assert (options["page"], options["page_size"], options["level"]) == (1, None, None)
+    assert "page, limit, and level were ignored" in grouped.structured_content["note"]
+    assert grouped.structured_content["items"] == []

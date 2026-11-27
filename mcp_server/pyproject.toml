@@ -1,6 +1,6 @@
 [project]
 name = "pwc-mcp"
-version = "0.2.24"
+version = "0.2.25"
 description = "Read-only Papers With Code MCP server"
 readme = "README.md"
 requires-python = ">=3.10"

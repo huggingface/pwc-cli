@@ -247,6 +247,9 @@ class TaskPage(QueryResult):
         default=None, description="Visible tasks by area when group_by_area is set; items is then empty."
     )
     next_page: int | None = None
+    note: str | None = Field(
+        default=None, description="Arguments the server adjusted before running the listing."
+    )
 
 
 class MethodSummary(OutputModel):
