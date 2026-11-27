@@ -23,12 +23,15 @@ curl http://127.0.0.1:7860/health
 ## Tools
 
 Every read-only `pwc` CLI research command is one tool, and every research flag
-of that command is a tool parameter, so results match `pwc ... --json`. Each
-result carries `schema_version` and `data`, the complete CLI JSON payload, next
-to typed projections such as `items`, for the listing tools and for the
-taxonomy tools without a typed projection. Detail tools (`get_paper_info`, `get_paper_evaluations`, `read_paper`,
-`get_paper_lineage`, `get_task`, `get_method`, `get_benchmark`) return typed
-fields only, with IDs as strings.
+of that command is a tool parameter, so results match `pwc ... --json`. Every
+tool declares an `outputSchema` with typed fields, so code-mode clients can
+generate typed bindings. Listing tools and the conference, organization, and
+framework lookups carry `schema_version` and `data`, the complete CLI JSON
+payload, next to typed projections such as `items`, `conference`,
+`organization`, or `framework` (`list_tasks` with `group_by_area` fills
+`groups`). Detail tools (`get_paper_info`, `get_paper_evaluations`,
+`read_paper`, `get_paper_lineage`, `get_task`, `get_method`, `get_benchmark`)
+return typed fields only, with IDs as strings.
 The text block of every result holds the same JSON as `structuredContent`, so
 clients that only read text still see the data. Entity lookups such as
 `get_benchmark` and `get_task` also accept `name`, the CLI's `--name`.
@@ -96,6 +99,15 @@ unfiltered leaderboard and a `metric_note` naming the available metrics.
 - `pwc://papers/{paper}/markdown`
 - `pwc://tasks/{task}`
 - `pwc://benchmarks/{benchmark}`
+
+## Skills
+
+The server declares the Skills extension (`io.modelcontextprotocol/skills`,
+SEP-2640) and serves the PwC MCP skill, the guide to these tools and research
+workflows, at `skill://pwc-mcp/SKILL.md`. `skills/list` and `skills/get` return
+its frontmatter and the SHA-256 digest and size of the file, and
+`resources/read` returns the file as `text/markdown`. The skill is
+`src/pwc_mcp/SKILL.md` and ships in the package.
 
 ## Configuration
 

@@ -46,27 +46,44 @@ from pwc_mcp.models import (
     AreaReference,
     BenchmarkPage,
     BenchmarkResult,
+    ConferencePage,
+    ConferenceResult,
     EvaluationPage,
+    FrameworkPage,
+    FrameworkResult,
     MethodDetail,
+    MethodPage,
     MethodResult,
+    OrganizationPage,
+    OrganizationResult,
     PaperInfoResult,
     PaperLineageResult,
     PaperPage,
     PaperReadResult,
     QueryResult,
     TaskDetail,
+    TaskPage,
     TaskResult,
     available_at,
     benchmark_summary,
     catalog_reference,
+    conference_detail,
+    conference_summary,
     evaluation,
+    framework_summary,
+    method_summary,
     metric_directions,
+    organization_detail,
+    organization_summary,
     paper_detail,
     paper_evaluation,
     paper_reference,
     paper_summary,
     public_paper_detail,
+    task_area_group,
+    task_summary,
 )
+from pwc_mcp.skills import SkillsExtension, packaged_skill
 
 logger = logging.getLogger(__name__)
 READ_ONLY = ToolAnnotations(
@@ -611,6 +628,7 @@ def build_server(
         ),
         version=__version__,
         website_url="https://paperswithcode.co",
+        extensions=[SkillsExtension([packaged_skill()])],
         cache_hints={
             "server/discover": CacheHint(ttl_ms=3_600_000, scope="public"),
             "tools/list": CacheHint(ttl_ms=3_600_000, scope="public"),
@@ -1137,21 +1155,26 @@ def build_server(
         order_direction: Direction = "asc",
         page: Page = 1,
         limit: Limit | None = None,
-    ) -> QueryResult:
+    ) -> TaskPage:
         """List and filter research tasks, or group the visible top-level taxonomy by area (`pwc task list`)."""
-        return _tool_result(QueryResult(
-            data=run(
-                "list_tasks",
-                search=search,
-                area=area,
-                level=level,
-                visible_only=visible_only,
-                group_by_area=group_by_area,
-                order_by=order_by,
-                order_direction=order_direction,
-                page=page,
-                limit=limit if limit is not None or group_by_area else MAX_ROWS,
-            )
+        data = run(
+            "list_tasks",
+            search=search,
+            area=area,
+            level=level,
+            visible_only=visible_only,
+            group_by_area=group_by_area,
+            order_by=order_by,
+            order_direction=order_direction,
+            page=page,
+            limit=limit if limit is not None or group_by_area else MAX_ROWS,
+        )
+        rows = _dicts(data.get("results"))
+        return _tool_result(TaskPage(
+            items=[] if group_by_area else [task_summary(row) for row in rows],
+            groups=[task_area_group(row) for row in rows] if group_by_area else None,
+            next_page=_next_page(data),
+            data=data,
         ))
 
     @catalog_tool("Get method")
@@ -1211,44 +1234,52 @@ def build_server(
         order_direction: Direction = "asc",
         page: Page = 1,
         limit: Limit = MAX_ROWS,
-    ) -> QueryResult:
+    ) -> MethodPage:
         """List and filter research methods (`pwc method list`)."""
-        return _tool_result(QueryResult(
-            data=run(
-                "list_methods",
-                search=search,
-                area=area,
-                introduced_year=introduced_year,
-                order_by=order_by,
-                order_direction=order_direction,
-                page=page,
-                limit=limit,
-            )
+        data = run(
+            "list_methods",
+            search=search,
+            area=area,
+            introduced_year=introduced_year,
+            order_by=order_by,
+            order_direction=order_direction,
+            page=page,
+            limit=limit,
+        )
+        return _tool_result(MethodPage(
+            items=[method_summary(row) for row in _dicts(data.get("results"))],
+            next_page=_next_page(data),
+            data=data,
         ))
 
     @catalog_tool("Get conference")
-    def get_conference(conference: Entity) -> QueryResult:
+    def get_conference(conference: Entity) -> ConferenceResult:
         """Get one exact conference by name, slug, or ID (`pwc conference --name`)."""
-        return _tool_result(QueryResult(data=run("get_conference", conference=conference)))
+        data = run("get_conference", conference=conference)
+        return _tool_result(ConferenceResult(conference=conference_detail(data), data=data))
 
     @catalog_tool("List conferences")
     def list_conferences(
         year: int | None = None, page: Page = 1, limit: Limit = MAX_ROWS
-    ) -> QueryResult:
+    ) -> ConferencePage:
         """List conferences with imported papers (`pwc conference list`)."""
-        return _tool_result(QueryResult(
-            data=run("list_conferences", year=year, page=page, limit=limit)
+        data = run("list_conferences", year=year, page=page, limit=limit)
+        return _tool_result(ConferencePage(
+            items=[conference_summary(row) for row in _dicts(data.get("results"))],
+            next_page=_next_page(data),
+            data=data,
         ))
 
     @catalog_tool("Get organization")
-    def get_organization(organization: Entity) -> QueryResult:
+    def get_organization(organization: Entity) -> OrganizationResult:
         """Get one exact research organization by name, slug, or ID (`pwc organization --name`)."""
-        return _tool_result(QueryResult(data=run("get_organization", organization=organization)))
+        data = run("get_organization", organization=organization)
+        return _tool_result(OrganizationResult(organization=organization_detail(data), data=data))
 
     @catalog_tool("List organizations")
     def list_organizations(
         featured_only: bool = False, page: Page = 1, limit: Limit = MAX_ROWS
-    ) -> QueryResult:
+    ) -> OrganizationPage:
         """List research organizations by paper count (`pwc organization list`). Rows are summaries; get_organization returns the full record."""
         data = run(
             "list_organizations", featured_only=featured_only, page=page, limit=limit
@@ -1258,12 +1289,17 @@ def build_server(
             | {"url": f"https://paperswithcode.co/orgs/{row.get('slug') or row.get('id')}"}
             for row in _dicts(data.get("results"))
         ]
-        return _tool_result(QueryResult(data={**data, "results": rows}))
+        return _tool_result(OrganizationPage(
+            items=[organization_summary(row) for row in _dicts(data.get("results"))],
+            next_page=_next_page(data),
+            data={**data, "results": rows},
+        ))
 
     @catalog_tool("Get framework")
-    def get_framework(framework: Entity) -> QueryResult:
+    def get_framework(framework: Entity) -> FrameworkResult:
         """Get one exact research framework by name, slug, or ID (`pwc framework --name`)."""
-        return _tool_result(QueryResult(data=run("get_framework", framework=framework)))
+        data = run("get_framework", framework=framework)
+        return _tool_result(FrameworkResult(framework=framework_summary(data), data=data))
 
     @catalog_tool("List frameworks")
     def list_frameworks(
@@ -1272,17 +1308,20 @@ def build_server(
         platform: str | None = None,
         page: Page = 1,
         limit: Limit = MAX_ROWS,
-    ) -> QueryResult:
+    ) -> FrameworkPage:
         """List research frameworks by domain, category, or platform (`pwc framework list`)."""
-        return _tool_result(QueryResult(
-            data=run(
-                "list_frameworks",
-                domain=domain,
-                category=category,
-                platform=platform,
-                page=page,
-                limit=limit,
-            )
+        data = run(
+            "list_frameworks",
+            domain=domain,
+            category=category,
+            platform=platform,
+            page=page,
+            limit=limit,
+        )
+        return _tool_result(FrameworkPage(
+            items=[framework_summary(row) for row in _dicts(data.get("results"))],
+            next_page=_next_page(data),
+            data=data,
         ))
 
     @catalog_tool("Get benchmark leaderboard")

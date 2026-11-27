@@ -1,6 +1,6 @@
 [project]
 name = "pwc-mcp"
-version = "0.2.23"
+version = "0.2.24"
 description = "Read-only Papers With Code MCP server"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ dependencies = [
   # GHSA-xcq7-p3pf-p88h: the MCP SDK parses tracestate; older releases are quadratic.
   "opentelemetry-api>=1.45.1",
   "pydantic>=2.11,<3",
+  "pyyaml>=6.0.2,<7",
   "pwc-cli>=0.4.1,<0.5",
   "starlette>=1.3.1,<2",
   "uvicorn>=0.35,<1",
